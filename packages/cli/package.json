@@ -1,0 +1,15 @@
+{
+  "name": "@sqldex/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sqldex": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  },
+  "dependencies": {
+    "@sqldex/core": "*"
+  }
+}

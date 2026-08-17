@@ -15,16 +15,15 @@ read them in another, names in two languages and three casing styles.
 
 ## Status
 
-**Early. This is a library, not a tool yet.** The analysis engine and the rules are complete and
-tested — but there is no command to run them with, so using them means calling `check` yourself.
-Nothing is published to npm.
+**Early, but usable.** The engine, the rules and the command are complete and tested. Nothing is
+published to npm yet, so using it means a checkout.
 
 | | |
 |---|---|
 | Catalog and name resolution | works |
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
 | Lint rules | 27 of them, in five groups — see below |
-| `sqldex` CLI | not built |
+| `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | Language server, editor extensions | not built |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
@@ -60,10 +59,49 @@ adopted at the bottom of the engine so no layer has to translate positions on th
 
 ## Requirements
 
-Node 22.6 or newer, and nothing else. The `.ts` files run directly under Node's native type
-stripping, so there is no build step, and the engine has no runtime dependencies.
+Node 22.18 or newer, and nothing else. The `.ts` files run directly under Node's native type
+stripping, so there is no build step and no runtime dependencies. 22.18 rather than 22.6 because
+that is where stripping stopped needing a flag, which is what lets the installed command be a `.ts`
+file like everything else.
 
-## Usage
+## The command
+
+```
+sqldex check [paths...]        check the project, or just the paths named
+sqldex rules                   every rule, with a one-line summary
+sqldex explain <rule-id>       the full reasoning behind one rule
+```
+
+```
+$ sqldex check sps
+sps/sp_settle_orders.sql
+  3:11  hint   routine/unused-variable   unused variable: vBatchSize
+  5:60  error  query/insert-value-count  orders gets 2 value(s) and expects 3
+  7:10  warn   query/unfiltered-write    this UPDATE has no filter: it rewrites the whole of customers
+
+3 findings in 1 file (1 error, 1 warn, 1 hint)
+```
+
+`--format` takes `pretty` (the default), `json`, `sarif` for GitHub Code Scanning, `github` for
+inline annotations, and `gitlab` for a Code Quality report. `--quiet` drops the hints. Exit codes
+are **0** clean, **1** findings above the failure floor — any error, or more warnings than
+`--max-warnings` allows — and **2** for a command that could not run at all. A `hint` never fails a
+build; that is what makes it a hint.
+
+**`--diff <base>` checks only what changed**, which is the CI shape: `sqldex check --diff
+origin/master`. The catalog is still built from the whole project, because a change is judged
+against the schema it lands in and not against itself. `--diff auto` reads the base out of the CI
+job — `CI_MERGE_REQUEST_DIFF_BASE_SHA`, then `GITHUB_BASE_REF` — and says so rather than guessing a
+branch name when neither is set.
+
+**Migration scripts are checked against a catalog that can see them.** A file under
+`deploy_folder/` contributes no definitions to the project — its `CREATE TABLE`s are copies of
+tables already declared in `tables/` — but a migration is also the one kind of file that declares a
+table and then writes to it a few lines down. So each file is read against the project's catalog
+plus its own declarations, which is the difference between a useful report and one where a third of
+the findings are the file's own tables.
+
+## Usage as a library
 
 ```ts
 import { Catalog, analyze, columnNames, mysql, qualifier, tokenize } from "@sqldex/core";
@@ -110,6 +148,10 @@ ones:
     { "glob": "schema/**/*.sql", "kind": "tables" },
     { "glob": "procs/**/*.sql", "kind": "routines" }
   ],
+  "targets": [
+    { "glob": "schema/**/*.sql", "kind": "tables" },
+    { "glob": "migrations/**/*.sql", "kind": "auto" }
+  ],
   "schemas": ["shop", "shop_audit"],
   "exclude": ["deploy.sql", "rollback.sql"]
 }
@@ -117,6 +159,12 @@ ones:
 
 `schemas` is what makes a reference into *another* database resolve to nothing knowable instead of
 being checked against a same-named table of this one; it defaults to the root directory's name.
+
+`targets` is **what gets checked**, as against `sources`, which is what builds the catalog. They are
+the same list in an editor — you lint what you index — and different in CI, where a migration
+directory is code that runs and has to be checked, while contributing no definitions. It defaults to
+`sources` plus `deploy_folder/**/*.sql` where that directory exists.
+
 Keys are `snake_case` because this is a file format people write by hand, not the model.
 
 ## Rules
@@ -169,7 +217,8 @@ console.log(check(registry, { ...context, config: defaults }, sql));
 //      severity: 'warn', message: 'this JOIN has no ON or USING' } ]
 ```
 
-`context` is the one built in *Usage* above, plus the config the severities are resolved against.
+`context` is the one built in *Usage as a library* above, plus the config the severities are
+resolved against.
 
 A rule's `id` is `group/name`, and it is the whole identity: it appears in the diagnostic, in a
 suppression comment and in the config, and the engine refuses an `id` whose prefix disagrees with
@@ -202,7 +251,7 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 180 tests, hand-written fixtures only
+npm test                        # 229 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"

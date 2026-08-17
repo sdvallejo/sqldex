@@ -14,6 +14,7 @@ export type { ColumnValue, ValueAccumulator } from "./analysis/values.ts";
 export { fromComment, isEnumLike } from "./analysis/values.ts";
 export type { CatalogLookup, CatalogStats, FileEntry, IncomingFk, TempTableEntry } from "./catalog/catalog.ts";
 export { Catalog, columnTypeCensus, normaliseType } from "./catalog/catalog.ts";
+export { withOwnDefinitions } from "./catalog/overlay.ts";
 export type { FileRef } from "./catalog/project.ts";
 export {
   detectSources,
