@@ -39,12 +39,19 @@ import {
   withOwnDefinitions,
   type Config,
   type Diagnostic,
+  type Dialect,
   type Registry,
+  type ResolveContext,
 } from "@sqldex/core";
 import { basename } from "node:path";
 
 export class Workspace {
   readonly root: string;
+  /**
+   * The engine this project is written for. One today, and named rather than assumed so that the
+   * place a second one would be chosen is a field and not a search through every call site.
+   */
+  readonly dialect: Dialect = mysql;
   /** Registration order decides which rule claims a token, so it is the engine's list, unfiltered. */
   readonly registry: Registry;
 
@@ -64,6 +71,11 @@ export class Workspace {
     this.schemas = configuredSchemas(root);
   }
 
+  /** What resolving a name in this project needs to know. Rebuilt per ask: `reload` replaces both. */
+  get resolveContext(): ResolveContext {
+    return { dialect: this.dialect, catalog: this.catalog, schemas: this.schemas };
+  }
+
   /**
    * What the rules say about one file's current text.
    *
@@ -76,8 +88,8 @@ export class Workspace {
    */
   diagnose(src: string): Diagnostic[] {
     const lexed = tokenize(src);
-    const seen = withOwnDefinitions(this.catalog, mysql, src, lexed);
-    return check(this.registry, { dialect: mysql, catalog: seen, schemas: this.schemas, config: this.config }, src);
+    const seen = withOwnDefinitions(this.catalog, this.dialect, src, lexed);
+    return check(this.registry, { ...this.resolveContext, catalog: seen, config: this.config }, src);
   }
 
   /**

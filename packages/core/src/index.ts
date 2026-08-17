@@ -35,7 +35,8 @@ export type {
 export { CONFIG_FILES, defaults, get, invalidate, merge, schemas } from "./config/config.ts";
 export type { Diagnostic, DiagnosticTag, Severity } from "./diagnostics.ts";
 export type { Dialect, DialectId } from "./dialects/dialect.ts";
-export { isKeyword, KEYWORDS, mysql } from "./dialects/mysql/index.ts";
+export type { BuiltinFunction } from "./dialects/mysql/functions.ts";
+export { builtin, FUNCTIONS, isKeyword, KEYWORDS, mysql } from "./dialects/mysql/index.ts";
 export type { Local, LocalKind, Locals } from "./model/locals.ts";
 export type { QueryScope, Relation } from "./model/query.ts";
 export type { Param, ParamMode, Routine, RoutineKind } from "./model/routine.ts";
@@ -73,4 +74,5 @@ export { lineCol, lineIndex, tokenize } from "./syntax/fast/lexer.ts";
 export type { ParsedRoutines } from "./syntax/fast/routine.ts";
 export { cleanDoc, parseHeader, parseRoutines } from "./syntax/fast/routine.ts";
 export { cteNames, queryScopes, relations, statementBounds, statements } from "./syntax/fast/stmt.ts";
+export { kw, kwAny, punct } from "./syntax/fast/tok.ts";
 export type { Comment, Lexed, Position, Span, Token, TokenKind, TokenRange } from "./syntax/types.ts";

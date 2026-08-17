@@ -12,12 +12,15 @@
  * - **Quoting.** Backtick here, double quote elsewhere.
  * - **Keywords.** Telling a name apart from syntax.
  * - **Types.** Whether a type carries a collation at all.
+ * - **Built-in functions.** `JSON_EXTRACT` and `NOW` are MySQL's; another engine spells and
+ *   documents its own.
  *
  * A `SyntaxProvider` is picked by (dialect, backend); in v1 there is exactly one pair,
  * `mysql/fast`.
  */
 
 import type { ColumnType } from "../model/table.ts";
+import type { BuiltinFunction } from "./mysql/functions.ts";
 
 export type DialectId = "mysql";
 
@@ -43,4 +46,16 @@ export interface Dialect {
    * one against anything is unaffected by collation.
    */
   isTextType(type: ColumnType): boolean;
+
+  /**
+   * The engine's built-in functions, keyed by their own upper-case spelling.
+   *
+   * Exposed as the map and not only as a lookup because completion enumerates the lot, and
+   * rebuilding a list of a couple of hundred entries on every keystroke to hand back what is
+   * already a map would be work done for the shape of an interface.
+   */
+  readonly functions: ReadonlyMap<string, BuiltinFunction>;
+
+  /** One built-in, however it was capitalised where it was written. */
+  builtin(name: string): BuiltinFunction | undefined;
 }

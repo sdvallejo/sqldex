@@ -23,20 +23,25 @@ import {
   createProtocolConnection,
   DidChangeTextDocumentNotification,
   DidChangeWatchedFilesNotification,
+  CompletionRequest,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   DidSaveTextDocumentNotification,
   FileChangeType,
+  HoverRequest,
   InitializedNotification,
   InitializeRequest,
   PublishDiagnosticsNotification,
   RegistrationRequest,
   ShutdownRequest,
+  SignatureHelpRequest,
   StreamMessageReader,
   StreamMessageWriter,
   TextDocumentSyncKind,
+  type CompletionList,
   type Diagnostic,
   type InitializeResult,
+  type MarkupContent,
   type ProtocolConnection,
   type Registration,
   type ServerCapabilities,
@@ -185,7 +190,7 @@ END;
 
 // ------------------------------------------------------------------- initialize
 
-test("initialize promises exactly what this slice implements", async () => {
+test("initialize promises exactly what the server can do", async () => {
   const client = await start(project("shop"));
   const result = await client.connection.sendRequest(InitializeRequest.type, {
     processId: null,
@@ -198,6 +203,13 @@ test("initialize promises exactly what this slice implements", async () => {
   // Declared rather than defaulted: every offset in the engine is a UTF-16 code unit, and a client
   // that assumed otherwise would misplace every range in every file with an accent in it.
   assert.equal(capabilities.positionEncoding, "utf-16");
+
+  assert.equal(capabilities.hoverProvider, true);
+  // The dot and nothing else: a menu that also opened on space would be up after every word.
+  assert.deepEqual(capabilities.completionProvider?.triggerCharacters, ["."]);
+  // Deferring the documentation is the whole reason a list of a few thousand items is cheap.
+  assert.equal(capabilities.completionProvider?.resolveProvider, true);
+  assert.deepEqual(capabilities.signatureHelpProvider?.triggerCharacters, ["(", ","]);
 
   const sync = capabilities.textDocumentSync as TextDocumentSyncOptions;
   assert.equal(sync.change, TextDocumentSyncKind.Full);
@@ -385,6 +397,45 @@ test("a config file appearing rebuilds the project rather than patching it", asy
     changes: [{ uri: client.uri(".sqldex.json"), type: FileChangeType.Created }],
   });
   assert.deepEqual(await restated, []);
+
+  await client.stop();
+});
+
+// -------------------------------------------------------------------- features
+
+test("hover, completion and signature help all answer over the wire", async () => {
+  // The features have their own tests; what is at stake here is that the requests are wired to
+  // them at all, and that a position sent as JSON lands where the engine thinks it does.
+  const client = await start(project("shop"));
+  const uri = client.uri(SP);
+
+  const opened = client.nextDiagnostics(uri);
+  client.open(SP, SP_TEXT);
+  await opened;
+
+  // The `orders` of `INSERT INTO orders`, on the third line.
+  const onOrders = { line: 2, character: 16 };
+  const hovered = await client.connection.sendRequest(HoverRequest.type, {
+    textDocument: { uri },
+    position: onOrders,
+  });
+  assert.match((hovered?.contents as MarkupContent).value, /CREATE TABLE `orders`/);
+
+  const completed = (await client.connection.sendRequest(CompletionRequest.type, {
+    textDocument: { uri },
+    position: onOrders,
+  })) as CompletionList;
+  assert.ok(
+    completed.items.some((entry) => entry.label === "customers"),
+    "the catalog's tables were not offered where a table belongs",
+  );
+
+  const help = await client.connection.sendRequest(SignatureHelpRequest.type, {
+    textDocument: { uri },
+    // Inside the `VALUES (` of the same statement, which is not a call: nothing to help with.
+    position: { line: 2, character: 60 },
+  });
+  assert.equal(help, null);
 
   await client.stop();
 });

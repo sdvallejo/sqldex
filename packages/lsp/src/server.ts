@@ -29,13 +29,22 @@ import {
   DidChangeWatchedFilesNotification,
   TextDocumentSyncKind,
   TextDocuments,
+  type CompletionItem,
+  type CompletionList,
   type Connection,
+  type Hover,
   type InitializeParams,
   type InitializeResult,
+  type SignatureHelp,
+  type TextDocumentPositionParams,
 } from "vscode-languageserver";
 import { TextDocument } from "vscode-languageserver-textdocument";
 
 import { diagnosticsOf } from "./convert.ts";
+import { Analyses, at, type At } from "./documents.ts";
+import { complete, resolveItem } from "./features/completion.ts";
+import { hover } from "./features/hover.ts";
+import { signatureHelp } from "./features/signature.ts";
 import { Workspace } from "./workspace.ts";
 
 /** How long after the last keystroke before a document is checked again. */
@@ -61,6 +70,17 @@ function capabilities(): InitializeResult["capabilities"] {
       // it is updating is the catalog, and the catalog is a statement about what is on disk.
       save: { includeText: false },
     },
+    hoverProvider: true,
+    completionProvider: {
+      // The dot, and only the dot. Opening the menu on space as well was considered — it is what
+      // makes a menu appear on its own after `FROM ` — but the same rule opens it after *every*
+      // space in the file, and a list that is always up is a list nobody reads.
+      triggerCharacters: ["."],
+      // The heavy documentation, which for a table is its whole `CREATE TABLE`, is deferred to
+      // `resolve`: the client asks for it on the selected item and not on the whole list.
+      resolveProvider: true,
+    },
+    signatureHelpProvider: { triggerCharacters: ["(", ","] },
   };
 }
 
@@ -77,9 +97,16 @@ export function createServer(connection: Connection): void {
   /** Documents already reported on once; the next event from them is a keystroke, not an open. */
   const reported = new Set<string>();
 
+  const analyses = new Analyses();
+
   let workspace: Workspace | undefined;
   let canWatch = false;
   let folder: string | undefined;
+  /**
+   * Whether the client can expand `${1:name}` placeholders. Asked once at startup, because a server
+   * that guessed wrong would insert the literal text of a snippet into somebody's procedure.
+   */
+  let snippets = false;
 
   function publish(uri: string): void {
     const timer = pending.get(uri);
@@ -116,6 +143,7 @@ export function createServer(connection: Connection): void {
   connection.onInitialize((params: InitializeParams): InitializeResult => {
     folder = rootDirectory(params);
     canWatch = params.capabilities.workspace?.didChangeWatchedFiles?.dynamicRegistration === true;
+    snippets = params.capabilities.textDocument?.completion?.completionItem?.snippetSupport === true;
     // The catalog is not built here. Building it reads every `.sql` file in the project, and the
     // client is blocked until `initialize` answers — so the answer goes out first and the reading
     // happens under `initialized`, where nothing is waiting on it.
@@ -163,6 +191,35 @@ export function createServer(connection: Connection): void {
     publishAll();
   });
 
+  /**
+   * The shared opening of every position request: find the document, and work out what is at the
+   * cursor. A request that arrives for a document the server does not hold — a race with a close, or
+   * a client asking about a file it never opened — is answered with nothing rather than an error,
+   * because there is no failure here to report.
+   */
+  function positioned(params: TextDocumentPositionParams): At | undefined {
+    const document = documents.get(params.textDocument.uri);
+    if (!document || !workspace) return undefined;
+    return at(workspace, analyses.of(document), params.position);
+  }
+
+  connection.onHover((params): Hover | undefined => {
+    const here = positioned(params);
+    return here && hover(here);
+  });
+
+  connection.onSignatureHelp((params): SignatureHelp | undefined => {
+    const here = positioned(params);
+    return here && signatureHelp(here);
+  });
+
+  connection.onCompletion((params): CompletionList => {
+    const here = positioned(params);
+    return here ? complete(here, snippets) : { isIncomplete: false, items: [] };
+  });
+
+  connection.onCompletionResolve((item): CompletionItem => (workspace ? resolveItem(workspace, item) : item));
+
   documents.onDidChangeContent((event) => {
     // An open is not an edit: there is no keystroke to wait for the end of, and waiting is the
     // difference between a file that is checked when you look at it and one that is checked shortly
@@ -187,6 +244,7 @@ export function createServer(connection: Connection): void {
     if (timer) clearTimeout(timer);
     pending.delete(event.document.uri);
     reported.delete(event.document.uri);
+    analyses.forget(event.document.uri);
     // A closed document keeps its diagnostics in some clients' problem panes forever otherwise.
     connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
   });

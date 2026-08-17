@@ -24,7 +24,7 @@ published to npm yet, so using it means a checkout.
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
 | Lint rules | 27 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
-| `sqldex-lsp` language server | started — findings only, as you type; nothing else answers yet |
+| `sqldex-lsp` language server | findings as you type, hover, completion and signature help |
 | Editor extensions | not built |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
@@ -54,6 +54,10 @@ the columns a `SELECT` list defines, and where each was declared.
 **Locates the cursor** and classifies what belongs at it — a qualified column, a table name, a
 routine, the columns of an `INSERT INTO t (...)`, the values of a column being compared — which is
 what completion and signature help are built from.
+
+**Carries MySQL's built-in functions**: signature, a one-line summary and a family, for the ones a
+schema repository is actually written with. Written out by hand rather than lifted from the server's
+own help tables, which ship under the GPL.
 
 Offsets are 0-based, counted in UTF-16 code units, with an exclusive end: the LSP convention,
 adopted at the bottom of the engine so no layer has to translate positions on the way out.
@@ -257,7 +261,7 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 238 tests, hand-written fixtures only
+npm test                        # 274 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"

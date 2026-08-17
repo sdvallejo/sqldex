@@ -2,6 +2,7 @@
 
 import type { ColumnType } from "../../model/table.ts";
 import type { Dialect } from "../dialect.ts";
+import { builtin, FUNCTIONS } from "./functions.ts";
 import { isKeyword } from "./keywords.ts";
 
 export const mysql: Dialect = {
@@ -31,6 +32,11 @@ export const mysql: Dialect = {
     const low = type.raw.toLowerCase();
     return low.includes("char") || low.includes("text") || low.startsWith("enum") || low.startsWith("set");
   },
+
+  functions: FUNCTIONS,
+  builtin,
 };
 
+export type { BuiltinFunction } from "./functions.ts";
+export { builtin, FUNCTIONS } from "./functions.ts";
 export { isKeyword, KEYWORDS } from "./keywords.ts";
