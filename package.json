@@ -1,0 +1,21 @@
+{
+  "name": "sqldex-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'packages/*/test/**/*.test.ts'",
+    "bench": "node tools/bench.ts",
+    "check:flat": "node tools/check-flat.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}
