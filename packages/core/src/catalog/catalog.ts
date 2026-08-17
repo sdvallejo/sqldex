@@ -177,6 +177,33 @@ export function normaliseType(type: ColumnType | undefined): string {
   return low;
 }
 
+/**
+ * How each column name is typed across a whole schema: `{ status: { "char(1)": 12 } }`.
+ *
+ * Standalone rather than a method so that the rule which reads a census and a test which builds
+ * one by hand are looking at the same function. The exclusions are the reason it needs saying at
+ * all: `aud_` twins and `*Mig` copies duplicate their source's columns, so counting them doubles
+ * every tally without adding a case, and a migration table's stale type is not evidence about the
+ * current schema.
+ */
+export function columnTypeCensus(
+  dialect: Dialect,
+  tables: ReadonlyMap<string, Table>,
+): Map<string, Map<string, number>> {
+  const byName = new Map<string, Map<string, number>>();
+  for (const [key, table] of tables) {
+    if (key.startsWith("aud_") || key.endsWith("mig")) continue;
+    for (const column of table.columns) {
+      const name = dialect.foldIdentifier(column.name, column.quoted);
+      let kinds = byName.get(name);
+      if (!kinds) byName.set(name, (kinds = new Map()));
+      const kind = normaliseType(column.type);
+      kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    }
+  }
+  return byName;
+}
+
 export class Catalog implements CatalogLookup {
   readonly root: string;
   readonly dialect: Dialect;
@@ -418,22 +445,8 @@ export class Catalog implements CatalogLookup {
    * is not evidence about the current schema.
    */
   columnTypes(): Map<string, Map<string, number>> {
-    if (this.columnTypesCache) return this.columnTypesCache;
-
-    const byName = new Map<string, Map<string, number>>();
-    for (const [key, table] of this.tables) {
-      if (key.startsWith("aud_") || key.endsWith("mig")) continue;
-      for (const column of table.columns) {
-        const name = this.fold(column.name, column.quoted);
-        let kinds = byName.get(name);
-        if (!kinds) byName.set(name, (kinds = new Map()));
-        const kind = normaliseType(column.type);
-        kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
-      }
-    }
-
-    this.columnTypesCache = byName;
-    return byName;
+    this.columnTypesCache ??= columnTypeCensus(this.dialect, this.tables);
+    return this.columnTypesCache;
   }
 
   /**

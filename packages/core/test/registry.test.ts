@@ -14,19 +14,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { CatalogLookup } from "../src/catalog/catalog.ts";
+import { columnTypeCensus } from "../src/catalog/catalog.ts";
 import { defaults } from "../src/config/config.ts";
 import type { Config } from "../src/config/config.ts";
 import type { Diagnostic } from "../src/diagnostics.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
 import type { Table } from "../src/model/table.ts";
 import { check, Registry } from "../src/rules/registry.ts";
-import type { Rule } from "../src/rules/rule.ts";
+import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
 import { parseDDL } from "../src/syntax/fast/ddl.ts";
 import { tokenize } from "../src/syntax/fast/lexer.ts";
 
 /** A catalog holding exactly what a case needs. */
-function catalogOf(ddl = ""): CatalogLookup {
+function catalogOf(ddl = ""): RuleCatalog {
   const tables = new Map<string, Table>();
   for (const table of parseDDL(mysql, ddl, tokenize(ddl)).tables) {
     tables.set(table.name.toLowerCase(), table);
@@ -36,6 +36,7 @@ function catalogOf(ddl = ""): CatalogLookup {
     routine: () => undefined,
     trigger: () => undefined,
     tempTable: () => undefined,
+    columnTypes: () => columnTypeCensus(mysql, tables),
   };
 }
 

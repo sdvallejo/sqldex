@@ -12,7 +12,7 @@ export {
 export type { ColumnValue, ValueAccumulator } from "./analysis/values.ts";
 export { fromComment, isEnumLike } from "./analysis/values.ts";
 export type { CatalogLookup, CatalogStats, FileEntry, IncomingFk, TempTableEntry } from "./catalog/catalog.ts";
-export { Catalog, normaliseType } from "./catalog/catalog.ts";
+export { Catalog, columnTypeCensus, normaliseType } from "./catalog/catalog.ts";
 export type { FileRef } from "./catalog/project.ts";
 export {
   detectSources,
@@ -52,6 +52,7 @@ export type {
   BaseContext,
   DocumentContext,
   Rule,
+  RuleCatalog,
   RuleContext,
   RuleGroup,
   RuleScope,
@@ -61,6 +62,7 @@ export type {
 } from "./rules/rule.ts";
 export type { CheckOptions } from "./rules/registry.ts";
 export { check, Registry } from "./rules/registry.ts";
+export { allRules, schemaRules } from "./rules/index.ts";
 export type { Analysis, Context, ContextKind, Cursor } from "./syntax/fast/cursor.ts";
 export { analyze, classify, locateCursor } from "./syntax/fast/cursor.ts";
 export type { ParsedDDL } from "./syntax/fast/ddl.ts";

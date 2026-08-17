@@ -22,7 +22,6 @@
  * to be uniform to mean anything, and a rule that could opt out of the cap would defeat it.
  */
 
-import type { CatalogLookup } from "../catalog/catalog.ts";
 import type { Config } from "../config/config.ts";
 import type { Diagnostic, DiagnosticTag, Severity } from "../diagnostics.ts";
 import type { Dialect } from "../dialects/dialect.ts";
@@ -40,6 +39,7 @@ import type { Span, Token } from "../syntax/types.ts";
 import type {
   DocumentContext,
   Rule,
+  RuleCatalog,
   StatementContext,
   TableContext,
   TriggerContext,
@@ -157,7 +157,7 @@ interface Active {
 
 export interface CheckOptions {
   dialect: Dialect;
-  catalog: CatalogLookup;
+  catalog: RuleCatalog;
   /** The schemas this project defines, folded. */
   schemas: ReadonlySet<string>;
   config: Config;

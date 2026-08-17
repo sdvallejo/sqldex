@@ -68,10 +68,22 @@ export type RuleScope =
   /** Once per `CREATE TRIGGER` in the file. */
   | "trigger";
 
+/**
+ * What the rules ask of a catalog.
+ *
+ * The lookups, plus the one thing a rule needs that no single table can answer: how a column name
+ * is typed across the whole schema. It is a narrower interface than `Catalog` on purpose — a rule
+ * that could reach the file list or the parse errors would be a rule that depends on how the
+ * catalog was built.
+ */
+export interface RuleCatalog extends CatalogLookup {
+  columnTypes(): Map<string, Map<string, number>>;
+}
+
 /** Common to every scope: where we are, and how to say something about it. */
 export interface BaseContext {
   readonly dialect: Dialect;
-  readonly catalog: CatalogLookup;
+  readonly catalog: RuleCatalog;
   /** The schemas this project defines, folded. A reference outside them is not knowable. */
   readonly schemas: ReadonlySet<string>;
   readonly src: string;
