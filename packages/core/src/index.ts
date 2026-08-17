@@ -27,11 +27,11 @@ export type {
   Config,
   DiagnosticsConfig,
   InlayHintsConfig,
-  Severity,
   Source,
   SourceKind,
 } from "./config/config.ts";
 export { CONFIG_FILES, defaults, get, invalidate, merge, schemas } from "./config/config.ts";
+export type { Diagnostic, DiagnosticTag, Severity } from "./diagnostics.ts";
 export type { Dialect, DialectId } from "./dialects/dialect.ts";
 export { isKeyword, KEYWORDS, mysql } from "./dialects/mysql/index.ts";
 export type { Local, LocalKind, Locals } from "./model/locals.ts";
@@ -48,6 +48,19 @@ export type {
   TriggerEvent,
   TriggerTiming,
 } from "./model/table.ts";
+export type {
+  BaseContext,
+  DocumentContext,
+  Rule,
+  RuleContext,
+  RuleGroup,
+  RuleScope,
+  StatementContext,
+  TableContext,
+  TriggerContext,
+} from "./rules/rule.ts";
+export type { CheckOptions } from "./rules/registry.ts";
+export { check, Registry } from "./rules/registry.ts";
 export type { Analysis, Context, ContextKind, Cursor } from "./syntax/fast/cursor.ts";
 export { analyze, classify, locateCursor } from "./syntax/fast/cursor.ts";
 export type { ParsedDDL } from "./syntax/fast/ddl.ts";

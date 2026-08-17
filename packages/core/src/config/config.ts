@@ -12,7 +12,9 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
+import type { Severity } from "../diagnostics.ts";
 import type { DialectId } from "../dialects/dialect.ts";
+import type { RuleGroup } from "../rules/rule.ts";
 
 export type SourceKind = "tables" | "routines" | "data" | "auto";
 
@@ -23,27 +25,26 @@ export interface Source {
   kind: SourceKind;
 }
 
-export type Severity = "error" | "warn" | "hint";
-
 /**
- * The diagnostic families, kept as booleans for compatibility with existing config files. The
- * per-rule `rules` map is the finer layer on top; see `Config.rules`.
+ * What is reported, and how loudly.
+ *
+ * One mechanism at two granularities: a whole `group`, or a single rule by `id`. This used to be a
+ * dozen booleans named after the rule families, which was the group in a second vocabulary that
+ * had to be kept in step by hand — and a boolean can only say on or off, so raising one rule to an
+ * error needed a third mechanism on top of the two.
  */
 export interface DiagnosticsConfig {
-  /** Publish diagnostics while editing. A `sqldex check` run reports either way. */
+  /**
+   * Publish diagnostics while editing. Off by default because procedural SQL has too many ways of
+   * naming something a static reader cannot see — SQL built as a string, tables created in another
+   * session, session variables — for underlining a whole file to be a good first impression. A
+   * `sqldex check` run reports either way: asking for it *is* the opt-in.
+   */
   enabled: boolean;
-  unqualified_columns: boolean;
-  ambiguous_columns: boolean;
-  null_arithmetic: boolean;
-  unused_variables: boolean;
-  uninitialised_variables: boolean;
-  collation_mismatch: boolean;
-  unfiltered_writes: boolean;
-  fk_indexes: boolean;
-  join_conditions: boolean;
-  redundant_indexes: boolean;
-  divergent_types: boolean;
-  audit_sync: boolean;
+  /** By group: `{ "audit": "off" }` in a repo with no mirror-table convention. */
+  groups: Partial<Record<RuleGroup, Severity | "off">>;
+  /** By rule id, which wins over its group: `{ "query/unfiltered-write": "off" }`. */
+  rules: Record<string, Severity | "off">;
 }
 
 export interface InlayHintsConfig {
@@ -76,13 +77,6 @@ export interface Config {
   exclude: string[];
   diagnostics: DiagnosticsConfig;
   inlay_hints: InlayHintsConfig;
-  /**
-   * Severity per rule code, on top of the family booleans: `{ "A8": "off" }`.
-   *
-   * The families say which group of checks runs; this says what one particular rule does, which
-   * the codes only make possible now that every diagnostic carries one.
-   */
-  rules: Record<string, Severity | "off">;
   /** Which engine the SQL is written for. One value is implemented. */
   dialect: DialectId;
   /**
@@ -101,46 +95,12 @@ export const defaults: Config = {
   exclude: ["deploy.sql", "rollback.sql"],
   diagnostics: {
     enabled: false,
-    // Unqualified columns (`status` instead of `o.status`).
-    //
-    // Unguarded this rule is unusable: every reserved word, alias and block label in the file
-    // reads as a column no table has. The guards are what make it accurate — reserved words,
-    // statement aliases, `SELECT` output aliases, block labels, and above all requiring that
-    // **every** relation in the statement resolved, because one unknown table means any bare
-    // name could be its column. With those it is precise enough to ship enabled.
-    unqualified_columns: true,
-    // A bare column more than one of the query's tables has: MySQL rejects it with error 1052.
-    // The only rule with a scope model of its own — ambiguity is a question about a query, and
-    // the `;` bound the others share merges two of them into one.
-    ambiguous_columns: true,
-    // `LEFT JOIN` columns used in arithmetic without `COALESCE`. If the right-hand row is
-    // missing, the column is NULL and the whole expression is NULL, with no error.
-    null_arithmetic: true,
-    // `DECLARE` variables nobody reads. A HINT rather than a warning: it is dead code, not a bug.
-    unused_variables: true,
-    // A `DECLARE` with no `DEFAULT` that nothing ever assigns, and that is nevertheless read.
-    // Every such read is a read of NULL, and it is the kind of bug that survives for years.
-    uninitialised_variables: true,
-    // A join comparing two text columns that do not share a collation. MySQL either refuses the
-    // comparison or coerces one side, which rules out the index on it.
-    collation_mismatch: true,
-    // An `UPDATE` or `DELETE` with no `WHERE`, `JOIN`, `USING` or `LIMIT`, over a table that is
-    // not temporary. Those guards are what make it usable: without them it is mostly noise about
-    // scratch tables a procedure just created and is about to fill.
-    unfiltered_writes: true,
-    // A foreign key whose referenced columns no index on the target begins with, so InnoDB
-    // cannot use one to check the constraint. order matters, not just the set of columns.
-    fk_indexes: true,
-    // A `JOIN` between two schema tables with neither `ON` nor `USING`: a cartesian product.
-    join_conditions: true,
-    // An index whose columns a longer one already begins with. A HINT: nothing is broken, and
-    // dropping an index is a decision about a live database.
-    redundant_indexes: true,
-    // One table typing a shared column name differently from all the others.
-    divergent_types: true,
-    // Audit tables and triggers that have fallen behind the table they mirror. It only fires
-    // where the `aud_X` convention is actually in use.
-    audit_sync: true,
+    // Empty on purpose: every rule ships at the severity it declares. What a rule is for, and
+    // why it is worth its false positives, belongs in that rule's `docs` — one place, which is
+    // also what `sqldex explain` prints. Restating it here as a list of flags is how the two
+    // drift apart.
+    groups: {},
+    rules: {},
   },
   inlay_hints: {
     // `o.status` gains `: char(1)`. Sparse enough not to crowd the line — roughly one hint per
@@ -149,7 +109,6 @@ export const defaults: Config = {
     // `o` gains `shipments`, but only the **first** time it appears in a statement.
     alias_tables: true,
   },
-  rules: {},
   dialect: "mysql",
   root_markers: [".sqldex.json", "tablas", "tables", ".git"],
 };

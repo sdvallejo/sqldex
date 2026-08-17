@@ -103,13 +103,16 @@ test("the project file overrides the schemas", () => {
 
 test("the project file wins over the options, which win over the defaults", () => {
   const root = makeRepo(["tables", "sps"]);
-  writeFileSync(join(root, ".sqldex.json"), '{ "diagnostics": { "fk_indexes": false } }');
+  writeFileSync(join(root, ".sqldex.json"), '{ "diagnostics": { "groups": { "audit": "off" } } }');
   invalidate();
 
-  const config = get(root, { diagnostics: { fk_indexes: true, join_conditions: false } as never });
-  assert.equal(config.diagnostics.fk_indexes, false, "the project file describes this one repo");
-  assert.equal(config.diagnostics.join_conditions, false, "the options still apply where it is silent");
-  assert.equal(config.diagnostics.unused_variables, true, "and the defaults where both are");
+  const config = get(root, {
+    diagnostics: { enabled: true, groups: { audit: "warn", query: "off" }, rules: {} },
+  });
+  assert.equal(config.diagnostics.groups.audit, "off", "the project file describes this one repo");
+  assert.equal(config.diagnostics.groups.query, "off", "the options still apply where it is silent");
+  assert.equal(config.diagnostics.enabled, true, "and they reach keys the project file omits");
+  assert.deepEqual(config.diagnostics.rules, {}, "and the defaults where both are silent");
 });
 
 test("invalid JSON is reported and treated as absent, rather than refusing to start", () => {

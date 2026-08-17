@@ -15,13 +15,15 @@ read them in another, names in two languages and three casing styles.
 
 ## Status
 
-**Early. This is a library, not a tool yet.** The analysis engine is complete and tested; nothing
-is published to npm.
+**Early. This is a library, not a tool yet.** The analysis engine is complete and tested, and rules
+can be written against it — but none ship, and there is no command to run them with. Nothing is
+published to npm.
 
 | | |
 |---|---|
 | Catalog and name resolution | works |
-| Lint rules | not built — `.sqldex.json` already reserves the shape they will use |
+| Rule engine | works — registry, traversals, suppression, per-rule severity |
+| The rules themselves | none written yet |
 | `sqldex` CLI | not built |
 | Language server, editor extensions | not built |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
@@ -117,10 +119,72 @@ ones:
 being checked against a same-named table of this one; it defaults to the root directory's name.
 Keys are `snake_case` because this is a file format people write by hand, not the model.
 
+## Rules
+
+The engine is there; no rules ship with it yet. A rule declares what it is about and which subject
+it wants, and the engine hands it that subject with the shared work already done — the rule never
+lexes, parses or reads a file:
+
+```ts
+import { check, defaults, Registry, type Rule } from "@sqldex/core";
+
+const noCartesianJoin: Rule = {
+  id: "query/join-without-condition",
+  group: "query",
+  severity: "warn",
+  scope: "statement",
+  docs: "A JOIN with neither ON nor USING multiplies the two tables together.",
+  check(ctx) {
+    // The statement's relations arrive already resolved against the catalog.
+    if (ctx.relations.length < 2) return;
+    const body = ctx.tokens.slice(ctx.statement.from, ctx.statement.to + 1);
+    if (body.some((t) => /^(on|using)$/i.test(t.v))) return;
+    const at = ctx.relations[1]!;
+    ctx.report(at.nameSpan!, "this JOIN has no ON or USING");
+  },
+};
+
+const registry = new Registry().add(noCartesianJoin);
+const sql = "SELECT * FROM orders o JOIN customers c;";
+console.log(check(registry, { ...context, config: defaults }, sql));
+//  [ { span: { s: 28, e: 37 }, code: 'query/join-without-condition',
+//      severity: 'warn', message: 'this JOIN has no ON or USING' } ]
+```
+
+`context` is the one built in *Usage* above, plus the config the severities are resolved against.
+
+A rule's `id` is `group/name`, and it is the whole identity: it appears in the diagnostic, in a
+suppression comment and in the config, and the engine refuses an `id` whose prefix disagrees with
+its `group`. The five groups — `names`, `schema`, `query`, `routine`, `audit` — say what a rule is
+*about*, which is what someone turning rules off is choosing between; how much a finding matters is
+`severity`, separately, so the two cannot drift into contradicting each other.
+
+Silencing happens at three widths, and a project file overrides a rule's default severity rather
+than only switching it off:
+
+```json
+{
+  "diagnostics": {
+    "groups": { "audit": "off" },
+    "rules": { "query/join-without-condition": "error" }
+  }
+}
+```
+
+```sql
+-- sqldex:ignore                       -- the next line, whatever the rule
+-- sqldex:ignore query/unfiltered-write -- the next line, that rule only
+-- sqldex:ignore-file                   -- this file
+```
+
+The engine caps a file at 100 findings, and reports a given token once: two rules can both see a
+name, and hearing about it twice makes you look for two problems. The first rule registered wins,
+which is why registration order is deliberate and listing order is not.
+
 ## Development
 
 ```
-npm test                        # 38 tests, hand-written fixtures only
+npm test                        # 58 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"
