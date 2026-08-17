@@ -15,15 +15,15 @@ read them in another, names in two languages and three casing styles.
 
 ## Status
 
-**Early. This is a library, not a tool yet.** The analysis engine is complete and tested, and rules
-can be written against it — but none ship, and there is no command to run them with. Nothing is
-published to npm.
+**Early. This is a library, not a tool yet.** The analysis engine is complete and tested, and some
+rules ship — but there is no command to run them with, so using them means calling `check` yourself.
+Nothing is published to npm.
 
 | | |
 |---|---|
 | Catalog and name resolution | works |
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
-| The rules themselves | none written yet |
+| Lint rules | 14 of the planned set: schema shape, the `aud_` convention, variables and cursors, ambiguous columns |
 | `sqldex` CLI | not built |
 | Language server, editor extensions | not built |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
@@ -121,7 +121,7 @@ Keys are `snake_case` because this is a file format people write by hand, not th
 
 ## Rules
 
-The engine is there; no rules ship with it yet. A rule declares what it is about and which subject
+A rule declares what it is about and which subject
 it wants, and the engine hands it that subject with the shared work already done — the rule never
 lexes, parses or reads a file:
 
@@ -184,7 +184,7 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 58 tests, hand-written fixtures only
+npm test                        # 125 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"

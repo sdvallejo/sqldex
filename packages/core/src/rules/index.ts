@@ -16,7 +16,12 @@
 
 import { auditTableOutOfSync } from "./audit/table-out-of-sync.ts";
 import { auditTriggerMissingColumn } from "./audit/trigger-missing-column.ts";
+import { ambiguousColumn } from "./names/ambiguous-column.ts";
 import { Registry } from "./registry.ts";
+import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
+import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
+import { unusedVariable } from "./routine/unused-variable.ts";
+import { variableNeverAssigned } from "./routine/variable-never-assigned.ts";
 import { divergentType } from "./schema/divergent-type.ts";
 import { fkMissingIndex } from "./schema/fk-missing-index.ts";
 import { fkUnknownColumn } from "./schema/fk-unknown-column.ts";
@@ -24,6 +29,26 @@ import { fkUnknownTable } from "./schema/fk-unknown-table.ts";
 import { indexUnknownColumn } from "./schema/index-unknown-column.ts";
 import { noPrimaryKey } from "./schema/no-primary-key.ts";
 import { redundantIndex } from "./schema/redundant-index.ts";
+
+/**
+ * The rules that read the whole file, in running order.
+ *
+ * They go before the schema rules because that is what "the whole file" means: whether a variable is
+ * ever read, or whether a name is ambiguous in its query, is a question you can only answer having
+ * looked at everything.
+ *
+ * The collision inside this group is between the two variable rules — a read can be both the first
+ * unprotected read of a never-assigned variable and a use of a nullable-tainted one. "Never assigned"
+ * goes first because it is the stronger claim: that read cannot be anything but NULL, where the other
+ * says it might be.
+ */
+export const documentRules = [
+  unusedVariable,
+  variableNeverAssigned,
+  nullableIntoArithmetic,
+  ambiguousColumn,
+  cursorNeverOpened,
+] as const;
 
 /** The rules that read a `CREATE TABLE` or a `CREATE TRIGGER`, in running order. */
 export const schemaRules = [
@@ -45,17 +70,22 @@ export const schemaRules = [
  * a rule of its own should not be editing everybody else's.
  */
 export function allRules(): Registry {
-  return new Registry().add(...schemaRules);
+  return new Registry().add(...documentRules, ...schemaRules);
 }
 
 export {
+  ambiguousColumn,
   auditTableOutOfSync,
   auditTriggerMissingColumn,
+  cursorNeverOpened,
   divergentType,
   fkMissingIndex,
   fkUnknownColumn,
   fkUnknownTable,
   indexUnknownColumn,
   noPrimaryKey,
+  nullableIntoArithmetic,
   redundantIndex,
+  unusedVariable,
+  variableNeverAssigned,
 };

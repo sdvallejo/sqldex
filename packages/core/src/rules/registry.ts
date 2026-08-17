@@ -26,20 +26,21 @@ import type { Config } from "../config/config.ts";
 import type { Diagnostic, DiagnosticTag, Severity } from "../diagnostics.ts";
 import type { Dialect } from "../dialects/dialect.ts";
 import type { Locals } from "../model/locals.ts";
-import type { Relation } from "../model/query.ts";
+import type { QueryScope, Relation } from "../model/query.ts";
 import type { Table } from "../model/table.ts";
 import { collect } from "../analysis/locals.ts";
 import { relation as resolveRelation } from "../analysis/resolve.ts";
 import { parseDDL } from "../syntax/fast/ddl.ts";
 import { lineCol, lineIndex, tokenize } from "../syntax/fast/lexer.ts";
 import { parseRoutines } from "../syntax/fast/routine.ts";
-import { queryScopes, relations as statementRelations, statements } from "../syntax/fast/stmt.ts";
+import { cteNames, queryScopes, relations as statementRelations, statements } from "../syntax/fast/stmt.ts";
 import { kw, kwAny } from "../syntax/fast/tok.ts";
-import type { Span, Token } from "../syntax/types.ts";
+import type { Span, Token, TokenRange } from "../syntax/types.ts";
 import type {
   DocumentContext,
   Rule,
   RuleCatalog,
+  ScopeInfo,
   StatementContext,
   TableContext,
   TriggerContext,
@@ -136,6 +137,68 @@ export class Registry {
   all(): Rule[] {
     return this.inOrder().sort((a, b) => a.id.localeCompare(b.id));
   }
+}
+
+/**
+ * The file's query scopes, each with its relations, plus which scope owns each token.
+ *
+ * Two things here are decisions rather than plumbing:
+ *
+ *   - **Common table expressions are collected over the whole file, not per scope.** A `WITH` sits
+ *     outside the scopes nested inside its body, so a per-range search would miss it there and the
+ *     name would resolve against a catalog table that happens to share it. Wrong answer, and a
+ *     confidently wrong one.
+ *   - **Relations are taken at the scope's own depth** (`shallow`). A scope that reached into its
+ *     subqueries would claim their tables as its own, which is the difference between "which
+ *     relations could this name belong to" and "which relations appear anywhere below here".
+ */
+function buildScopes(
+  dialect: Dialect,
+  tokens: readonly Token[],
+): { infos: ScopeInfo[]; owner: (ScopeInfo | undefined)[] } {
+  const ctes = tokens.length > 0 ? cteNames(dialect, tokens, 0, tokens.length - 1) : new Set<string>();
+  const raw = queryScopes(tokens);
+
+  const infos: ScopeInfo[] = [];
+  const byRaw = new Map<QueryScope, ScopeInfo>();
+  for (const scope of raw) {
+    const rels = statementRelations(dialect, tokens, scope.from, scope.to, true);
+    const byAlias = new Map<string, Relation>();
+    for (const rel of rels) {
+      if (rel.name && !rel.schema && ctes.has(dialect.foldIdentifier(rel.name, rel.quoted === true))) {
+        rel.cte = true;
+      }
+      if (rel.name) byAlias.set(dialect.foldIdentifier(rel.name, rel.quoted === true), rel);
+    }
+    for (const rel of rels) {
+      if (rel.alias) byAlias.set(dialect.foldIdentifier(rel.alias, rel.aliasQuoted === true), rel);
+    }
+    const info: ScopeInfo = {
+      from: scope.from,
+      to: scope.to,
+      depth: scope.depth,
+      relations: rels,
+      byAlias,
+    };
+    byRaw.set(scope, info);
+    infos.push(info);
+  }
+
+  // The parent links, once every info exists.
+  raw.forEach((scope, i) => {
+    if (!scope.parent) return;
+    const parent = byRaw.get(scope.parent);
+    if (parent) (infos[i] as { parent?: ScopeInfo }).parent = parent;
+  });
+
+  // In source order, so a nested scope overwrites its parent's claim on the tokens it covers: a
+  // bare name resolves in the innermost scope that has it, the way the engine resolves it.
+  const owner: (ScopeInfo | undefined)[] = new Array(tokens.length);
+  infos.forEach((info) => {
+    for (let i = info.from; i <= info.to; i++) owner[i] = info;
+  });
+
+  return { infos, owner };
 }
 
 /** What a rule reports at here, or `undefined` when it is silenced. */
@@ -257,7 +320,22 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   const triggerRules = active.filter((a) => a.rule.scope === "trigger");
 
   if (documentRules.length > 0) {
-    const ctx: DocumentContext = { ...base, scopes: queryScopes(tokens) };
+    // Lazy and memoised rather than eager: `routine/unused-variable` needs neither scopes nor
+    // statements, and a file of pure DDL would pay for both to no purpose. Two rules that do want
+    // them still only pay once, which is the property that matters.
+    let builtScopes: { infos: ScopeInfo[]; owner: (ScopeInfo | undefined)[] } | undefined;
+    const build = (): { infos: ScopeInfo[]; owner: (ScopeInfo | undefined)[] } => {
+      builtScopes ??= buildScopes(dialect, tokens);
+      return builtScopes;
+    };
+    let builtStatements: TokenRange[] | undefined;
+
+    const ctx: DocumentContext = {
+      ...base,
+      scopes: () => build().infos,
+      scopeAt: (index) => build().owner[index],
+      statements: () => (builtStatements ??= statements(tokens)),
+    };
     for (const entry of documentRules) {
       current = entry;
       if (entry.rule.scope === "document") entry.rule.check(ctx);

@@ -16,17 +16,29 @@
  *
  * ## What a rule may look at
  *
- * Only the model and the catalog, through the context it is given. A rule never lexes, never
- * parses and never reads a file — that is what keeps the syntax backend replaceable, and it is why
- * the contexts below hand over already-computed relations and scopes rather than tokens to
- * rummage through.
+ * The model, the catalog, and the token stream — through the context it is given, and nothing it
+ * fetches for itself. A rule never lexes, never parses and never reads a file.
+ *
+ * The token stream is in that list on purpose, and it is worth being straight about why, because
+ * the tidier promise would be "only the model". Some of these rules ask questions the model has no
+ * place to hold an answer to: *is this variable ever read*, *does this name sit inside a
+ * `COALESCE`*, *is the same word here a column and there the name of a result*. Those are lexical
+ * facts about a body of procedural SQL, and a rule that wants them has to look at tokens. Denying
+ * that would mean either a model shaped like a full syntax tree — which is the ANTLR backend, a
+ * later phase — or rules that quietly reach around their context, which is worse.
+ *
+ * So the seam is narrower than "no tokens" and still worth having: what the **schema** rules see is
+ * the model, `Table` and `Column` and the catalog, with no token in sight. Those are the rules a
+ * different parser would have to keep working, and they are insulated. The lexical rules are
+ * coupled to the fast backend by their nature, and saying so is better than a comment that claims
+ * otherwise.
  */
 
 import type { Dialect, DialectId } from "../dialects/dialect.ts";
 import type { CatalogLookup } from "../catalog/catalog.ts";
 import type { DiagnosticTag, Severity } from "../diagnostics.ts";
 import type { Locals } from "../model/locals.ts";
-import type { QueryScope, Relation } from "../model/query.ts";
+import type { Relation } from "../model/query.ts";
 import type { Table, Trigger } from "../model/table.ts";
 import type { Span, Token, TokenRange } from "../syntax/types.ts";
 
@@ -102,13 +114,36 @@ export interface BaseContext {
   report(at: Span | Token, message: string, tags?: DiagnosticTag[]): void;
 }
 
+/**
+ * One query scope with the work every rule that uses scopes would otherwise redo.
+ *
+ * A scope is a finer cut than a statement, and the finer cut is the one that answers "what does
+ * this name mean": the `;` bound merges an `IF EXISTS(SELECT … FROM a) THEN UPDATE b` into a single
+ * set of relations, which is a different query's worth of names.
+ */
+export interface ScopeInfo {
+  readonly from: number;
+  readonly to: number;
+  /** Parenthesis depth it opened at. */
+  readonly depth: number;
+  /** The enclosing scope, which is what a name not found here is looked up in next. */
+  readonly parent?: ScopeInfo;
+  /** The relations at this scope's own depth, with common table expressions already marked. */
+  readonly relations: readonly Relation[];
+  /** By folded alias **and** folded name, aliases winning. */
+  readonly byAlias: ReadonlyMap<string, Relation>;
+}
+
 export interface DocumentContext extends BaseContext {
   /**
-   * The file's queries, cut where the engine cuts them, which is a finer cut than a statement.
-   * Ambiguity is a question about a query, so the rule that asks it needs this and not the
-   * statement bounds.
+   * The file's query scopes, outermost first. Computed on first call and kept, so a document rule
+   * that does not need them does not pay for them and two that do only pay once.
    */
-  readonly scopes: readonly QueryScope[];
+  scopes(): readonly ScopeInfo[];
+  /** The innermost scope covering a token index, which is where a bare name resolves first. */
+  scopeAt(index: number): ScopeInfo | undefined;
+  /** The file's statements, on the same terms: computed once, on demand. */
+  statements(): readonly TokenRange[];
 }
 
 export interface StatementContext extends BaseContext {
