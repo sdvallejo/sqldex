@@ -137,6 +137,22 @@ export function qualifier(
   scope: Locals,
   name: string,
 ): Resolved | undefined {
+  return qualifierIn(ctx, analysis.byAlias, scope, name);
+}
+
+/**
+ * The same, against an alias map given directly.
+ *
+ * A caller that has the aliases but not a cursor `Analysis` — a diagnostic reading a reference
+ * somewhere in the middle of a statement, rather than under a cursor — would otherwise have to
+ * fabricate the rest of an `Analysis` to ask this question.
+ */
+export function qualifierIn(
+  ctx: ResolveContext,
+  byAlias: ReadonlyMap<string, Relation>,
+  scope: Locals,
+  name: string,
+): Resolved | undefined {
   const key = ctx.dialect.foldIdentifier(name, false);
 
   if ((key === "new" || key === "old") && scope.triggerTable !== undefined) {
@@ -144,7 +160,7 @@ export function qualifier(
     if (table) return { kind: "table", table, name: table.name };
   }
 
-  const relation = analysis.byAlias.get(key);
+  const relation = byAlias.get(key);
   if (relation) {
     if (!relation.name || relation.cte || foreignSchema(ctx, relation)) {
       return { kind: "derived", name };

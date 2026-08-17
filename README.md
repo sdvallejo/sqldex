@@ -15,15 +15,15 @@ read them in another, names in two languages and three casing styles.
 
 ## Status
 
-**Early. This is a library, not a tool yet.** The analysis engine is complete and tested, and some
-rules ship — but there is no command to run them with, so using them means calling `check` yourself.
+**Early. This is a library, not a tool yet.** The analysis engine and the rules are complete and
+tested — but there is no command to run them with, so using them means calling `check` yourself.
 Nothing is published to npm.
 
 | | |
 |---|---|
 | Catalog and name resolution | works |
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
-| Lint rules | 14 of the planned set: schema shape, the `aud_` convention, variables and cursors, ambiguous columns |
+| Lint rules | 27 of them, in five groups — see below |
 | `sqldex` CLI | not built |
 | Language server, editor extensions | not built |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
@@ -121,9 +121,27 @@ Keys are `snake_case` because this is a file format people write by hand, not th
 
 ## Rules
 
-A rule declares what it is about and which subject
-it wants, and the engine hands it that subject with the shared work already done — the rule never
-lexes, parses or reads a file:
+Twenty-seven of them, in five groups that say what a rule is *about* — which is what someone
+turning rules off is choosing between:
+
+| Group | Rules |
+|---|---|
+| `names` | `unknown-table`, `unknown-alias`, `unknown-column`, `unqualified-column`, `unknown-routine`, `ambiguous-column` |
+| `schema` | `fk-unknown-table`, `fk-unknown-column`, `fk-missing-index`, `index-unknown-column`, `redundant-index`, `divergent-type`, `no-primary-key` |
+| `query` | `insert-value-count`, `insert-unknown-column`, `unfiltered-write`, `join-without-condition`, `collation-mismatch`, `left-join-arithmetic` |
+| `routine` | `call-arity`, `out-argument-not-variable`, `cursor-never-opened`, `unused-variable`, `variable-never-assigned`, `nullable-into-arithmetic` |
+| `audit` | `table-out-of-sync`, `trigger-missing-column` |
+
+Each carries its own reasoning in `rule.docs`, including what it deliberately does **not** flag —
+several of these are only usable because they stand down in a case they cannot decide, and that is
+worth reading before turning one off as noisy.
+
+Writing your own is the same shape. A rule declares which subject it wants, and the engine hands it
+that subject with the shared work already done — the relations resolved, the query scopes cut, the
+routine's locals gathered. A rule never lexes, never parses and never opens a file; the schema rules
+see only the model and the catalog, while the ones asking lexical questions — *is this variable ever
+read*, *is this name inside a `COALESCE`* — also get the token stream, because there is nowhere else
+for such a fact to live.
 
 ```ts
 import { check, defaults, Registry, type Rule } from "@sqldex/core";
@@ -184,7 +202,7 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 125 tests, hand-written fixtures only
+npm test                        # 180 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"

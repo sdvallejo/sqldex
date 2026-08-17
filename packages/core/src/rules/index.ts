@@ -17,6 +17,19 @@
 import { auditTableOutOfSync } from "./audit/table-out-of-sync.ts";
 import { auditTriggerMissingColumn } from "./audit/trigger-missing-column.ts";
 import { ambiguousColumn } from "./names/ambiguous-column.ts";
+import { unknownAlias } from "./names/unknown-alias.ts";
+import { unknownColumn } from "./names/unknown-column.ts";
+import { unknownRoutine } from "./names/unknown-routine.ts";
+import { unknownTable } from "./names/unknown-table.ts";
+import { unqualifiedColumn } from "./names/unqualified-column.ts";
+import { collationMismatch } from "./query/collation-mismatch.ts";
+import { insertUnknownColumn } from "./query/insert-unknown-column.ts";
+import { insertValueCount } from "./query/insert-value-count.ts";
+import { joinWithoutCondition } from "./query/join-without-condition.ts";
+import { leftJoinArithmetic } from "./query/left-join-arithmetic.ts";
+import { unfilteredWrite } from "./query/unfiltered-write.ts";
+import { callArity } from "./routine/call-arity.ts";
+import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
@@ -50,6 +63,30 @@ export const documentRules = [
   cursorNeverOpened,
 ] as const;
 
+/**
+ * The rules that read one statement, in running order.
+ *
+ * The order follows the dispatch it was taken from, and one pair in it matters: an `INSERT`'s column
+ * list is read by `query/insert-unknown-column` **before** `names/unqualified-column` sees the same
+ * tokens as bare names. Both would report a column that does not exist there; the insert rule says
+ * which table it is missing from, so it goes first. `rules-statement.test.ts` holds that down.
+ */
+export const statementRules = [
+  unknownTable,
+  unknownAlias,
+  unknownColumn,
+  unknownRoutine,
+  callArity,
+  outArgumentNotVariable,
+  insertUnknownColumn,
+  insertValueCount,
+  unqualifiedColumn,
+  leftJoinArithmetic,
+  collationMismatch,
+  unfilteredWrite,
+  joinWithoutCondition,
+] as const;
+
 /** The rules that read a `CREATE TABLE` or a `CREATE TRIGGER`, in running order. */
 export const schemaRules = [
   auditTableOutOfSync,
@@ -70,22 +107,35 @@ export const schemaRules = [
  * a rule of its own should not be editing everybody else's.
  */
 export function allRules(): Registry {
-  return new Registry().add(...documentRules, ...schemaRules);
+  return new Registry().add(...documentRules, ...schemaRules, ...statementRules);
 }
 
 export {
   ambiguousColumn,
   auditTableOutOfSync,
   auditTriggerMissingColumn,
+  callArity,
+  collationMismatch,
   cursorNeverOpened,
   divergentType,
   fkMissingIndex,
   fkUnknownColumn,
   fkUnknownTable,
   indexUnknownColumn,
+  insertUnknownColumn,
+  insertValueCount,
+  joinWithoutCondition,
+  leftJoinArithmetic,
   noPrimaryKey,
   nullableIntoArithmetic,
+  outArgumentNotVariable,
   redundantIndex,
+  unfilteredWrite,
+  unknownAlias,
+  unknownColumn,
+  unknownRoutine,
+  unknownTable,
+  unqualifiedColumn,
   unusedVariable,
   variableNeverAssigned,
 };

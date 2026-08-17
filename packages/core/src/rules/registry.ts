@@ -319,17 +319,17 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   const tableRules = active.filter((a) => a.rule.scope === "table");
   const triggerRules = active.filter((a) => a.rule.scope === "trigger");
 
-  if (documentRules.length > 0) {
-    // Lazy and memoised rather than eager: `routine/unused-variable` needs neither scopes nor
-    // statements, and a file of pure DDL would pay for both to no purpose. Two rules that do want
-    // them still only pay once, which is the property that matters.
-    let builtScopes: { infos: ScopeInfo[]; owner: (ScopeInfo | undefined)[] } | undefined;
-    const build = (): { infos: ScopeInfo[]; owner: (ScopeInfo | undefined)[] } => {
-      builtScopes ??= buildScopes(dialect, tokens);
-      return builtScopes;
-    };
-    let builtStatements: TokenRange[] | undefined;
+  // Lazy and memoised, and shared by both traversals that want it: `routine/unused-variable` needs
+  // no scopes at all and a file of pure DDL needs none either, while the ambiguity rule and every
+  // qualified reference both do — and between them they should pay once.
+  let builtScopes: { infos: ScopeInfo[]; owner: (ScopeInfo | undefined)[] } | undefined;
+  const build = (): { infos: ScopeInfo[]; owner: (ScopeInfo | undefined)[] } => {
+    builtScopes ??= buildScopes(dialect, tokens);
+    return builtScopes;
+  };
+  let builtStatements: TokenRange[] | undefined;
 
+  if (documentRules.length > 0) {
     const ctx: DocumentContext = {
       ...base,
       scopes: () => build().infos,
@@ -416,6 +416,16 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
         calls,
         inserts,
         qualified,
+        aliasesFor: (index, folded) => {
+          let scope = build().owner[index];
+          while (scope) {
+            if (scope.byAlias.has(folded)) return scope.byAlias;
+            scope = scope.parent;
+          }
+          // The statement's map sees more — it descends into the subqueries — and it is what every
+          // reference resolved against before scopes existed, so nothing that worked stops working.
+          return byAlias;
+        },
       };
       for (const entry of statementRules) {
         current = entry;

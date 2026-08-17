@@ -6,6 +6,7 @@ export {
   foreignSchema,
   identifierAt,
   qualifier,
+  qualifierIn,
   relation,
   tempTable,
 } from "./analysis/resolve.ts";
@@ -62,7 +63,7 @@ export type {
 } from "./rules/rule.ts";
 export type { CheckOptions } from "./rules/registry.ts";
 export { check, Registry } from "./rules/registry.ts";
-export { allRules, documentRules, schemaRules } from "./rules/index.ts";
+export { allRules, documentRules, schemaRules, statementRules } from "./rules/index.ts";
 export type { Analysis, Context, ContextKind, Cursor } from "./syntax/fast/cursor.ts";
 export { analyze, classify, locateCursor } from "./syntax/fast/cursor.ts";
 export type { ParsedDDL } from "./syntax/fast/ddl.ts";

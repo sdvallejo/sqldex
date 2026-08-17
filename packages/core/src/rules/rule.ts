@@ -164,6 +164,15 @@ export interface StatementContext extends BaseContext {
   readonly inserts: readonly number[];
   /** Index of the `.` in an `id . id`, so both sides are one step away. */
   readonly qualified: readonly number[];
+  /**
+   * The alias map a qualifier at this token must be read against.
+   *
+   * The innermost query scope that declares the name, and failing that the statement's own map.
+   * The statement map cannot answer what `p` is when the same letter names two different tables in
+   * two different queries of one statement — and a `WITH` makes that ordinary. Whichever one a flat
+   * map kept, every reference to the other came out as a column that does not exist.
+   */
+  aliasesFor(index: number, folded: string): ReadonlyMap<string, Relation>;
 }
 
 export interface TableContext extends BaseContext {

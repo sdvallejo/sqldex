@@ -237,3 +237,11 @@ export function assignmentTargets(ctx: BaseContext): AssignmentTargets {
 
   return { written, callOuts };
 }
+
+/**
+ * Names that must never be looked up in the catalog.
+ *
+ * `DUAL` is MySQL's dummy table, and `NEW`/`OLD` are a trigger's rows: all three are the engine's
+ * own, so their absence from a schema says nothing at all.
+ */
+export const BUILTIN_NAMES: ReadonlySet<string> = new Set(["dual", "new", "old"]);
