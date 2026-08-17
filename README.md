@@ -24,7 +24,8 @@ published to npm yet, so using it means a checkout.
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
 | Lint rules | 27 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
-| Language server, editor extensions | not built |
+| `sqldex-lsp` language server | started — findings only, as you type; nothing else answers yet |
+| Editor extensions | not built |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
 
@@ -59,10 +60,15 @@ adopted at the bottom of the engine so no layer has to translate positions on th
 
 ## Requirements
 
-Node 22.18 or newer, and nothing else. The `.ts` files run directly under Node's native type
-stripping, so there is no build step and no runtime dependencies. 22.18 rather than 22.6 because
-that is where stripping stopped needing a flag, which is what lets the installed command be a `.ts`
-file like everything else.
+Node 22.18 or newer. The `.ts` files run directly under Node's native type stripping, so there is
+no build step. 22.18 rather than 22.6 because that is where stripping stopped needing a flag, which
+is what lets the installed command be a `.ts` file like everything else.
+
+**The engine and the command have no runtime dependencies**: installing `sqldex` or depending on
+`@sqldex/core` pulls in nothing at all. The language server is a separate package and does have one,
+`vscode-languageserver`, which carries the protocol's transport and its types — writing those by
+hand would buy nothing that anybody installing a linter would notice. Whoever does not want a
+language server does not install it.
 
 ## The command
 
@@ -251,14 +257,16 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 229 tests, hand-written fixtures only
+npm test                        # 238 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"
 ```
 
-The test suite needs nothing but a checkout. The last two tools take a path because they are
-meaningful only over a real schema: point them at any repo of `.sql` files you have.
+The suite declares no schema and reaches no network: every test builds its project out of fixtures
+checked in beside it. The language server's tests are the one part that needs `npm install` first,
+since they drive a real connection. The last two tools take a path because they are meaningful only
+over a real schema: point them at any repo of `.sql` files you have.
 
 ## License
 

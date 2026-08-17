@@ -1,0 +1,17 @@
+{
+  "name": "@sqldex/lsp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sqldex-lsp": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "dependencies": {
+    "@sqldex/core": "*",
+    "vscode-languageserver": "^10.1.0",
+    "vscode-languageserver-textdocument": "^1.0.12"
+  }
+}
