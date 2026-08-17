@@ -23,6 +23,8 @@ import {
   createProtocolConnection,
   DidChangeTextDocumentNotification,
   DidChangeWatchedFilesNotification,
+  CallHierarchyIncomingCallsRequest,
+  CallHierarchyPrepareRequest,
   CompletionRequest,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
@@ -31,8 +33,11 @@ import {
   HoverRequest,
   InitializedNotification,
   InitializeRequest,
+  PrepareRenameRequest,
   PublishDiagnosticsNotification,
+  ReferencesRequest,
   RegistrationRequest,
+  RenameRequest,
   ShutdownRequest,
   SignatureHelpRequest,
   StreamMessageReader,
@@ -210,6 +215,12 @@ test("initialize promises exactly what the server can do", async () => {
   // Deferring the documentation is the whole reason a list of a few thousand items is cheap.
   assert.equal(capabilities.completionProvider?.resolveProvider, true);
   assert.deepEqual(capabilities.signatureHelpProvider?.triggerCharacters, ["(", ","]);
+
+  assert.equal(capabilities.referencesProvider, true);
+  assert.equal(capabilities.callHierarchyProvider, true);
+  // Without `prepareProvider` the client opens a rename box over a keyword or a number and only
+  // finds out from an empty edit, which is a worse way to learn the same thing.
+  assert.deepEqual(capabilities.renameProvider, { prepareProvider: true });
 
   const sync = capabilities.textDocumentSync as TextDocumentSyncOptions;
   assert.equal(sync.change, TextDocumentSyncKind.Full);
@@ -436,6 +447,60 @@ test("hover, completion and signature help all answer over the wire", async () =
     position: { line: 2, character: 60 },
   });
   assert.equal(help, null);
+
+  await client.stop();
+});
+
+test("references, rename and call hierarchy all answer over the wire", async () => {
+  // Same bargain as above: the answers are checked in `navigation.test.ts`, and what is at stake
+  // here is that three requests added after the first version of the protocol are wired at all.
+  const client = await start(project("shop"));
+  const uri = client.uri(SP);
+
+  const opened = client.nextDiagnostics(uri);
+  client.open(SP, SP_TEXT);
+  await opened;
+
+  const onOrders = { line: 2, character: 16 };
+  const found = await client.connection.sendRequest(ReferencesRequest.type, {
+    textDocument: { uri },
+    position: onOrders,
+    context: { includeDeclaration: true },
+  });
+  assert.ok(found && found.length > 1, "a table used across the project answered with one place");
+  // The answer reaches files the client never opened, which is the point of scanning at all.
+  assert.ok(found.some((location) => location.uri !== uri));
+
+  const prepared = await client.connection.sendRequest(PrepareRenameRequest.type, {
+    textDocument: { uri },
+    position: onOrders,
+  });
+  assert.deepEqual(prepared, {
+    range: { start: { line: 2, character: 14 }, end: { line: 2, character: 20 } },
+    placeholder: "orders",
+  });
+
+  const edit = await client.connection.sendRequest(RenameRequest.type, {
+    textDocument: { uri },
+    position: onOrders,
+    newName: "purchases",
+  });
+  assert.ok(edit?.changes, "the rename produced no edit");
+  assert.ok(Object.keys(edit.changes).length > 1, "a rename that only touched the open file");
+
+  // On the procedure's own name, in the header.
+  const items = await client.connection.sendRequest(CallHierarchyPrepareRequest.type, {
+    textDocument: { uri },
+    position: { line: 0, character: 20 },
+  });
+  assert.equal(items?.length, 1);
+  assert.equal(items[0]?.name, "sp_settle_orders");
+
+  // Nothing in this project calls it, and "nobody" is an answer rather than a failure.
+  const incoming = await client.connection.sendRequest(CallHierarchyIncomingCallsRequest.type, {
+    item: items[0]!,
+  });
+  assert.deepEqual(incoming, []);
 
   await client.stop();
 });

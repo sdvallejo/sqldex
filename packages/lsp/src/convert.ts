@@ -14,6 +14,7 @@
 
 import type { Diagnostic, DiagnosticTag as EngineTag, Severity, Span } from "@sqldex/core";
 import { lineCol, lineIndex } from "@sqldex/core";
+import { pathToFileURL } from "node:url";
 import {
   DiagnosticSeverity,
   DiagnosticTag,
@@ -46,6 +47,19 @@ const TAGS: Record<EngineTag, DiagnosticTag> = {
  */
 export function rangeOf(starts: number[], span: Span): Range {
   return { start: lineCol(starts, span.s), end: lineCol(starts, span.e) };
+}
+
+/**
+ * A path on disk, as the protocol names it.
+ *
+ * The engine speaks paths throughout — the catalog keys files by path, and so does every source it
+ * reads — and every answer that points somewhere other than the document asked about has to say it
+ * in a URI. `pathToFileURL` rather than `"file://" + path` because the difference is a Windows
+ * drive letter and a space in a directory name, which is exactly the class of bug that only shows
+ * up on somebody else's machine.
+ */
+export function uriOf(path: string): string {
+  return pathToFileURL(path).toString();
 }
 
 /**

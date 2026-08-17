@@ -29,21 +29,29 @@ import {
   DidChangeWatchedFilesNotification,
   TextDocumentSyncKind,
   TextDocuments,
+  type CallHierarchyIncomingCall,
+  type CallHierarchyItem,
+  type CallHierarchyOutgoingCall,
   type CompletionItem,
   type CompletionList,
   type Connection,
   type Hover,
   type InitializeParams,
   type InitializeResult,
+  type Location,
   type SignatureHelp,
   type TextDocumentPositionParams,
+  type WorkspaceEdit,
 } from "vscode-languageserver";
 import { TextDocument } from "vscode-languageserver-textdocument";
 
 import { diagnosticsOf } from "./convert.ts";
 import { Analyses, at, type At } from "./documents.ts";
+import { incomingCalls, outgoingCalls, prepareCallHierarchy } from "./features/call-hierarchy.ts";
 import { complete, resolveItem } from "./features/completion.ts";
 import { hover } from "./features/hover.ts";
+import { references } from "./features/references.ts";
+import { prepareRename, rename } from "./features/rename.ts";
 import { signatureHelp } from "./features/signature.ts";
 import { Workspace } from "./workspace.ts";
 
@@ -81,6 +89,12 @@ function capabilities(): InitializeResult["capabilities"] {
       resolveProvider: true,
     },
     signatureHelpProvider: { triggerCharacters: ["(", ","] },
+    referencesProvider: true,
+    // `prepareProvider` is what stops the client from opening a rename box over a keyword or a
+    // number. Without it every position in the file looks renameable until the edit comes back
+    // empty, which is a worse way to learn the same thing.
+    renameProvider: { prepareProvider: true },
+    callHierarchyProvider: true,
   };
 }
 
@@ -219,6 +233,39 @@ export function createServer(connection: Connection): void {
   });
 
   connection.onCompletionResolve((item): CompletionItem => (workspace ? resolveItem(workspace, item) : item));
+
+  connection.onReferences((params): Location[] | undefined => {
+    const here = positioned(params);
+    return here && references(here);
+  });
+
+  connection.onPrepareRename((params) => {
+    const here = positioned(params);
+    return here && prepareRename(here);
+  });
+
+  connection.onRenameRequest((params): WorkspaceEdit | undefined => {
+    const here = positioned(params);
+    return here && rename(here, params.newName);
+  });
+
+  // The three call-hierarchy requests hang off `languages` rather than off the connection itself,
+  // which is where the library puts everything added to the protocol after its first version.
+  connection.languages.callHierarchy.onPrepare((params): CallHierarchyItem[] | null => {
+    const here = positioned(params);
+    return (here && prepareCallHierarchy(here)) ?? null;
+  });
+
+  // The follow-ups carry the item rather than a position, so they need no open document: the
+  // hierarchy of a procedure is a fact about the project, and answering it should not depend on
+  // which file happens to be on screen.
+  connection.languages.callHierarchy.onIncomingCalls((params): CallHierarchyIncomingCall[] | null => {
+    return (workspace && incomingCalls(workspace, params.item)) ?? null;
+  });
+
+  connection.languages.callHierarchy.onOutgoingCalls((params): CallHierarchyOutgoingCall[] | null => {
+    return (workspace && outgoingCalls(workspace, params.item)) ?? null;
+  });
 
   documents.onDidChangeContent((event) => {
     // An open is not an edit: there is no keystroke to wait for the end of, and waiting is the

@@ -1,5 +1,14 @@
 export type { ResolvedSelect, SelectListColumns } from "./analysis/locals.ts";
 export { collect, selectListColumns } from "./analysis/locals.ts";
+export type {
+  FileReferences,
+  FileSource,
+  Reference,
+  RefTarget,
+} from "./analysis/references.ts";
+// Renamed on the way out: inside a module called `references` they are `find` and `scan`, but on a
+// package's flat surface those names say nothing about what is being found.
+export { find as findReferences, scan as scanReferences } from "./analysis/references.ts";
 export type { IdentifierAt, Resolved, ResolvedKind, ResolveContext } from "./analysis/resolve.ts";
 export {
   columnNames,
@@ -74,5 +83,6 @@ export { lineCol, lineIndex, tokenize } from "./syntax/fast/lexer.ts";
 export type { ParsedRoutines } from "./syntax/fast/routine.ts";
 export { cleanDoc, parseHeader, parseRoutines } from "./syntax/fast/routine.ts";
 export { cteNames, queryScopes, relations, statementBounds, statements } from "./syntax/fast/stmt.ts";
-export { kw, kwAny, punct } from "./syntax/fast/tok.ts";
+export type { QualifiedName } from "./syntax/fast/tok.ts";
+export { kw, kwAny, punct, qualifiedName } from "./syntax/fast/tok.ts";
 export type { Comment, Lexed, Position, Span, Token, TokenKind, TokenRange } from "./syntax/types.ts";

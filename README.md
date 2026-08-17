@@ -24,7 +24,7 @@ published to npm yet, so using it means a checkout.
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
 | Lint rules | 27 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
-| `sqldex-lsp` language server | findings as you type, hover, completion and signature help |
+| `sqldex-lsp` language server | findings as you type, hover, completion, signature help, references, rename, call hierarchy |
 | Editor extensions | not built |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
@@ -54,6 +54,13 @@ the columns a `SELECT` list defines, and where each was declared.
 **Locates the cursor** and classifies what belongs at it — a qualified column, a table name, a
 routine, the columns of an `INSERT INTO t (...)`, the values of a column being compared — which is
 what completion and signature help are built from.
+
+**Finds every use of a name**, which is the one question the catalog cannot answer, because it
+deliberately never parses routine bodies. Whole identifier tokens, not substrings: searching a table
+called `orders` by text also returns `aud_orders` and `LogOrders`, which are different tables. A
+column is narrowed to its own table — a use qualified by an alias of it, or a bare one in a
+statement that involves it and only when the table really has that column, since otherwise asking
+about a column its table does not have answers with every other table's column of the same name.
 
 **Carries MySQL's built-in functions**: signature, a one-line summary and a family, for the ones a
 schema repository is actually written with. Written out by hand rather than lifted from the server's

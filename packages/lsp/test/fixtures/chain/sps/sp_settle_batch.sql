@@ -1,0 +1,4 @@
+CREATE PROCEDURE `sp_settle_batch`()
+BEGIN
+  CALL SP_SETTLE();
+END;
