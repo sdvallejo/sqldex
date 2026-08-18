@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -124,4 +124,39 @@ test("invalid JSON is reported and treated as absent, rather than refusing to st
   const config = get(root, undefined, (message) => warnings.push(message));
   assert.equal(warnings.length, 1);
   assert.deepEqual(config.exclude, ["deploy.sql", "rollback.sql"]);
+});
+
+/**
+ * The editor client keeps its own list of what declares a project, because a client has to decide
+ * whether to start a server before there is one to ask. That list is a copy of the decision this
+ * module owns, and a copy is the thing that goes quietly wrong: nothing fails when the two drift,
+ * the client just attaches somewhere the engine then refuses to index.
+ *
+ * The list is read out of the client rather than duplicated a third time here, so this fails when
+ * the copy moves rather than when it is wrong in some way this file happened to predict.
+ */
+test("the editor client and the engine agree on what declares a project", () => {
+  const client = join(import.meta.dirname, "..", "..", "..", "editors/nvim/lsp/sqldex.lua");
+  const source = readFileSync(client, "utf8");
+
+  const block = /local DECLARES = \{([\s\S]*?)\n\}/.exec(source)?.[1];
+  assert.ok(block, "the client's declarations are no longer where this test looks for them");
+
+  const declarations = [...block.matchAll(/\{([^}]*)\}/g)].map((group) =>
+    [...group[1]!.matchAll(/"([^"]+)"/g)].map((quoted) => quoted[1]!),
+  );
+  assert.ok(declarations.length >= 5, "the client declares fewer layouts than the engine recognises");
+
+  // Widened because `CONFIG_FILES` is a tuple of literals, and what is being asked here is whether
+  // an arbitrary string from the client happens to be one of them.
+  const configFiles: readonly string[] = CONFIG_FILES;
+  for (const markers of declarations) {
+    const files = markers.filter((marker) => configFiles.includes(marker));
+    const dirs = markers.filter((marker) => !configFiles.includes(marker));
+    assert.equal(
+      isDdlProject(makeRepo(dirs, files)),
+      true,
+      `the client would start a server for ${markers.join(" + ")}, which the engine does not call a project`,
+    );
+  }
 });

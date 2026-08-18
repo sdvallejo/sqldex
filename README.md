@@ -25,7 +25,7 @@ published to npm yet, so using it means a checkout.
 | Lint rules | 27 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
-| Editor extensions | not built |
+| Editor clients | one for Neovim, in `editors/nvim`; no VSCode extension yet |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
 
@@ -117,6 +117,18 @@ tables already declared in `tables/` — but a migration is also the one kind of
 table and then writes to it a few lines down. So each file is read against the project's catalog
 plus its own declarations, which is the difference between a useful report and one where a third of
 the findings are the file's own tables.
+
+## In an editor
+
+`sqldex-lsp` is the same engine over stdio, and it answers what a schema makes answerable: findings
+as you type, what a name is and where it is defined, where its foreign key leads, who else uses it,
+what a rename would touch, and the statements the catalog can write for you. It takes no arguments —
+which project it serves comes from the `initialize`, and how it behaves comes from that project's
+own `.sqldex.json`, so a rule that is off in CI is off in the editor too.
+
+A client for Neovim ships in [`editors/nvim`](editors/nvim), and is configuration rather than code.
+Any other editor needs the same three facts: run `sqldex-lsp --stdio`, attach it to SQL buffers, and
+give it the project directory as the root.
 
 ## Usage as a library
 
@@ -268,7 +280,7 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 274 tests, hand-written fixtures only
+npm test                        # 385 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"
