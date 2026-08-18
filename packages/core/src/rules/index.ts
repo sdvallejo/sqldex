@@ -28,6 +28,7 @@ import { insertValueCount } from "./query/insert-value-count.ts";
 import { joinMultipliesAggregate } from "./query/join-multiplies-aggregate.ts";
 import { joinWithoutCondition } from "./query/join-without-condition.ts";
 import { leftJoinArithmetic } from "./query/left-join-arithmetic.ts";
+import { literalTypeMismatch } from "./query/literal-type-mismatch.ts";
 import { nullableScalarSubquery } from "./query/nullable-scalar-subquery.ts";
 import { onlyFullGroupBy } from "./query/only-full-group-by.ts";
 import { scalarSubqueryManyRows } from "./query/scalar-subquery-many-rows.ts";
@@ -111,6 +112,7 @@ export const statementRules = [
   selectIntoManyRows,
   nullableScalarSubquery,
   onlyFullGroupBy,
+  literalTypeMismatch,
   collationMismatch,
   unfilteredWrite,
   joinWithoutCondition,
@@ -158,6 +160,7 @@ export {
   joinMultipliesAggregate,
   joinWithoutCondition,
   leftJoinArithmetic,
+  literalTypeMismatch,
   noPrimaryKey,
   nullableIntoArithmetic,
   onlyFullGroupBy,

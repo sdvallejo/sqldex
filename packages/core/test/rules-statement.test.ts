@@ -29,6 +29,7 @@ import {
   joinMultipliesAggregate,
   joinWithoutCondition,
   leftJoinArithmetic,
+  literalTypeMismatch,
   nullableScalarSubquery,
   onlyFullGroupBy,
   outArgumentNotVariable,
@@ -869,4 +870,27 @@ test("the variables of a SELECT … INTO are not columns of the query", () => {
 
 test("a star says nothing about which columns those are", () => {
   assert.deepEqual(run(onlyFullGroupBy, "SELECT *, COUNT(*) FROM orders o GROUP BY o.status;"), []);
+});
+
+// ------------------------------------------- a column compared against another type of literal
+
+test("a text column compared with a number is converted, once per row", () => {
+  assert.equal(run(literalTypeMismatch, "SELECT * FROM orders o WHERE o.status = 1;").length, 1);
+  assert.deepEqual(run(literalTypeMismatch, "SELECT * FROM orders o WHERE o.status = 'A';"), []);
+});
+
+test("a numeric column compared with a string is fine when the string is a number", () => {
+  // MySQL converts the literal, not the column: the index still works and the answer is the one
+  // intended. `'A'` is a different thing — it reads as 0, and the query finds nothing.
+  assert.deepEqual(run(literalTypeMismatch, "SELECT * FROM orders o WHERE o.order_id = '5';"), []);
+  assert.equal(run(literalTypeMismatch, "SELECT * FROM orders o WHERE o.order_id = 'A';").length, 1);
+});
+
+test("a bare column is read when this query has one owner for it", () => {
+  assert.equal(run(literalTypeMismatch, "SELECT * FROM orders WHERE status = 1;").length, 1);
+});
+
+test("a comparison against anything but a literal is not this rule's business", () => {
+  const src = body("  SELECT o.total FROM orders o WHERE o.status = p_id;");
+  assert.deepEqual(run(literalTypeMismatch, src), []);
 });
