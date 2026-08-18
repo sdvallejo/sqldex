@@ -33,6 +33,7 @@ import { scalarSubqueryManyRows } from "./query/scalar-subquery-many-rows.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
 import { callArity } from "./routine/call-arity.ts";
 import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
+import { selectIntoManyRows } from "./routine/select-into-many-rows.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
@@ -106,6 +107,7 @@ export const statementRules = [
   leftJoinArithmetic,
   joinMultipliesAggregate,
   scalarSubqueryManyRows,
+  selectIntoManyRows,
   nullableScalarSubquery,
   collationMismatch,
   unfilteredWrite,
@@ -161,6 +163,7 @@ export {
   outArgumentNotVariable,
   redundantIndex,
   scalarSubqueryManyRows,
+  selectIntoManyRows,
   unfilteredWrite,
   unknownAlias,
   unknownColumn,

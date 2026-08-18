@@ -32,6 +32,7 @@ import {
   nullableScalarSubquery,
   outArgumentNotVariable,
   scalarSubqueryManyRows,
+  selectIntoManyRows,
   unfilteredWrite,
   unknownAlias,
   unknownColumn,
@@ -766,4 +767,40 @@ test("an unpinned search read as a number belongs to the many-rows rule, not the
     found.map((d) => d.code),
     ["query/scalar-subquery-many-rows"],
   );
+});
+
+// ------------------------------------------ a SELECT … INTO that can match twice
+
+test("a SELECT INTO whose WHERE starts a key and abandons it", () => {
+  const src = body("  SELECT l.amount INTO p_id FROM order_lines l WHERE l.order_id = 7;");
+  assert.deepEqual(run(selectIntoManyRows, src), [
+    "this SELECT can match more than one row: order_lines is keyed on (order_id, line_no), and this " +
+      "fixes order_id but leaves line_no free. MySQL answers error 1172 rather than filling the variables",
+  ]);
+});
+
+test("the same three things that make one row certain, in the other place a routine reads one", () => {
+  // The whole key, an aggregate, and a LIMIT: each is enough on its own, and they are the same
+  // three `query/scalar-subquery-many-rows` asks, answered by the same code.
+  const whole = "  SELECT l.amount INTO p_id FROM order_lines l WHERE l.order_id = 7 AND l.line_no = 1;";
+  const folded = "  SELECT SUM(l.amount) INTO p_id FROM order_lines l WHERE l.order_id = 7;";
+  const limited = "  SELECT l.amount INTO p_id FROM order_lines l WHERE l.order_id = 7 LIMIT 1;";
+  for (const statement of [whole, folded, limited]) {
+    assert.deepEqual(run(selectIntoManyRows, body(statement)), [], statement);
+  }
+});
+
+test("a search the schema has no opinion about, and one it cannot read at all", () => {
+  const noKey = body("  SELECT o.total INTO p_id FROM orders o WHERE o.status = 'A';");
+  const joined = body("  SELECT l.amount INTO p_id FROM order_lines l JOIN orders o USING (order_id) WHERE l.order_id = 7;");
+  const temp = body("  SELECT t.total INTO p_id FROM tmp_from_other_sp t;");
+  assert.deepEqual(run(selectIntoManyRows, noKey), []);
+  assert.deepEqual(run(selectIntoManyRows, temp), []);
+  // A join is a claim this cannot make either way: the second table decides how many rows come back.
+  assert.deepEqual(run(selectIntoManyRows, joined), []);
+});
+
+test("INTO OUTFILE takes as many rows as it finds, which is what it is for", () => {
+  const src = body("  SELECT l.amount INTO OUTFILE '/tmp/x' FROM order_lines l WHERE l.order_id = 7;");
+  assert.deepEqual(run(selectIntoManyRows, src), []);
 });
