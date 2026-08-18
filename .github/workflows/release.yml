@@ -1,0 +1,72 @@
+# Publishing, which is the one thing here that cannot be taken back.
+#
+# It runs from a tag rather than from a push to `main`, so that publishing is a deliberate act with
+# a name — `v0.1.0` — and not a side effect of merging. Everything it does is checked before
+# anything is published: the suite runs first, and the tag has to agree with the versions in the
+# manifests, because a tag that says one thing while the tarball says another is a release nobody
+# can reason about afterwards.
+#
+# `id-token: write` is what makes provenance possible: npm signs the artefact against this
+# workflow's identity, so anyone can verify that the tarball on the registry was built here, from
+# this commit, rather than uploaded from somebody's laptop.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Available by hand as well, for a re-run of a tag whose publish failed halfway.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          # Without this the token never reaches npm: it is what writes the auth line into .npmrc.
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+
+      # Nothing gets published that does not pass, and the tag push may not have run CI at all.
+      - run: npm test
+
+      - name: The tag and the manifests have to agree
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          want="${tag#v}"
+          for pkg in core lsp cli; do
+            have=$(node -p "require('./packages/$pkg/package.json').version")
+            if [ "$have" != "$want" ]; then
+              echo "::error::packages/$pkg is $have but the tag says $want"
+              exit 1
+            fi
+          done
+          echo "all three are $want"
+
+      # Core first: the other two declare it as a dependency, and a registry that has the dependent
+      # before the dependency is a few minutes of a broken install for anyone quick enough to hit it.
+      - run: npm publish -w @sqldex/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - run: npm publish -w @sqldex/lsp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - run: npm publish -w sqldex
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

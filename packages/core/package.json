@@ -33,5 +33,9 @@
   },
   "files": [
     "src"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }

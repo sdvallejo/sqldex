@@ -37,6 +37,10 @@
   "files": [
     "src"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "dependencies": {
     "@sqldex/core": "^0.1.0"
   }
