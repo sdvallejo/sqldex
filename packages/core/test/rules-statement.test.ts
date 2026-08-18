@@ -675,9 +675,10 @@ test("only an operand: an assignment straight from a subquery leaves the NULL wh
   );
 });
 
-test("an aggregate that is both multiplied by a join and NULL over nothing belongs to the join rule", () => {
-  // Both rules report on the aggregate's own name token. The fan-out says which join multiplies it
-  // and which key is not unique there, so it is registered first; this is what holds that order.
+test("an aggregate that is both multiplied by a join and NULL over nothing gets both findings", () => {
+  // These are two defects with two fixes — the number is multiplied *and* it can be NULL — so
+  // neither rule declares that it displaces the other and the reader hears both. The engine used to
+  // keep whichever was registered first, which silently answered a question nobody had asked.
   const src = body("  SET p_id = (SELECT SUM(o.total) FROM orders o JOIN refunds r USING(order_id)) + 1;");
   const found = check(
     new Registry().add(joinMultipliesAggregate, nullableScalarSubquery),
@@ -685,8 +686,8 @@ test("an aggregate that is both multiplied by a join and NULL over nothing belon
     src,
   );
   assert.deepEqual(
-    found.map((d) => d.code),
-    ["query/join-multiplies-aggregate"],
+    found.map((d) => d.code).sort(),
+    ["query/join-multiplies-aggregate", "query/nullable-scalar-subquery"],
   );
 });
 

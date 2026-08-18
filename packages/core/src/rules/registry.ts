@@ -234,6 +234,31 @@ export interface CheckOptions {
  * de-duplication is first-come, so the rule with the most specific thing to say about a token
  * should get there first.
  */
+/**
+ * Drops the findings a rule declared it displaces, once everything has been said.
+ *
+ * **After the fact, not on the way in**, and that is the whole point of the change: while the
+ * de-duplication was "the first rule to claim this offset wins", the answer depended on the order
+ * somebody listed the rules in `rules/index.ts`, an order no test could explain and every new rule
+ * had to be inserted into by reading the others. Resolving here means the same set of findings comes
+ * out whatever order they went in, and what decides is a sentence written on the rule.
+ *
+ * Only the same **offset** collides. Two findings on two tokens of one statement are two things to
+ * fix, however related they are.
+ */
+function resolve(found: readonly Diagnostic[], registry: Registry): Diagnostic[] {
+  const displaced = new Map<string, Set<string>>();
+  for (const diagnostic of found) {
+    const supersedes = registry.get(diagnostic.code)?.supersedes;
+    if (!supersedes) continue;
+    const at = displaced.get(`${diagnostic.span.s}`) ?? new Set<string>();
+    for (const code of supersedes) at.add(code);
+    displaced.set(`${diagnostic.span.s}`, at);
+  }
+  if (displaced.size === 0) return [...found];
+  return found.filter((diagnostic) => !displaced.get(`${diagnostic.span.s}`)?.has(diagnostic.code));
+}
+
 export function check(registry: Registry, options: CheckOptions, src: string): Diagnostic[] {
   const { dialect, catalog, schemas, config } = options;
   if (usesDynamicSql(src)) return [];
@@ -280,11 +305,6 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   if (ignoreWholeFile) return [];
 
   const out: Diagnostic[] = [];
-  // Offsets already claimed. One token can fall under two rules — a column that does not exist,
-  // inside an `INSERT` list, is seen by both the insert rule and the bare-column one — and
-  // reporting it twice makes a reader wonder whether there are two problems. First come wins,
-  // being the more specific.
-  const seen = new Set<number>();
 
   // The locals of the whole file, not up to a point: a temporary table declared further down must
   // not make a use of it further up look unresolved.
@@ -294,7 +314,6 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   let current: Active | undefined;
   const report = (at: Span | Token, message: string, tags?: DiagnosticTag[]): void => {
     if (out.length >= MAX_DIAGNOSTICS) return;
-    if (seen.has(at.s)) return;
 
     const rule = current!;
     const line = lineCol(starts, at.s).line;
@@ -302,7 +321,6 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
     if (suppressed === true) return;
     if (suppressed?.has(rule.rule.id) || suppressed?.has(rule.rule.group)) return;
 
-    seen.add(at.s);
     out.push({
       span: { s: at.s, e: at.e },
       code: rule.rule.id,
@@ -435,5 +453,5 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
     }
   }
 
-  return out;
+  return resolve(out, registry);
 }

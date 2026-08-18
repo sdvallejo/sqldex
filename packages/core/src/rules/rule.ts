@@ -222,6 +222,25 @@ interface RuleBase {
   /** Absent = every dialect. Present where the rule is about one engine's behaviour. */
   readonly dialects?: readonly DialectId[];
   /**
+   * Rules this one displaces when both land on the same token.
+   *
+   * Two rules can see one name and say **the same thing** about it, and hearing it twice makes a
+   * reader look for two problems: an `INSERT`'s unknown column is `query/insert-unknown-column`'s
+   * finding and `names/unqualified-column`'s at once, and the first says which table it is missing
+   * from. That is a claim about the two rules, so it is written on the rule that makes it — not
+   * encoded in what order somebody listed them, where the reason cannot be read and nothing checks
+   * that it still holds.
+   *
+   * **Silence is the exception here, not the default.** Two rules on one token often say two
+   * different things — a `SUM` can be both multiplied by a join and NULL when nothing matches, and
+   * those are two defects with two fixes — so both are reported unless one of them says otherwise.
+   *
+   * A registry does not demand that the superseded rule be in it: running one rule on its own is
+   * the ordinary thing to do, and a name that is not there simply never collides. That every id is
+   * real is a fact about the set sqldex ships, and a test holds it.
+   */
+  readonly supersedes?: readonly string[];
+  /**
    * Why the rule exists, in prose, and what it deliberately does not flag.
    *
    * This is published: `sqldex explain` prints it and the rule catalogue is generated from it. It

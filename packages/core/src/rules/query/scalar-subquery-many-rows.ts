@@ -35,6 +35,10 @@ function isDerivedTable(ctx: StatementContext, open: number): boolean {
 export const scalarSubqueryManyRows: Rule = {
   id: "query/scalar-subquery-many-rows",
   group: "query",
+  // Both land on the subquery's `SELECT`, and both come of the same missing key. This is the
+  // actionable end of it: pinning the key answers both, where a `COALESCE` around the sum leaves the
+  // statement able to fail with error 1242 anyway.
+  supersedes: ["query/nullable-scalar-subquery"],
   severity: "warn",
   scope: "statement",
   docs: `A subquery read as a single value, from a query with nothing stopping it from returning several.

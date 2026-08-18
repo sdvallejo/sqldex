@@ -19,8 +19,9 @@ import type { Config } from "../src/config/config.ts";
 import type { Diagnostic } from "../src/diagnostics.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
 import type { Table } from "../src/model/table.ts";
+import { allRules } from "../src/rules/index.ts";
 import { check, Registry } from "../src/rules/registry.ts";
-import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
+import type { DocumentContext, Rule, RuleCatalog } from "../src/rules/rule.ts";
 import { parseDDL } from "../src/syntax/fast/ddl.ts";
 import { tokenize } from "../src/syntax/fast/lexer.ts";
 
@@ -157,26 +158,67 @@ test("the relations of a statement arrive resolved, and aliases shadow table nam
   assert.deepEqual(seen, ["orders", "alias:orders", "alias:o"]);
 });
 
-test("one token is reported once, by whichever rule claims it first", () => {
+test("two rules on one token both speak, unless one says it displaces the other", () => {
+  // The engine used to keep whichever rule was registered first, which made `rules/index.ts` order
+  // load-bearing and silent: two rules on one token often say two different things, and one of them
+  // disappeared with no way to know it had.
   const at = { s: 7, e: 12 };
-  const first: Rule = {
-    id: "names/first",
+  const vague: Rule = {
+    id: "names/vague",
     group: "names",
     severity: "warn",
     scope: "document",
     docs: "claims the token",
-    check: (ctx) => ctx.report(at, "the specific thing"),
-  };
-  const second: Rule = {
-    ...first,
-    id: "names/second",
-    scope: "document",
     check: (ctx) => ctx.report(at, "the vague thing"),
   };
+  const specific: Rule = {
+    ...vague,
+    id: "names/specific",
+    check: (ctx: DocumentContext) => ctx.report(at, "the specific thing"),
+  };
 
-  const found = run([first, second], "SELECT total FROM orders");
-  assert.equal(found.length, 1);
-  assert.equal(found[0]?.code, "names/first", "registration order decides, not severity");
+  const both = run([vague, specific], "SELECT total FROM orders");
+  assert.deepEqual(both.map((d) => d.code).sort(), ["names/specific", "names/vague"]);
+
+  // The claim lives on the rule that makes it, and holds whichever order they went in.
+  const displacing: Rule = { ...specific, supersedes: ["names/vague"] };
+  for (const order of [
+    [vague, displacing],
+    [displacing, vague],
+  ]) {
+    const found = run(order, "SELECT total FROM orders");
+    assert.deepEqual(
+      found.map((d) => d.code),
+      ["names/specific"],
+      "what decides is the declaration, not the position",
+    );
+  }
+});
+
+test("a rule may name a superseded rule that is not in this registry", () => {
+  // Running one rule on its own is the ordinary thing to do — every rule test here does it — so a
+  // name that is not registered simply never collides.
+  const lonely: Rule = {
+    id: "names/lonely",
+    group: "names",
+    severity: "warn",
+    scope: "document",
+    docs: "supersedes something that is not here",
+    supersedes: ["names/absent"],
+    check: (ctx) => ctx.report({ s: 7, e: 12 }, "still reported"),
+  };
+  assert.equal(run([lonely], "SELECT total FROM orders").length, 1);
+});
+
+test("every rule sqldex ships supersedes a rule that exists", () => {
+  // The typo protection the registry deliberately does not enforce: a `supersedes` naming a rule
+  // that is not shipped would silence nothing and say nothing, forever.
+  const registry = allRules();
+  for (const rule of registry.inOrder()) {
+    for (const superseded of rule.supersedes ?? []) {
+      assert.ok(registry.get(superseded), `${rule.id} supersedes ${superseded}, which does not exist`);
+    }
+  }
 });
 
 test("a file cannot report more than the cap, so one systematic mistake cannot bury the rest", () => {
@@ -223,16 +265,16 @@ test("`-- sqldex:ignore <id>` silences that rule only, and a group name silences
 
   const byId = ["SELECT alpha", "-- sqldex:ignore names/one", "  , beta"].join("\n");
   assert.deepEqual(
-    run(rules, byId).map((d) => d.message),
-    ["names/one:SELECT", "names/one:alpha", "audit/two:beta"],
-    "the other rule still reports the silenced line, and the de-dup hands it the token",
+    run(rules, byId).map((d) => d.message).sort(),
+    ["audit/two:SELECT", "audit/two:alpha", "audit/two:beta", "names/one:SELECT", "names/one:alpha"].sort(),
+    "the other rule still reports the line this one was silenced on",
   );
 
   const byGroup = ["SELECT alpha", "-- sqldex:ignore audit", "  , beta"].join("\n");
   assert.deepEqual(
-    run(rules, byGroup).map((d) => d.message),
-    ["names/one:SELECT", "names/one:alpha", "names/one:beta"],
-    "silencing a group it does not belong to changes nothing for this rule",
+    run(rules, byGroup).map((d) => d.message).sort(),
+    ["audit/two:SELECT", "audit/two:alpha", "names/one:SELECT", "names/one:alpha", "names/one:beta"].sort(),
+    "silencing a group changes nothing for the rule that is not in it",
   );
 });
 

@@ -4,6 +4,9 @@ import type { Rule } from "../rule.ts";
 export const auditTableOutOfSync: Rule = {
   id: "audit/table-out-of-sync",
   group: "audit",
+  // Both would report the column's name. A column missing from the `aud_` twin is the concrete
+  // fact; that its type is an outlier is a statement about the rest of the schema.
+  supersedes: ["schema/divergent-type"],
   severity: "warn",
   scope: "table",
   docs: `A column of this table that its \`aud_\` twin does not have.

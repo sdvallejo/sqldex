@@ -284,9 +284,13 @@ exactly as before. What CI fails on does not move with it.
 -- sqldex:ignore-file                   -- this file
 ```
 
-The engine caps a file at 100 findings, and reports a given token once: two rules can both see a
-name, and hearing about it twice makes you look for two problems. The first rule registered wins,
-which is why registration order is deliberate and listing order is not.
+The engine caps a file at 100 findings. Two rules can both see one name, and where they would say
+the same thing about it one of them declares that it **supersedes** the other — the insert rule over
+the bare-column one, say, because it can name the table the column is missing from. That claim is
+written on the rule and resolved after everything has been said, so the same findings come out
+whatever order the rules were registered in. Where two rules say two different things about one
+token, both are reported: an aggregate can be multiplied by a join *and* NULL when nothing matches,
+and those are two defects with two fixes.
 
 ## Development
 

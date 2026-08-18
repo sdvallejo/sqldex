@@ -1,17 +1,23 @@
 /**
- * Every rule, and the order they run in.
+ * Every rule sqldex ships.
  *
- * **The order is the file's reason for existing.** De-duplication is first-come, so where two rules
- * can see the same token the one registered first is the one that gets to speak — and that has to
- * be a decision written down, not a consequence of how a `Map` happens to iterate. The rule with the
- * more specific thing to say goes first.
+ * **The order is no longer the file's reason for existing**, and that is the point of how it reads
+ * now. It used to be: de-duplication was first-come, so where two rules saw one token the one listed
+ * first was the one that got to speak, and every collision had to be argued for in prose here and
+ * held down by a test that could only check the symptom. A rule added in the wrong position changed
+ * another rule's output with nothing to say so.
  *
- * Within the table traversal the two collisions that actually happen:
+ * A rule now declares what it displaces — `supersedes` — beside the argument for it, and the engine
+ * resolves collisions after everything has been said, so the same findings come out whatever order
+ * they went in. What is left here is grouping by scope, which is about what the engine has to
+ * compute before calling a rule and not about who wins.
  *
- *   - A column missing from the `aud_` twin **and** an outlier type: both would report on the
- *     column's name. The audit drift is the concrete fact, so it goes first.
- *   - A foreign key's own column that does not exist, against everything else about that key: the
- *     column is the specific thing.
+ * The five declarations that exist, each on the rule that makes the claim: the insert rule over the
+ * bare-column one, the many-rows subquery over the NULL one, "never assigned" over the taint rule,
+ * the taint rule over the predicate one, and the audit drift over the type outlier.
+ *
+ * And one pair that deliberately has **no** declaration: an aggregate can be both multiplied by a
+ * join and NULL when nothing matches. Two defects, two fixes, both said.
  */
 
 import { auditTableOutOfSync } from "./audit/table-out-of-sync.ts";
@@ -54,21 +60,10 @@ import { noPrimaryKey } from "./schema/no-primary-key.ts";
 import { redundantIndex } from "./schema/redundant-index.ts";
 
 /**
- * The rules that read the whole file, in running order.
+ * The rules that read the whole file.
  *
- * They go before the schema rules because that is what "the whole file" means: whether a variable is
- * ever read, or whether a name is ambiguous in its query, is a question you can only answer having
- * looked at everything.
- *
- * Two collisions live in this group. Between the two variable rules — a read can be both the first
- * unprotected read of a never-assigned variable and a use of a nullable-tainted one — "never
- * assigned" goes first because it is the stronger claim: that read cannot be anything but NULL, where
- * the other says it might be.
- *
- * Between the two taint rules, `a + v != b` puts one read next to an arithmetic operator *and* next
- * to a negation, and both would speak. `routine/nullable-into-arithmetic` goes first: the NULL
- * escapes through the arithmetic before the comparison ever sees it, so the sum is where the reader
- * has to look.
+ * What they have in common is the question they ask: whether a variable is ever read, or whether a
+ * name is ambiguous in its query, can only be answered having looked at everything.
  */
 export const documentRules = [
   declareAfterStatement,
@@ -81,23 +76,7 @@ export const documentRules = [
 ] as const;
 
 /**
- * The rules that read one statement, in running order.
- *
- * The order follows the dispatch it was taken from, and two pairs in it matter:
- *
- *   - An `INSERT`'s column list is read by `query/insert-unknown-column` **before**
- *     `names/unqualified-column` sees the same tokens as bare names. Both would report a column that
- *     does not exist there; the insert rule says which table it is missing from, so it goes first.
- *   - `query/join-multiplies-aggregate` goes before `query/nullable-scalar-subquery`, because both
- *     report on the aggregate's own name token and `SET x = (SELECT SUM(o.total) FROM o JOIN …) + 1`
- *     is both things at once. The fan-out wins: it names the join and the key that is not unique
- *     there, where the other has only "and it could also have been NULL" to add.
- *   - `query/scalar-subquery-many-rows` goes before `query/nullable-scalar-subquery`, which report on
- *     the same `SELECT` token whenever an unpinned search is read as a number. Both come of the same
- *     missing key, and the many-rows one is the actionable end of it: pinning the key answers both,
- *     where a `COALESCE` around the sum leaves the statement still able to fail with error 1242.
- *
- * `rules-statement.test.ts` holds all three down.
+ * The rules that read one statement, with its relations already resolved.
  */
 export const statementRules = [
   unknownTable,
@@ -121,7 +100,7 @@ export const statementRules = [
   joinWithoutCondition,
 ] as const;
 
-/** The rules that read a `CREATE TABLE` or a `CREATE TRIGGER`, in running order. */
+/** The rules that read a `CREATE TABLE` or a `CREATE TRIGGER`. */
 export const schemaRules = [
   auditTableOutOfSync,
   fkUnknownColumn,

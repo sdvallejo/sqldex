@@ -12,6 +12,9 @@ interface Tally {
 export const variableNeverAssigned: Rule = {
   id: "routine/variable-never-assigned",
   group: "routine",
+  // The stronger claim about the same read: this one says it cannot be anything but NULL, where the
+  // taint rule says it might be.
+  supersedes: ["routine/nullable-into-arithmetic"],
   severity: "warn",
   scope: "document",
   docs: `A variable read when it can only hold NULL.

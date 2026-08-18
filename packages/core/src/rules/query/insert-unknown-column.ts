@@ -4,6 +4,9 @@ import { insertTarget } from "./insert-target.ts";
 export const insertUnknownColumn: Rule = {
   id: "query/insert-unknown-column",
   group: "query",
+  // The same token is a column that does not exist to `names/unqualified-column`, which cannot say
+  // which table it is missing from. This can, so it is the one worth hearing.
+  supersedes: ["names/unqualified-column"],
   severity: "error",
   scope: "statement",
   docs: `A column named in an \`INSERT\`'s list that the table does not have.
