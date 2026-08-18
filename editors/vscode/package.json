@@ -6,12 +6,18 @@
   "private": true,
   "license": "MIT",
   "publisher": "sqldex",
-  "categories": ["Programming Languages", "Linters"],
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
   "engines": {
     "vscode": "^1.91.0"
   },
   "main": "./extension.js",
-  "activationEvents": ["onLanguage:sql", "workspaceContains:**/.sqldex.json"],
+  "activationEvents": [
+    "onLanguage:sql",
+    "workspaceContains:**/.sqldex.json"
+  ],
   "contributes": {
     "configuration": {
       "title": "sqldex",
@@ -24,7 +30,11 @@
         },
         "sqldex.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Log the traffic between this extension and the server, in the sqldex output channel."
         }
@@ -45,6 +55,11 @@
     ]
   },
   "dependencies": {
-    "vscode-languageclient": "^10.1.0"
+    "vscode-languageclient": "^10.1.0",
+    "vscode-languageserver": "^10.1.0"
+  },
+  "scripts": {
+    "bundle": "node bundle-server.js",
+    "package": "node bundle-server.js && npx --yes @vscode/vsce package --allow-missing-repository"
   }
 }

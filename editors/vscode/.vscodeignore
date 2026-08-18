@@ -1,0 +1,6 @@
+# What a packaged extension does not need. `bundle-server.js` is not here on purpose: the client
+# reads the bundle's location from it, so it ships.
+test/**
+package-lock.json
+*.vsix
+.vscodeignore

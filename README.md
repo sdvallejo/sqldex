@@ -25,7 +25,7 @@ published to npm yet, so using it means a checkout.
 | Lint rules | 31 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
-| Editor clients | one for Neovim and one for VS Code, in `editors/`; neither is published, both run from a checkout |
+| Editor clients | one for Neovim and one for VS Code, in `editors/`; neither is on a marketplace, and the VS Code one packages into a `.vsix` that carries the server |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
 
@@ -286,7 +286,7 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 439 tests, hand-written fixtures only
+npm test                        # 443 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"

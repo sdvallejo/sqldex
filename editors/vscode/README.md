@@ -9,27 +9,40 @@ directory is the project — plus one that only a multi-root editor has to ask.
 
 - **VS Code 1.91 or newer**, which is what the language client library needs.
 - **Node 22.18 or newer** on your `PATH`, which is what the server runs on.
-- The server itself, as `sqldex-lsp` on your `PATH`. Inside a checkout of this repository with its
-  dependencies installed, the client finds the server without one being installed.
+- The server, which an installed `.vsix` already contains. A checkout finds its own, and a
+  `sqldex-lsp` you installed yourself wins over both.
 
 ## Installing
 
-There is no marketplace listing. From a checkout:
+There is no marketplace listing, so installing means a file. Build one from a checkout:
 
 ```sh
-cd editors/vscode && npm install          # the language client library, and only that
-ln -s "$PWD" ~/.vscode/extensions/sqldex  # or copy it, if you would rather not link
+cd editors/vscode
+npm install
+npm run package      # downloads vsce on demand; leaves sqldex-0.0.0.vsix beside this file
 ```
 
-Then reload the window. To work on the client itself instead, open this directory in VS Code and
-press <kbd>F5</kbd>, or:
+That `.vsix` is the thing to hand to somebody else. They install it with
+
+```sh
+code --install-extension sqldex-0.0.0.vsix
+```
+
+or through the Extensions view: the `…` menu, **Install from VSIX**.
+
+**It carries the server with it**, which is what makes it worth handing over — see below. What it
+does not carry is Node: the machine installing it needs **Node 22.18 or newer** on its `PATH`, and
+the extension says so in a notification rather than failing quietly if it finds an older one.
+
+To work on the client itself, skip all of that: open this directory in VS Code and press
+<kbd>F5</kbd>, or
 
 ```sh
 code --extensionDevelopmentPath="$PWD/editors/vscode" ~/src/your-schema-repo
 ```
 
-Nothing has to be configured. The extension wakes when a `.sql` file is opened or a `.sqldex.json`
-is in the tree, and starts a server only for folders that are schema projects.
+Nothing has to be configured either way. The extension wakes when a `.sql` file is opened or a
+`.sqldex.json` is in the tree, and starts a server only for folders that are schema projects.
 
 ## What you get, and how to reach it
 
@@ -66,6 +79,34 @@ Two, and neither is about analysis:
 directories are sources all live in the project's `.sqldex.json`, which is the same file
 `sqldex check` reads in CI — because a rule that is off in one place and on in the other is a rule
 nobody trusts. A user setting here would be exactly that disagreement, one machine at a time.
+
+## What is in the package, and why it is source
+
+The `.vsix` contains the client, its language client library, and **the server itself** — the
+`packages/core` and `packages/lsp` sources, copied into `server/`. An extension that only knew how
+to find a server somebody else installed would be an extension that does nothing when installed,
+and nothing is published to npm for that somebody to install from.
+
+Source, not a build: the server is TypeScript that Node runs by stripping the types, which is why
+this repository has no build step and why what ships is what is in `packages/`. `npm run package`
+copies it and rewrites exactly one thing — the `@sqldex/core` import, which a `node_modules` would
+have answered and here has to be a relative path.
+
+That is the reason `server/` is not laid out as a `node_modules`, and it is worth knowing before
+"tidying" it: **Node refuses to strip types from a file under `node_modules`**, so an extension
+packaged that way installs perfectly and then dies at the first import with
+`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`.
+
+Where the server comes from, in the order the extension tries:
+
+| | |
+|---|---|
+| `sqldex.server.path` | somebody named a file |
+| `sqldex-lsp` on the `PATH` | somebody installed one |
+| the checkout above this directory | somebody cloned the repository — and beats the bundle, since the bundle is a copy taken from it |
+| `server/` inside the extension | what an installed `.vsix` runs |
+
+The **sqldex** output channel says which of the four it used, every time it starts one.
 
 ## One server per project, not per window
 

@@ -12,11 +12,12 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { test } = require("node:test");
 
+const { bundle } = require("../bundle-server.js");
 const { projectRoot } = require("../project.js");
 const { isRecentEnough, serverCommand } = require("../server.js");
 
@@ -81,13 +82,37 @@ test("a checkout runs its own server, but only one whose dependencies are there"
   assert.deepEqual(withDeps.args, ["/repo/packages/lsp/src/main.ts", "--stdio"]);
   assert.equal(withDeps.problem, undefined);
 
-  // The protocol library is the one thing the server cannot do without, and a clone made by an
-  // extension marketplace will not have it.
+  // The protocol library is the one thing the server cannot do without, and a checkout whose
+  // dependencies were never installed does not have it. With no bundle either, there is nothing
+  // left to try.
   const bare = serverCommand("/repo/editors/vscode", "", {
     ...NOTHING,
-    exists: (path) => path.endsWith("main.ts"),
+    exists: (path) => path === "/repo/packages/lsp/src/main.ts",
   });
   assert.equal(bare.command, "sqldex-lsp");
+});
+
+test("a packaged extension runs the copy it was packaged with", () => {
+  // No checkout above it, nothing on the PATH: this is every machine that installed the `.vsix` and
+  // has never seen the repository, and it is the case the bundle exists for.
+  const found = serverCommand("/home/someone/.vscode/extensions/sqldex", "", {
+    ...NOTHING,
+    exists: (path) => path.includes("/server/"),
+    nodeVersion: () => "v22.18.0",
+  });
+  assert.equal(found.command, "node");
+  assert.match(found.args[0], /server\/lsp\/src\/main\.ts$/);
+});
+
+test("a checkout beats the bundle, because the bundle is a copy taken from it", () => {
+  // Both present means somebody is working on the server, and running last week's copy of what they
+  // just edited is the kind of wrong that takes an afternoon to notice.
+  const found = serverCommand("/repo/editors/vscode", "", {
+    ...NOTHING,
+    exists: () => true,
+    nodeVersion: () => "v22.18.0",
+  });
+  assert.deepEqual(found.args, ["/repo/packages/lsp/src/main.ts", "--stdio"]);
 });
 
 test("a Node too old to read the server's source says so instead of failing quietly", () => {
@@ -113,4 +138,49 @@ test("finding nothing at all still answers with the installed name", () => {
   // would have installed, rather than a message invented here about a path it never tried.
   const found = serverCommand("/ext", "", NOTHING);
   assert.equal(found.command, "sqldex-lsp");
+});
+
+// ------------------------------------------------------------- what gets packaged
+
+test("the bundle retargets the one bare specifier, per file and not per prefix", () => {
+  // `@sqldex/core` is what a node_modules would have answered, and the bundle deliberately is not
+  // one — Node refuses to strip types under `node_modules`. So the import is rewritten, and how far
+  // up it has to reach depends on how deep the file sits.
+  const repo = tree("packages/core/src", "packages/lsp/src/features", "editors/vscode");
+  writeFileSync(join(repo, "packages/core/package.json"), "{}");
+  writeFileSync(join(repo, "packages/lsp/package.json"), "{}");
+  writeFileSync(join(repo, "packages/core/src/index.ts"), "export const marker = 1;\n");
+  writeFileSync(join(repo, "packages/lsp/src/main.ts"), 'import { marker } from "@sqldex/core";\n');
+  writeFileSync(
+    join(repo, "packages/lsp/src/features/hover.ts"),
+    'import { marker } from "@sqldex/core";\n',
+  );
+
+  const main = bundle(join(repo, "editors", "vscode"));
+  assert.equal(main, join(repo, "editors/vscode/server/lsp/src/main.ts"));
+  assert.match(readFileSync(main, "utf8"), /from "\.\.\/\.\.\/core\/src\/index\.ts"/);
+  assert.match(
+    readFileSync(join(repo, "editors/vscode/server/lsp/src/features/hover.ts"), "utf8"),
+    /from "\.\.\/\.\.\/\.\.\/core\/src\/index\.ts"/,
+  );
+
+  // Nothing under a directory called node_modules, which is the whole point of the layout.
+  assert.equal(existsSync(join(repo, "editors/vscode/server/node_modules")), false);
+});
+
+test("bundling twice leaves no trace of the first time", () => {
+  const repo = tree("packages/core/src", "packages/lsp/src", "editors/vscode");
+  writeFileSync(join(repo, "packages/core/package.json"), "{}");
+  writeFileSync(join(repo, "packages/lsp/package.json"), "{}");
+  writeFileSync(join(repo, "packages/core/src/index.ts"), "");
+  writeFileSync(join(repo, "packages/lsp/src/main.ts"), "");
+
+  bundle(join(repo, "editors", "vscode"));
+  const stale = join(repo, "editors/vscode/server/lsp/src/gone.ts");
+  writeFileSync(stale, "");
+  bundle(join(repo, "editors", "vscode"));
+
+  // A file from a previous version surviving into the package is wrong in a way nobody could
+  // reproduce from the repository, so the directory is rebuilt rather than patched.
+  assert.equal(existsSync(stale), false);
 });
