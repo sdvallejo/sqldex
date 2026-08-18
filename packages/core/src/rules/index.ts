@@ -36,6 +36,7 @@ import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
+import { nullableVariableInPredicate } from "./routine/nullable-variable-in-predicate.ts";
 import { unusedVariable } from "./routine/unused-variable.ts";
 import { variableNeverAssigned } from "./routine/variable-never-assigned.ts";
 import { divergentType } from "./schema/divergent-type.ts";
@@ -53,15 +54,21 @@ import { redundantIndex } from "./schema/redundant-index.ts";
  * ever read, or whether a name is ambiguous in its query, is a question you can only answer having
  * looked at everything.
  *
- * The collision inside this group is between the two variable rules — a read can be both the first
- * unprotected read of a never-assigned variable and a use of a nullable-tainted one. "Never assigned"
- * goes first because it is the stronger claim: that read cannot be anything but NULL, where the other
- * says it might be.
+ * Two collisions live in this group. Between the two variable rules — a read can be both the first
+ * unprotected read of a never-assigned variable and a use of a nullable-tainted one — "never
+ * assigned" goes first because it is the stronger claim: that read cannot be anything but NULL, where
+ * the other says it might be.
+ *
+ * Between the two taint rules, `a + v != b` puts one read next to an arithmetic operator *and* next
+ * to a negation, and both would speak. `routine/nullable-into-arithmetic` goes first: the NULL
+ * escapes through the arithmetic before the comparison ever sees it, so the sum is where the reader
+ * has to look.
  */
 export const documentRules = [
   unusedVariable,
   variableNeverAssigned,
   nullableIntoArithmetic,
+  nullableVariableInPredicate,
   ambiguousColumn,
   cursorNeverOpened,
 ] as const;
@@ -147,6 +154,7 @@ export {
   noPrimaryKey,
   nullableIntoArithmetic,
   nullableScalarSubquery,
+  nullableVariableInPredicate,
   outArgumentNotVariable,
   redundantIndex,
   scalarSubqueryManyRows,
