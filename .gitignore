@@ -18,6 +18,11 @@ editors/vscode/server/
 # Not `.vscode/`: this repository holds a VS Code extension, so a launch configuration checked in
 # beside it is the point rather than an accident.
 
+# A resume checkpoint an assistant writes when a session runs out of budget: session ids and
+# absolute paths from one machine, of no use to anyone else and easy to commit by accident. The rest
+# of `.claude/` is deliberately not ignored — settings kept there are meant to be shared.
+.claude/RESUME.md
+
 # What an editor or a file manager leaves lying around.
 .DS_Store
 *.swp
