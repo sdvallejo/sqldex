@@ -29,6 +29,7 @@ import { joinMultipliesAggregate } from "./query/join-multiplies-aggregate.ts";
 import { joinWithoutCondition } from "./query/join-without-condition.ts";
 import { leftJoinArithmetic } from "./query/left-join-arithmetic.ts";
 import { nullableScalarSubquery } from "./query/nullable-scalar-subquery.ts";
+import { scalarSubqueryManyRows } from "./query/scalar-subquery-many-rows.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
 import { callArity } from "./routine/call-arity.ts";
 import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
@@ -77,8 +78,12 @@ export const documentRules = [
  *     report on the aggregate's own name token and `SET x = (SELECT SUM(o.total) FROM o JOIN …) + 1`
  *     is both things at once. The fan-out wins: it names the join and the key that is not unique
  *     there, where the other has only "and it could also have been NULL" to add.
+ *   - `query/scalar-subquery-many-rows` goes before `query/nullable-scalar-subquery`, which report on
+ *     the same `SELECT` token whenever an unpinned search is read as a number. Both come of the same
+ *     missing key, and the many-rows one is the actionable end of it: pinning the key answers both,
+ *     where a `COALESCE` around the sum leaves the statement still able to fail with error 1242.
  *
- * `rules-statement.test.ts` holds both down.
+ * `rules-statement.test.ts` holds all three down.
  */
 export const statementRules = [
   unknownTable,
@@ -92,6 +97,7 @@ export const statementRules = [
   unqualifiedColumn,
   leftJoinArithmetic,
   joinMultipliesAggregate,
+  scalarSubqueryManyRows,
   nullableScalarSubquery,
   collationMismatch,
   unfilteredWrite,
@@ -143,6 +149,7 @@ export {
   nullableScalarSubquery,
   outArgumentNotVariable,
   redundantIndex,
+  scalarSubqueryManyRows,
   unfilteredWrite,
   unknownAlias,
   unknownColumn,

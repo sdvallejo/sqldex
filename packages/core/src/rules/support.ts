@@ -5,7 +5,7 @@ import type { Routine } from "../model/routine.ts";
 import type { Table } from "../model/table.ts";
 import { kw, kwAny, matchingParen, punct, qualifiedName, splitCommas } from "../syntax/fast/tok.ts";
 import type { Token } from "../syntax/types.ts";
-import type { BaseContext } from "./rule.ts";
+import type { BaseContext, StatementContext } from "./rule.ts";
 
 /**
  * Is `wanted` the leftmost prefix of `columns`, position by position?
@@ -168,6 +168,62 @@ export function coversUniqueKey(
 
   if (covered(table.primaryKey)) return true;
   return table.indexes.some((index) => index.unique && covered(index.columns));
+}
+
+/** One query over one table, with what its `WHERE` fixes — the shape a row can be looked up in. */
+export interface SingleTableQuery {
+  table: Table;
+  /** The columns an equality in the `WHERE` fixes to one value. */
+  pinned: string[];
+}
+
+/**
+ * The one table a scalar subquery reads, and what its `WHERE` pins down — or `undefined` when there
+ * is more than one table, or none the catalog knows.
+ *
+ * A join disqualifies it whatever the `WHERE` pins, because the second table decides on its own how
+ * many rows come back: none, if it matches nothing, and several, if it matches several. Both are
+ * what the callers of this are trying to rule out.
+ */
+export function singleTableQuery(
+  ctx: StatementContext,
+  sel: number,
+  close: number,
+): SingleTableQuery | undefined {
+  const scope = ctx.scopeAt(sel);
+  if (!scope || scope.to > close) return undefined;
+
+  const only = scope.relations.length === 1 ? scope.relations[0] : undefined;
+  if (!only?.name || only.cte || only.derived) return undefined;
+
+  const fold = (name: string): string => ctx.dialect.foldIdentifier(name, false);
+  const table = ctx.catalog.table(only.name);
+  if (!table) return undefined;
+
+  // Filtered to columns the table actually has: an unqualified `=` reads both sides, and the other
+  // one is normally a parameter or a literal that only looks like a name.
+  const pinned = pinnedByWhere(ctx.tokens, scope, fold, fold(only.alias ?? only.name), true).filter((name) =>
+    table.byName.has(fold(name)),
+  );
+  return { table, pinned };
+}
+
+/**
+ * Is this subquery a **lookup** of a row rather than a search that may find none?
+ *
+ * One table, and a `WHERE` that fixes a whole primary key or unique index of it: `SELECT Valor FROM
+ * Settings WHERE Parameter = 'X'` is somebody reading a row they know is there, and telling them it
+ * might not be is a claim about their data rather than about their query. A search — a range of
+ * dates, a status that is not one value, a join to another table — is the opposite: finding nothing
+ * is one of its ordinary outcomes.
+ *
+ * The catalog is what tells the two apart, and nothing else can: the same `WHERE` shape is a lookup
+ * against one table and a search against another, and only the keys say which.
+ */
+export function isKeyLookup(ctx: StatementContext, sel: number, close: number): boolean {
+  const query = singleTableQuery(ctx, sel, close);
+  if (!query) return false;
+  return coversUniqueKey((name) => ctx.dialect.foldIdentifier(name, false), query.table, query.pinned);
 }
 
 /** `a and b`, `a, b and c` — a list a person reads rather than one a machine emits. */

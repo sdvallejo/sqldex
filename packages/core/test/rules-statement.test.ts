@@ -31,6 +31,7 @@ import {
   leftJoinArithmetic,
   nullableScalarSubquery,
   outArgumentNotVariable,
+  scalarSubqueryManyRows,
   unfilteredWrite,
   unknownAlias,
   unknownColumn,
@@ -683,5 +684,86 @@ test("an aggregate that is both multiplied by a join and NULL over nothing belon
   assert.deepEqual(
     found.map((d) => d.code),
     ["query/join-multiplies-aggregate"],
+  );
+});
+
+// ------------------------------------------- a subquery that can come back with several rows
+
+test("a search that starts a key and abandons it can match twice", () => {
+  assert.deepEqual(
+    run(scalarSubqueryManyRows, "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7);"),
+    [
+      "this subquery can return more than one row: order_lines is keyed on (order_id, line_no), and " +
+        "this fixes order_id but leaves line_no free. MySQL answers error 1242 rather than a value",
+    ],
+  );
+});
+
+test("the whole key finishes the search, and half of it does not", () => {
+  const whole = "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 AND l.line_no = 1);";
+  const half = "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.line_no = 1);";
+  assert.deepEqual(run(scalarSubqueryManyRows, whole), []);
+  assert.equal(run(scalarSubqueryManyRows, half).length, 1);
+});
+
+test("a search that touches no key at all is one the schema has no opinion about", () => {
+  // `status` is in no unique index. It may well be unique in this data, and the schema does not say
+  // — so reporting it would be arguing about somebody's rows rather than reading their DDL.
+  assert.deepEqual(run(scalarSubqueryManyRows, "SELECT 1 + (SELECT o.total FROM orders o WHERE o.status = 'A');"), []);
+});
+
+test("an aggregate folds the group into one row, unless a GROUP BY hands back one per group", () => {
+  const folded = "SELECT 1 + (SELECT SUM(l.amount) FROM order_lines l WHERE l.order_id = 7);";
+  const grouped = "SELECT 1 + (SELECT SUM(l.amount) FROM order_lines l WHERE l.order_id = 7 GROUP BY l.line_no);";
+  assert.deepEqual(run(scalarSubqueryManyRows, folded), []);
+  assert.equal(run(scalarSubqueryManyRows, grouped).length, 1);
+});
+
+test("LIMIT 1 is the author saying any one of them will do", () => {
+  assert.deepEqual(
+    run(scalarSubqueryManyRows, "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 LIMIT 1);"),
+    [],
+  );
+  assert.equal(
+    run(scalarSubqueryManyRows, "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 LIMIT 2);").length,
+    1,
+  );
+});
+
+test("the operators built for many rows are not misread as asking for one", () => {
+  const inList = "SELECT o.order_id FROM orders o WHERE o.order_id IN (SELECT l.order_id FROM order_lines l WHERE l.order_id = 7);";
+  const exists = "SELECT o.order_id FROM orders o WHERE EXISTS (SELECT l.amount FROM order_lines l WHERE l.order_id = 7);";
+  assert.deepEqual(run(scalarSubqueryManyRows, inList), []);
+  assert.deepEqual(run(scalarSubqueryManyRows, exists), []);
+});
+
+test("a derived table is a query, not a value", () => {
+  assert.deepEqual(
+    run(scalarSubqueryManyRows, "SELECT x.amount FROM (SELECT l.amount FROM order_lines l WHERE l.order_id = 7) x;"),
+    [],
+  );
+});
+
+test("a key covered whole silences it even when another key has a column to spare", () => {
+  // `refunds` is keyed on `refund_id`; a query that fixes it is one row, and no other index matters.
+  assert.deepEqual(run(scalarSubqueryManyRows, "SELECT 1 + (SELECT r.amount FROM refunds r WHERE r.refund_id = 3);"), []);
+});
+
+test("a table the catalog does not have cannot support the claim", () => {
+  assert.deepEqual(run(scalarSubqueryManyRows, "SELECT 1 + (SELECT t.total FROM tmp_from_other_sp t);"), []);
+});
+
+test("an unpinned search read as a number belongs to the many-rows rule, not the NULL one", () => {
+  // Both see the same `SELECT` token, and both come of the same missing key. Pinning it answers
+  // both; a COALESCE around the sum leaves the statement still able to fail with 1242.
+  const src = "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7);";
+  const found = check(
+    new Registry().add(scalarSubqueryManyRows, nullableScalarSubquery),
+    { dialect: mysql, catalog: catalogOf(), schemas: new Set(["shop"]), config: defaults },
+    src,
+  );
+  assert.deepEqual(
+    found.map((d) => d.code),
+    ["query/scalar-subquery-many-rows"],
   );
 });

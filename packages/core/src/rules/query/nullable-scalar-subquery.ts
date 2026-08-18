@@ -1,7 +1,7 @@
 import { kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
-import type { Rule, StatementContext } from "../rule.ts";
-import { ARITHMETIC, coversUniqueKey, pinnedByWhere } from "../support.ts";
+import type { Rule } from "../rule.ts";
+import { ARITHMETIC, isKeyLookup } from "../support.ts";
 
 /** Words between `SELECT` and the first item, which say nothing about what the item is. */
 const SELECT_MODIFIERS: ReadonlySet<string> = new Set([
@@ -154,36 +154,6 @@ function readSubquery(tokens: readonly Token[], open: number, close: number): Su
   return { item: { from: i, to: end - 1 }, grouped };
 }
 
-/**
- * Is this subquery a **lookup** of a row rather than a search that may find none?
- *
- * One table, and a `WHERE` that fixes a whole primary key or unique index of it: `SELECT Valor FROM
- * Settings WHERE Parameter = 'X'` is somebody reading a row they know is there, and telling them it
- * might not be is a claim about their data rather than about their query. A search — a range of
- * dates, a status that is not one value, a join to another table — is the opposite: finding nothing
- * is one of its ordinary outcomes, which is exactly when the NULL happens.
- *
- * The catalog is what tells the two apart, and nothing else can: the same `WHERE` shape is a lookup
- * against one table and a search against another, and only the keys say which.
- *
- * A join disqualifies it whatever the `WHERE` pins, because the second table can eliminate the row
- * the key found — which is the same "no row" this rule is about, arrived at from the other side.
- */
-function isLookup(ctx: StatementContext, sel: number, close: number): boolean {
-  const scope = ctx.scopeAt(sel);
-  if (!scope || scope.to > close) return false;
-
-  const only = scope.relations.length === 1 ? scope.relations[0] : undefined;
-  if (!only?.name || only.cte || only.derived) return false;
-
-  const fold = (name: string): string => ctx.dialect.foldIdentifier(name, false);
-  const table = ctx.catalog.table(only.name);
-  if (!table) return false;
-
-  const label = fold(only.alias ?? only.name);
-  return coversUniqueKey(fold, table, pinnedByWhere(ctx.tokens, scope, fold, label, true));
-}
-
 export const nullableScalarSubquery: Rule = {
   id: "query/nullable-scalar-subquery",
   group: "query",
@@ -262,7 +232,7 @@ What it deliberately leaves alone:
         continue;
       }
 
-      if (isLookup(ctx, i + 1, close)) continue;
+      if (isKeyLookup(ctx, i + 1, close)) continue;
 
       ctx.report(
         tokens[i + 1]!,
