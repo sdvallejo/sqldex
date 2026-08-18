@@ -204,8 +204,13 @@ export function createServer(connection: Connection): void {
 
     workspace = new Workspace(root);
     const { tables, routines, files } = workspace.catalog.stats;
+    // The rule count is here so that "which engine is this?" is one line away. A server outlives
+    // the copy it was started from — reinstalling an editor client does not restart the process it
+    // already has — and the symptom of running yesterday's engine is a rule that quietly does not
+    // fire. A number that does not match `sqldex rules` says so at a glance.
     connection.console.info(
-      `sqldex: ${root} — ${count(tables, "table")} and ${count(routines, "routine")} in ${count(files, "file")}.`,
+      `sqldex: ${root} — ${count(tables, "table")} and ${count(routines, "routine")} in ${count(files, "file")}, ` +
+        `${count(workspace.registry.all().length, "rule")}.`,
     );
     // Worth a line of its own: everything else about this server keeps working, so the one symptom
     // is silence, and silence is what a person reads as "it is not running".

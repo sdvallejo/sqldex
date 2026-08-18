@@ -174,3 +174,9 @@ or a `.sqldex.json` in the tree, and a window with neither gives it no reason to
 
 **sqldex: Restart the language server** in the command palette picks up a project that came into
 existence after the window was opened — a `.sqldex.json` you just wrote, a `tables/` you just made.
+
+It is also the answer to a rule that fires everywhere except here. **Installing a new version of the
+extension does not restart the server the window is already running**, so a window left open across
+an upgrade keeps the old engine until it is told otherwise. The startup line in the output channel
+ends with a rule count for exactly this: if it disagrees with `sqldex rules`, the process is older
+than the files it came from.
