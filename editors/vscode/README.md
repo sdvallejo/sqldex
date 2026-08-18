@@ -54,7 +54,7 @@ VS Code maps all of it to what you already press:
 | What is this | hover |
 | Where is it defined | <kbd>F12</kbd>, and <kbd>Ctrl</kbd>+<kbd>F12</kbd> for what a foreign key points at |
 | Who uses it | <kbd>Shift</kbd>+<kbd>F12</kbd> |
-| Rename it everywhere | <kbd>F2</kbd> |
+| Rename it everywhere | <kbd>F2</kbd> — this extension's own rename, see below |
 | Rewrite this for me | <kbd>Ctrl</kbd>+<kbd>.</kbd> — expand a `*`, generate a statement, bring an audit twin up to date |
 | Outline, and the project's symbols | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>, and <kbd>Ctrl</kbd>+<kbd>T</kbd> |
 | What a routine calls, and who calls it | right-click → Peek → Call Hierarchy |
@@ -65,6 +65,29 @@ contributes: the keys, the five rule groups, the severities, and the shape of a 
 are deliberately not enumerated in it — a list of them here would be one more copy to keep in step
 with the engine, and a stale one would flag a rule that exists. `sqldex rules` prints the current
 list, and `sqldex explain <id>` prints one rule's whole reasoning.
+
+## Rename, and why it has a command of its own
+
+<kbd>F2</kbd> here runs **sqldex: Rename symbol** rather than the editor's built-in rename, and that
+is deliberate.
+
+VS Code picks *one* provider for a rename. For the prepare step it walks the registered providers and
+**stops at the first one that does not implement it**, falling back to the plain word under the
+cursor; for the edit it takes the first provider that answers with anything at all, an empty answer
+included. Which provider comes first is decided by which one registered last, so with two SQL
+language servers in the same window it is a race — and the other ones commonly declare
+`renameProvider: true` without the prepare half, take the request, and answer with nothing.
+
+The result is a rename that opens its input box, accepts a name, and changes nothing, with no error
+anywhere. If you have `sqls`, SQLTools or another SQL server installed, that is what you would get
+about half the time.
+
+The command does not enter the race: it asks the server this extension started and applies what comes
+back. To give <kbd>F2</kbd> back to the editor, unbind it in your own keybindings:
+
+```json
+{ "key": "f2", "command": "-sqldex.rename" }
+```
 
 ## Settings
 

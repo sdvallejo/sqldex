@@ -48,9 +48,21 @@
     ],
     "commands": [
       {
+        "command": "sqldex.rename",
+        "title": "Rename symbol",
+        "category": "sqldex"
+      },
+      {
         "command": "sqldex.restart",
         "title": "Restart the language server",
         "category": "sqldex"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "sqldex.rename",
+        "key": "f2",
+        "when": "editorTextFocus && !editorReadonly && editorLangId == sql"
       }
     ]
   },

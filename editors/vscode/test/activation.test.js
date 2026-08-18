@@ -35,6 +35,7 @@ function folderAt(path, name) {
 function activate(folders) {
   const created = [];
   const started = [];
+  const registered = [];
 
   const vscode = {
     window: {
@@ -51,7 +52,13 @@ function activate(folders) {
       onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
       onDidChangeConfiguration: () => ({ dispose() {} }),
     },
-    commands: { registerCommand: () => ({ dispose() {} }), executeCommand() {} },
+    commands: {
+      registerCommand: (name) => {
+        registered.push(name);
+        return { dispose() {} };
+      },
+      executeCommand() {},
+    },
   };
 
   const client = {
@@ -87,7 +94,7 @@ function activate(folders) {
     delete require.cache["vscode"];
     delete require.cache["vscode-languageclient/node"];
   }
-  return { created, started };
+  return { created, started, registered };
 }
 
 /** A directory that declares a schema project, and one that does not. */
@@ -132,4 +139,18 @@ test("the server is told which folder it serves, since it only ever reads one", 
   const root = project();
   const { started } = activate([folderAt(root, "db")]);
   assert.equal(started[0].options.workspaceFolder.uri.fsPath, root);
+});
+
+test("rename is offered as a command of its own, and the manifest binds it", () => {
+  // VS Code hands a rename to the first provider that answers with anything, and a second SQL
+  // language server in the window answers with nothing. The command does not enter that race, so it
+  // has to exist and F2 has to reach it.
+  const { registered } = activate([folderAt(project(), "db")]);
+  assert.ok(registered.includes("sqldex.rename"), `registered: ${registered.join(", ")}`);
+
+  const manifest = require("../package.json");
+  assert.ok(manifest.contributes.commands.some((c) => c.command === "sqldex.rename"));
+  const binding = manifest.contributes.keybindings.find((k) => k.command === "sqldex.rename");
+  assert.equal(binding.key, "f2");
+  assert.match(binding.when, /editorLangId == sql/);
 });

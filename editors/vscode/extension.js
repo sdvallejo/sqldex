@@ -90,6 +90,74 @@ function start(folder, context) {
   });
 }
 
+/**
+ * The client whose project holds a document, or `undefined` when none does.
+ *
+ * By path prefix, because that is what "this file belongs to that project" means here and the client
+ * is keyed by the project root it was started for.
+ */
+function clientFor(uri) {
+  if (uri.scheme !== "file") return undefined;
+  for (const [root, client] of clients) {
+    if (uri.fsPath === root || uri.fsPath.startsWith(`${root}/`)) return client;
+  }
+  return undefined;
+}
+
+/**
+ * Renaming, asked of this server directly rather than through the editor's rename.
+ *
+ * **This exists because of how VS Code picks a rename provider, and it is worth writing down.** For
+ * the *prepare* step it walks the providers in order and stops at the first one that does not
+ * implement it — `for (…) { if (!provider.resolveRenameLocation) break; … }` — falling back to the
+ * plain word under the cursor. For the *edit* it takes the first provider that answers with anything
+ * at all, an empty edit included. So a second SQL language server in the same window — and there are
+ * several people install, which declare `renameProvider: true` without the prepare half — takes the
+ * request and answers with nothing, and the rename does nothing at all, with no error anywhere.
+ *
+ * Which of the two goes first is decided by registration time, so it is a race: rename works, or
+ * quietly does not, depending on which server finished starting first. This command does not enter
+ * the race. It asks the server this extension started, and applies what comes back.
+ */
+async function renameHere() {
+  const editor = window.activeTextEditor;
+  if (!editor) return;
+
+  const client = clientFor(editor.document.uri);
+  if (!client) {
+    void window.showInformationMessage("sqldex: this file is not in a project sqldex is serving.");
+    return;
+  }
+
+  const position = editor.selection.active;
+  const params = {
+    textDocument: { uri: editor.document.uri.toString() },
+    position: { line: position.line, character: position.character },
+  };
+
+  const prepared = await client.sendRequest("textDocument/prepareRename", params);
+  if (!prepared) {
+    void window.showInformationMessage("sqldex: there is nothing here that can be renamed.");
+    return;
+  }
+
+  const newName = await window.showInputBox({
+    value: prepared.placeholder,
+    valueSelection: undefined,
+    prompt: `Rename ${prepared.placeholder} and every use of it`,
+  });
+  if (newName === undefined || newName === prepared.placeholder) return;
+
+  const edit = await client.sendRequest("textDocument/rename", { ...params, newName });
+  if (!edit) {
+    void window.showWarningMessage(`sqldex: ${prepared.placeholder} could not be renamed.`);
+    return;
+  }
+
+  const applied = await workspace.applyEdit(await client.protocol2CodeConverter.asWorkspaceEdit(edit));
+  if (!applied) void window.showWarningMessage("sqldex: the editor refused the rename.");
+}
+
 async function stop(root) {
   const client = root === undefined ? undefined : clients.get(root);
   if (!client) return;
@@ -122,6 +190,8 @@ function activate(context) {
       if (event.affectsConfiguration("sqldex.server.path")) void commands.executeCommand("sqldex.restart");
     }),
   );
+
+  context.subscriptions.push(commands.registerCommand("sqldex.rename", renameHere));
 
   context.subscriptions.push(
     commands.registerCommand("sqldex.restart", async () => {
