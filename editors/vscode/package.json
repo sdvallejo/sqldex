@@ -1,0 +1,50 @@
+{
+  "name": "sqldex",
+  "displayName": "sqldex",
+  "description": "Static analysis for MySQL schemas that live as .sql files in a repository.",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "publisher": "sqldex",
+  "categories": ["Programming Languages", "Linters"],
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:sql", "workspaceContains:**/.sqldex.json"],
+  "contributes": {
+    "configuration": {
+      "title": "sqldex",
+      "properties": {
+        "sqldex.server.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Command that starts the language server. Empty means `sqldex-lsp` from your `PATH`, and failing that the server of the checkout this extension sits in.",
+          "scope": "machine-overridable"
+        },
+        "sqldex.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Log the traffic between this extension and the server, in the sqldex output channel."
+        }
+      }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": ".sqldex.json",
+        "url": "./schemas/sqldex.schema.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "sqldex.restart",
+        "title": "Restart the language server",
+        "category": "sqldex"
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.1.0"
+  }
+}

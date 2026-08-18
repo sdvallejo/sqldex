@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'packages/*/test/**/*.test.ts'",
+    "test": "node --test 'packages/*/test/**/*.test.ts' 'editors/*/test/**/*.test.js'",
     "bench": "node tools/bench.ts",
     "check:flat": "node tools/check-flat.ts"
   },

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "sqldex project configuration",
+  "description": "The file that declares a schema project. Its presence is enough to declare one: every key below is optional, and an empty object is a complete file. The keys are snake_case because this is a format people write by hand.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sources": {
+      "description": "What builds the catalog. Omit to autodetect from the repository layout, which is what almost every project should do.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/source" }
+    },
+    "targets": {
+      "description": "What gets linted, when that is not the same as what builds the catalog. A deploy folder contributes no definitions — its CREATE TABLEs are copies — but it is code that runs and has to be checked. Omit for sources plus deploy_folder/**/*.sql where that directory exists.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/source" }
+    },
+    "schemas": {
+      "description": "Schemas whose tables live in this repository. Omit for the root directory's name. It exists so a reference into another database — other.orders when this repo is shop — is not checked against a same-named table of this one.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "exclude": {
+      "description": "Names or globs to skip, relative to the root. Defaults to deploy.sql and rollback.sql, which are half a duplicated schema and would fill the catalog with phantom definitions.",
+      "type": "array",
+      "items": { "type": "string" },
+      "default": ["deploy.sql", "rollback.sql"]
+    },
+    "diagnostics": {
+      "description": "What is reported, and how loudly. One mechanism at two widths: a whole group, or a single rule by id, which wins over its group.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Publish diagnostics while editing. Read into the config and acted on nowhere today: the server publishes either way, and `sqldex check` reports either way. Documented here rather than left out so that a file containing it is not marked as wrong." },
+        "groups": {
+          "description": "By group. { \"audit\": \"off\" } in a repository with no aud_ mirror-table convention.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "names": { "$ref": "#/definitions/severity", "description": "The catalog contradicts the code: a name is not there, or it is ambiguous." },
+            "schema": { "$ref": "#/definitions/severity", "description": "The shape of the DDL: indexes, foreign keys, column types, primary keys." },
+            "query": { "$ref": "#/definitions/severity", "description": "What a statement does: joins, filters, NULL propagation, collations." },
+            "routine": { "$ref": "#/definitions/severity", "description": "The procedural side: arguments, variables, cursors." },
+            "audit": { "$ref": "#/definitions/severity", "description": "The aud_X mirror-table convention, which a repository either uses or does not." }
+          }
+        },
+        "rules": {
+          "description": "By rule id, group/name — the id the diagnostic carries, `sqldex rules` lists and `sqldex explain` takes. Ids are not enumerated here on purpose: a list in this file would be one more copy to keep in step with the engine, and a stale one would underline a rule that exists.",
+          "type": "object",
+          "propertyNames": { "pattern": "^(names|schema|query|routine|audit)/[a-z0-9-]+$" },
+          "additionalProperties": { "$ref": "#/definitions/severity" }
+        }
+      }
+    },
+    "inlay_hints": {
+      "description": "The annotations drawn into the line rather than reported about it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "column_types": { "type": "boolean", "description": "o.status gains : char(1).", "default": true },
+        "alias_tables": { "type": "boolean", "description": "o gains shipments, the first time it appears in a statement.", "default": true }
+      }
+    },
+    "dialect": {
+      "description": "Which engine the SQL is written for.",
+      "type": "string",
+      "enum": ["mysql"],
+      "default": "mysql"
+    }
+  },
+  "definitions": {
+    "severity": {
+      "type": "string",
+      "enum": ["error", "warn", "hint", "off"]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["glob"],
+      "properties": {
+        "glob": { "type": "string", "description": "Glob relative to the project root." },
+        "kind": {
+          "description": "A parsing hint, not a filter: it changes how much work is done, never what is found.",
+          "type": "string",
+          "enum": ["tables", "routines", "data", "auto"],
+          "default": "auto"
+        }
+      }
+    }
+  }
+}

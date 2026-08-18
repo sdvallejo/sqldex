@@ -25,7 +25,7 @@ published to npm yet, so using it means a checkout.
 | Lint rules | 31 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
-| Editor clients | one for Neovim, in `editors/nvim`; no VSCode extension yet |
+| Editor clients | one for Neovim and one for VS Code, in `editors/`; neither is published, both run from a checkout |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
 
@@ -126,9 +126,15 @@ what a rename would touch, and the statements the catalog can write for you. It 
 which project it serves comes from the `initialize`, and how it behaves comes from that project's
 own `.sqldex.json`, so a rule that is off in CI is off in the editor too.
 
-A client for Neovim ships in [`editors/nvim`](editors/nvim), and is configuration rather than code.
-Any other editor needs the same three facts: run `sqldex-lsp --stdio`, attach it to SQL buffers, and
-give it the project directory as the root.
+Two clients ship with it, and both are configuration rather than code: one
+[for Neovim](editors/nvim) and one for [VS Code](editors/vscode). Any other editor needs the same
+three facts: run `sqldex-lsp --stdio`, attach it to SQL buffers, and give it the project directory as the
+root.
+
+Neither client decides anything about analysis, and neither offers a setting that would: what is
+reported lives in the project's `.sqldex.json` beside the code, where CI reads it too. What they do
+decide is when **not** to start — a repository that merely contains a `.sql` file is not a schema
+project, and indexing one uninvited is the thing the guard exists to prevent.
 
 ## Usage as a library
 
@@ -280,7 +286,7 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 429 tests, hand-written fixtures only
+npm test                        # 439 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"
