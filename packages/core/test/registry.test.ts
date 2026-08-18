@@ -221,18 +221,54 @@ test("every rule sqldex ships supersedes a rule that exists", () => {
   }
 });
 
-test("a file cannot report more than the cap, so one systematic mistake cannot bury the rest", () => {
+test("a file over the cap keeps the cap's worth and says how many it left out", () => {
   const flood: Rule = {
     id: "names/flood",
     group: "names",
     severity: "warn",
     scope: "document",
     docs: "reports on every token",
-    // Distinct offsets, so it is the cap and not the de-duplication doing the work.
+    // Distinct offsets, so it is the cap and not the collision resolution doing the work.
     check: (ctx) => ctx.tokens.forEach((t) => ctx.report(t, "again")),
   };
   const src = `SELECT ${Array.from({ length: 300 }, (_, i) => `c${i}`).join(", ")} FROM orders`;
-  assert.equal(run([flood], src).length, 100);
+
+  const found = run([flood], src);
+  assert.equal(found.length, 101, "the cap, plus the note that says it was reached");
+  assert.equal(found.at(-1)?.code, "sqldex:capped");
+  assert.match(found.at(-1)?.message ?? "", /more findings in this file are not shown/);
+});
+
+test("what the cap drops is chosen by severity, so an error is never lost to a hint", () => {
+  // The old cap cut the tail as the list was built: a hint found early kept its place and an error
+  // found later fell off, which is the file that most needs reading losing what most needed saying.
+  const noise: Rule = {
+    id: "names/noise",
+    group: "names",
+    severity: "hint",
+    scope: "document",
+    docs: "reports on every token",
+    check: (ctx) => ctx.tokens.forEach((t) => ctx.report(t, "noise")),
+  };
+  const serious: Rule = {
+    ...noise,
+    id: "names/serious",
+    severity: "error",
+    // One report, on the last token, so arrival order would have thrown it away.
+    check: (ctx) => {
+      const last = ctx.tokens.at(-1);
+      if (last) ctx.report(last, "the thing that matters");
+    },
+  };
+
+  const src = `SELECT ${Array.from({ length: 300 }, (_, i) => `c${i}`).join(", ")} FROM orders`;
+  const found = run([noise, serious], src);
+  assert.ok(
+    found.some((d) => d.code === "names/serious"),
+    "the error survives a flood of hints",
+  );
+  // And it comes back where it was found, not first: severity chooses, position reads.
+  assert.equal(found.at(-2)?.code, "names/serious");
 });
 
 test("`-- sqldex:ignore` silences the line after it, and nothing else", () => {

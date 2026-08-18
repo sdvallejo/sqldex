@@ -49,8 +49,14 @@ import type {
 /**
  * Per-file cap, so that one systematic false positive cannot fill a screen or a quickfix list.
  *
- * It is a property of the *report*, not of the analysis: a file with three hundred findings has
- * one cause, and showing three hundred of them buries it.
+ * **What it drops is chosen, not whatever arrived last.** The cap used to cut the tail of the list as
+ * it was built, which meant a `hint` reported early kept its place while an `error` found later fell
+ * off — the file that most needs reading losing the finding that most needed saying. Severity decides
+ * now: an error is never dropped for a warning, nor a warning for a hint.
+ *
+ * And a capped file says so. A result that was cut with no sign of it is the same defect these rules
+ * are about — an answer that looks complete and is not — so one more diagnostic goes at the end
+ * saying how many are missing.
  */
 const MAX_DIAGNOSTICS = 100;
 
@@ -246,6 +252,41 @@ export interface CheckOptions {
  * Only the same **offset** collides. Two findings on two tokens of one statement are two things to
  * fix, however related they are.
  */
+/** The order severities are kept in when the cap has to choose. */
+const SEVERITY_ORDER: Record<Severity, number> = { error: 0, warn: 1, hint: 2 };
+
+/** The code of the note a capped file carries. Not a rule id, because nothing can silence it. */
+const CAPPED = "sqldex:capped";
+
+/**
+ * Cuts the file down to the cap, keeping the worst and saying what was left out.
+ *
+ * The survivors come back in the order they were found, not in the order they were chosen: severity
+ * decides *what* is kept, and position decides how it reads. Anything else would shuffle a file's
+ * findings around the moment it crossed the cap.
+ */
+function cap(found: readonly Diagnostic[]): Diagnostic[] {
+  if (found.length <= MAX_DIAGNOSTICS) return [...found];
+
+  const kept = new Set(
+    found
+      .map((diagnostic, at) => ({ diagnostic, at }))
+      .sort((a, b) => SEVERITY_ORDER[a.diagnostic.severity] - SEVERITY_ORDER[b.diagnostic.severity] || a.at - b.at)
+      .slice(0, MAX_DIAGNOSTICS)
+      .map((entry) => entry.at),
+  );
+
+  const out = found.filter((_, at) => kept.has(at));
+  const dropped = found.length - out.length;
+  out.push({
+    span: { s: 0, e: 0 },
+    code: CAPPED,
+    severity: "hint",
+    message: `${dropped} more finding${dropped === 1 ? "" : "s"} in this file are not shown: it is over the cap of ${MAX_DIAGNOSTICS}`,
+  });
+  return out;
+}
+
 function resolve(found: readonly Diagnostic[], registry: Registry): Diagnostic[] {
   const displaced = new Map<string, Set<string>>();
   for (const diagnostic of found) {
@@ -313,8 +354,6 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
 
   let current: Active | undefined;
   const report = (at: Span | Token, message: string, tags?: DiagnosticTag[]): void => {
-    if (out.length >= MAX_DIAGNOSTICS) return;
-
     const rule = current!;
     const line = lineCol(starts, at.s).line;
     const suppressed = suppressedLines.get(line);
@@ -453,5 +492,5 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
     }
   }
 
-  return resolve(out, registry);
+  return cap(resolve(out, registry));
 }

@@ -284,7 +284,10 @@ exactly as before. What CI fails on does not move with it.
 -- sqldex:ignore-file                   -- this file
 ```
 
-The engine caps a file at 100 findings. Two rules can both see one name, and where they would say
+The engine caps a file at 100 findings, and what it drops is chosen rather than whatever arrived
+last: an error is never dropped for a warning. A file that was cut says so, with one more entry at
+the end counting what is missing — a result that was truncated with no sign of it is the same defect
+these rules are about. Two rules can both see one name, and where they would say
 the same thing about it one of them declares that it **supersedes** the other — the insert rule over
 the bare-column one, say, because it can name the table the column is missing from. That claim is
 written on the rule and resolved after everything has been said, so the same findings come out
