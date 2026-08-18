@@ -13,7 +13,7 @@ import { kw, matchingParen, punct } from "../syntax/fast/tok.ts";
 import type { Token } from "../syntax/types.ts";
 
 /** Aggregates fold a whole group into one row, which is the other way of having only one. */
-const AGGREGATES: ReadonlySet<string> = new Set([
+export const AGGREGATES: ReadonlySet<string> = new Set([
   "AVG",
   "BIT_AND",
   "BIT_OR",

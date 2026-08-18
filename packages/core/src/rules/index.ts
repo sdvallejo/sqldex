@@ -29,6 +29,7 @@ import { joinMultipliesAggregate } from "./query/join-multiplies-aggregate.ts";
 import { joinWithoutCondition } from "./query/join-without-condition.ts";
 import { leftJoinArithmetic } from "./query/left-join-arithmetic.ts";
 import { nullableScalarSubquery } from "./query/nullable-scalar-subquery.ts";
+import { onlyFullGroupBy } from "./query/only-full-group-by.ts";
 import { scalarSubqueryManyRows } from "./query/scalar-subquery-many-rows.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
 import { callArity } from "./routine/call-arity.ts";
@@ -109,6 +110,7 @@ export const statementRules = [
   scalarSubqueryManyRows,
   selectIntoManyRows,
   nullableScalarSubquery,
+  onlyFullGroupBy,
   collationMismatch,
   unfilteredWrite,
   joinWithoutCondition,
@@ -158,6 +160,7 @@ export {
   leftJoinArithmetic,
   noPrimaryKey,
   nullableIntoArithmetic,
+  onlyFullGroupBy,
   nullableScalarSubquery,
   nullableVariableInPredicate,
   outArgumentNotVariable,

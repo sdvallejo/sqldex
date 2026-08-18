@@ -30,6 +30,7 @@ import {
   joinWithoutCondition,
   leftJoinArithmetic,
   nullableScalarSubquery,
+  onlyFullGroupBy,
   outArgumentNotVariable,
   scalarSubqueryManyRows,
   selectIntoManyRows,
@@ -803,4 +804,69 @@ test("a search the schema has no opinion about, and one it cannot read at all", 
 test("INTO OUTFILE takes as many rows as it finds, which is what it is for", () => {
   const src = body("  SELECT l.amount INTO OUTFILE '/tmp/x' FROM order_lines l WHERE l.order_id = 7;");
   assert.deepEqual(run(selectIntoManyRows, src), []);
+});
+
+// ------------------------------------------------ a column neither grouped nor aggregated
+
+test("a column outside the grouping is one the server either refuses or answers arbitrarily", () => {
+  assert.deepEqual(run(onlyFullGroupBy, "SELECT o.status, COUNT(*) FROM orders o GROUP BY o.customer_id;"), [
+    "o.status is neither grouped nor aggregated: a server with ONLY_FULL_GROUP_BY refuses this, " +
+      "and one without it returns an arbitrary row's value",
+  ]);
+});
+
+test("grouping by the key determines every column of that table, which is what makes this usable", () => {
+  // The ordinary report shape. Without reading the key out of the DDL, this is the case a naive
+  // reading of the clause reports, and it is correct SQL that the server accepts.
+  assert.deepEqual(
+    run(onlyFullGroupBy, "SELECT o.status, o.total, COUNT(*) FROM orders o GROUP BY o.order_id;"),
+    [],
+  );
+});
+
+test("and it reaches a table joined to a determined one by its own key", () => {
+  const src =
+    "SELECT c.label, COUNT(*) FROM orders o JOIN customers c ON c.customer_id = o.customer_id GROUP BY o.order_id;";
+  assert.deepEqual(run(onlyFullGroupBy, src), []);
+  // The same query grouped by something that determines nothing still sounds.
+  const loose =
+    "SELECT c.label, COUNT(*) FROM orders o JOIN customers c ON c.customer_id = o.customer_id GROUP BY o.status;";
+  assert.equal(run(onlyFullGroupBy, loose).length, 1);
+});
+
+test("a USING join carries the same determination as an ON equality", () => {
+  const src = "SELECT l.amount, COUNT(*) FROM order_lines l JOIN orders o USING (order_id) GROUP BY o.order_id, l.line_no;";
+  assert.deepEqual(run(onlyFullGroupBy, src), []);
+});
+
+test("what a select item is called is not a column of anything", () => {
+  // `expr AS x` and the bare `expr x`, which these files use interchangeably.
+  const named = "SELECT CONCAT(o.status, '!') AS flag, COUNT(*) FROM orders o GROUP BY o.order_id;";
+  const bare = "SELECT CONCAT(o.status, '!') flag, COUNT(*) FROM orders o GROUP BY o.order_id;";
+  assert.deepEqual(run(onlyFullGroupBy, named), []);
+  assert.deepEqual(run(onlyFullGroupBy, bare), []);
+});
+
+test("an expression grouped by as written is grouped, and the clause may name the item instead", () => {
+  const verbatim = "SELECT LEFT(o.status, 1), COUNT(*) FROM orders o GROUP BY LEFT(o.status, 1);";
+  const byLabel = "SELECT LEFT(o.status, 1) AS s, COUNT(*) FROM orders o GROUP BY s;";
+  assert.deepEqual(run(onlyFullGroupBy, verbatim), []);
+  assert.deepEqual(run(onlyFullGroupBy, byLabel), []);
+});
+
+test("an aggregate with no grouping at all makes the rest of the list arbitrary", () => {
+  assert.equal(run(onlyFullGroupBy, "SELECT o.status, COUNT(*) FROM orders o;").length, 1);
+  // …and an ordinary select, which is neither grouped nor aggregated, is not this rule's business.
+  assert.deepEqual(run(onlyFullGroupBy, "SELECT o.status, o.total FROM orders o;"), []);
+});
+
+test("the variables of a SELECT … INTO are not columns of the query", () => {
+  // They sit before the `FROM`, so a select list cut at the wrong clause reads them as columns and
+  // reports every procedure that counts something into a variable.
+  const src = body("  SELECT COUNT(*) INTO p_id FROM orders o GROUP BY o.status;");
+  assert.deepEqual(run(onlyFullGroupBy, src), []);
+});
+
+test("a star says nothing about which columns those are", () => {
+  assert.deepEqual(run(onlyFullGroupBy, "SELECT *, COUNT(*) FROM orders o GROUP BY o.status;"), []);
 });
