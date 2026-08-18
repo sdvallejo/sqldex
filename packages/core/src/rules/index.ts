@@ -25,6 +25,7 @@ import { unqualifiedColumn } from "./names/unqualified-column.ts";
 import { collationMismatch } from "./query/collation-mismatch.ts";
 import { insertUnknownColumn } from "./query/insert-unknown-column.ts";
 import { insertValueCount } from "./query/insert-value-count.ts";
+import { joinMultipliesAggregate } from "./query/join-multiplies-aggregate.ts";
 import { joinWithoutCondition } from "./query/join-without-condition.ts";
 import { leftJoinArithmetic } from "./query/left-join-arithmetic.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
@@ -82,6 +83,7 @@ export const statementRules = [
   insertValueCount,
   unqualifiedColumn,
   leftJoinArithmetic,
+  joinMultipliesAggregate,
   collationMismatch,
   unfilteredWrite,
   joinWithoutCondition,
@@ -124,6 +126,7 @@ export {
   indexUnknownColumn,
   insertUnknownColumn,
   insertValueCount,
+  joinMultipliesAggregate,
   joinWithoutCondition,
   leftJoinArithmetic,
   noPrimaryKey,

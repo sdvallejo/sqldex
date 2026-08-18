@@ -22,7 +22,7 @@ published to npm yet, so using it means a checkout.
 |---|---|
 | Catalog and name resolution | works |
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
-| Lint rules | 27 of them, in five groups — see below |
+| Lint rules | 28 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
 | Editor clients | one for Neovim, in `editors/nvim`; no VSCode extension yet |
@@ -205,7 +205,7 @@ turning rules off is choosing between:
 |---|---|
 | `names` | `unknown-table`, `unknown-alias`, `unknown-column`, `unqualified-column`, `unknown-routine`, `ambiguous-column` |
 | `schema` | `fk-unknown-table`, `fk-unknown-column`, `fk-missing-index`, `index-unknown-column`, `redundant-index`, `divergent-type`, `no-primary-key` |
-| `query` | `insert-value-count`, `insert-unknown-column`, `unfiltered-write`, `join-without-condition`, `collation-mismatch`, `left-join-arithmetic` |
+| `query` | `insert-value-count`, `insert-unknown-column`, `unfiltered-write`, `join-without-condition`, `collation-mismatch`, `left-join-arithmetic`, `join-multiplies-aggregate` |
 | `routine` | `call-arity`, `out-argument-not-variable`, `cursor-never-opened`, `unused-variable`, `variable-never-assigned`, `nullable-into-arithmetic` |
 | `audit` | `table-out-of-sync`, `trigger-missing-column` |
 

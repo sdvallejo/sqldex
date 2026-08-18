@@ -173,6 +173,15 @@ export interface StatementContext extends BaseContext {
    * map kept, every reference to the other came out as a column that does not exist.
    */
   aliasesFor(index: number, folded: string): ReadonlyMap<string, Relation>;
+  /**
+   * The innermost query scope covering a token, which is how a statement rule asks whether two
+   * things it found are part of the same query.
+   *
+   * A statement is the wrong bound for that question — one `SET x = (SELECT …) + (SELECT …)` is a
+   * single statement holding two unrelated queries — and a rule that used the statement's own
+   * relations would happily pair a `SUM` from one with a `JOIN` from the other.
+   */
+  scopeAt(index: number): ScopeInfo | undefined;
 }
 
 export interface TableContext extends BaseContext {

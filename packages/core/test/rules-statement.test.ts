@@ -26,6 +26,7 @@ import {
   collationMismatch,
   insertUnknownColumn,
   insertValueCount,
+  joinMultipliesAggregate,
   joinWithoutCondition,
   leftJoinArithmetic,
   outArgumentNotVariable,
@@ -58,6 +59,14 @@ const SCHEMA = [
   "  order_id int NOT NULL,",
   "  amount decimal(10,2) NULL,",
   "  PRIMARY KEY (refund_id)",
+  ");",
+  // Many rows per order, keyed by a pair: what a join to it multiplies, and what a `WHERE` on the
+  // second half of the key stops multiplying.
+  "CREATE TABLE order_lines (",
+  "  order_id int NOT NULL,",
+  "  line_no int NOT NULL,",
+  "  amount decimal(10,2) NOT NULL,",
+  "  PRIMARY KEY (order_id, line_no)",
   ");",
   // A pair on different collations, which is the only thing the collation rule looks at.
   "CREATE TABLE current_codes (code varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL);",
@@ -448,5 +457,115 @@ test("an INSERT's unknown column is claimed by the insert rule, not the bare-col
   assert.deepEqual(
     found.map((d) => `${d.code}: ${d.message}`),
     ["query/insert-unknown-column: orders has no column totl"],
+  );
+});
+
+// ------------------------------------------------- an aggregate multiplied by a join
+
+test("a SUM over one table's column, joined to a table where the key is not unique", () => {
+  assert.deepEqual(run(joinMultipliesAggregate, "SELECT SUM(o.total) FROM orders o JOIN refunds r USING(order_id);"), [
+    "SUM over o.total is multiplied by the join to refunds: order_id is not unique there",
+  ]);
+});
+
+test("the same join written with ON, either way round", () => {
+  const on = "SELECT SUM(o.total) FROM orders o JOIN refunds r ON r.order_id = o.order_id;";
+  const flipped = "SELECT SUM(o.total) FROM orders o JOIN refunds r ON o.order_id = r.order_id;";
+  assert.equal(run(joinMultipliesAggregate, on).length, 1);
+  assert.deepEqual(run(joinMultipliesAggregate, flipped), run(joinMultipliesAggregate, on));
+});
+
+test("a join on a unique key brings back one row, so nothing is multiplied", () => {
+  assert.deepEqual(
+    run(joinMultipliesAggregate, "SELECT SUM(o.total) FROM orders o JOIN customers c USING(customer_id);"),
+    [],
+  );
+});
+
+test("the joined table's own columns are not repeated: they are what the join returned", () => {
+  assert.deepEqual(run(joinMultipliesAggregate, "SELECT SUM(r.amount) FROM orders o JOIN refunds r USING(order_id);"), []);
+});
+
+test("MIN and MAX cannot see a repeated row", () => {
+  assert.deepEqual(run(joinMultipliesAggregate, "SELECT MAX(o.total) FROM orders o JOIN refunds r USING(order_id);"), []);
+});
+
+test("COUNT(DISTINCT …) is how somebody who knew wrote around it", () => {
+  assert.deepEqual(
+    run(joinMultipliesAggregate, "SELECT COUNT(DISTINCT o.order_id) FROM orders o JOIN refunds r USING(order_id);"),
+    [],
+  );
+});
+
+test("an anti-join keeps the rows that matched nothing, which cannot be several", () => {
+  // The standard way to write "orders with no refund". Reporting it would be the fastest way to
+  // get the rule turned off.
+  assert.deepEqual(
+    run(
+      joinMultipliesAggregate,
+      "SELECT SUM(o.total) FROM orders o LEFT JOIN refunds r USING(order_id) WHERE r.refund_id IS NULL;",
+    ),
+    [],
+  );
+});
+
+test("a WHERE that finishes the key stops the multiplication, and without it the finding stands", () => {
+  const pinned = "SELECT SUM(o.total) FROM orders o JOIN order_lines l USING(order_id) WHERE l.line_no = 1;";
+  const loose = "SELECT SUM(o.total) FROM orders o JOIN order_lines l USING(order_id);";
+  assert.deepEqual(run(joinMultipliesAggregate, pinned), []);
+  assert.deepEqual(run(joinMultipliesAggregate, loose), [
+    "SUM over o.total is multiplied by the join to order_lines: order_id is not unique there",
+  ]);
+});
+
+test("half of a two-column key is not the key", () => {
+  // `line_no` alone leaves the order free, so the rows are still a group.
+  assert.equal(
+    run(joinMultipliesAggregate, "SELECT SUM(o.total) FROM orders o JOIN order_lines l ON l.line_no = 1;").length,
+    1,
+  );
+});
+
+test("a reference that is only a test is not what gets added up", () => {
+  assert.deepEqual(
+    run(
+      joinMultipliesAggregate,
+      "SELECT SUM(IF(o.status = 'P', r.amount, 0)) FROM orders o JOIN refunds r USING(order_id);",
+    ),
+    [],
+  );
+});
+
+test("a condition it cannot read as equalities is left alone", () => {
+  assert.deepEqual(
+    run(
+      joinMultipliesAggregate,
+      "SELECT SUM(o.total) FROM orders o JOIN refunds r ON r.order_id = o.order_id OR r.refund_id = 0;",
+    ),
+    [],
+  );
+});
+
+test("one statement's two queries are not each other's business", () => {
+  // A `SET` holding two subqueries is one statement and two queries. Blaming the first one's SUM for
+  // the second one's join is exactly what a statement-wide view of the relations would do.
+  assert.deepEqual(
+    run(
+      joinMultipliesAggregate,
+      body("  SET p_id = (SELECT SUM(o.total) FROM orders o) + (SELECT COUNT(r.amount) FROM refunds r);"),
+    ),
+    [],
+  );
+});
+
+test("a subquery inside the aggregate belongs to itself", () => {
+  // The parentheses of a `SUM` can hold a whole query, and a name in there is not multiplied by a
+  // join out here.
+  assert.deepEqual(
+    run(
+      joinMultipliesAggregate,
+      body("  SET p_id = (SELECT SUM((SELECT COUNT(*) FROM refunds x WHERE x.order_id = c.customer_id)) FROM customers c);"),
+    ),
+    [],
   );
 });

@@ -426,6 +426,7 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
           // reference resolved against before scopes existed, so nothing that worked stops working.
           return byAlias;
         },
+        scopeAt: (index) => build().owner[index],
       };
       for (const entry of statementRules) {
         current = entry;
