@@ -22,6 +22,7 @@
 
 import { auditTableOutOfSync } from "./audit/table-out-of-sync.ts";
 import { auditTriggerMissingColumn } from "./audit/trigger-missing-column.ts";
+import { aggregateWithoutGroupBy } from "./query/aggregate-without-group-by.ts";
 import { ambiguousColumn } from "./names/ambiguous-column.ts";
 import { unknownAlias } from "./names/unknown-alias.ts";
 import { unknownColumn } from "./names/unknown-column.ts";
@@ -102,6 +103,7 @@ export const statementRules = [
   selectIntoManyRows,
   nullableScalarSubquery,
   onlyFullGroupBy,
+  aggregateWithoutGroupBy,
   literalTypeMismatch,
   collationMismatch,
   unfilteredWrite,
@@ -134,6 +136,7 @@ export function allRules(): Registry {
 }
 
 export {
+  aggregateWithoutGroupBy,
   ambiguousColumn,
   auditTableOutOfSync,
   auditTriggerMissingColumn,

@@ -219,7 +219,7 @@ export const onlyFullGroupBy: Rule = {
   group: "query",
   severity: "warn",
   scope: "statement",
-  docs: `A column in the select list that is neither grouped nor aggregated.
+  docs: `A column the \`GROUP BY\` does not determine.
 
 Two different things happen to it, and the quiet one is worse. A server with \`ONLY_FULL_GROUP_BY\`
 — the default since 5.7 — refuses the statement outright, error 1055. A server without it runs the
@@ -241,7 +241,9 @@ What it deliberately leaves alone:
     \`DATE(t.created)\` in the list is grouped, and matching it by text is what avoids arguing with
     the author about their own expression.
   - **\`SELECT *\`**, where there is nothing to name and the answer would be a guess.
-  - **A query with no aggregate and no \`GROUP BY\`**, which is every ordinary select.`,
+  - **A query with no \`GROUP BY\` at all**, which is \`query/aggregate-without-group-by\`'s to
+    report: with nothing to group by there is no dependence to read, and that answer needs neither
+    the keys nor the closure this one is built on.`,
 
   check(ctx) {
     const { tokens, dialect } = ctx;
@@ -256,10 +258,10 @@ What it deliberately leaves alone:
     if (end === -1) return;
 
     const group = clauseAt(ctx, "GROUP", "BY");
+    // A query with no grouping at all is `query/aggregate-without-group-by`'s, which needs no keys
+    // and no closure to answer it. What is left here is the case that does.
+    if (group === -1) return;
     const list = items(ctx, ctx.statement.from + 1, end - 1);
-    // With no `GROUP BY`, an aggregate anywhere in the list is what makes the rest of it a defect:
-    // `SELECT a, SUM(b) FROM t` is one row, and `a` comes from whichever of them the server liked.
-    if (group === -1 && !hasAggregate(ctx, ctx.statement.from + 1, end - 1)) return;
     // A `*` says nothing about which columns those are, so there is nothing to check — but only a
     // `*` of the list itself. `COUNT(*)` is a star inside a call, and it is in nearly every grouped
     // query there is: reading it as a wildcard silences the rule almost everywhere.
@@ -367,18 +369,3 @@ What it deliberately leaves alone:
     }
   },
 };
-
-/** Does the range hold an aggregate call of its own? */
-function hasAggregate(ctx: StatementContext, from: number, to: number): boolean {
-  const { tokens } = ctx;
-  for (let i = from; i <= to; i++) {
-    const t = tokens[i]!;
-    if (punct(t, "(") && kw(tokens[i + 1], "SELECT")) {
-      const close = matchingParen(tokens, i);
-      i = close === -1 ? to : close;
-      continue;
-    }
-    if (t.t === "id" && !t.q && punct(tokens[i + 1], "(") && AGGREGATES.has(t.v.toUpperCase())) return true;
-  }
-  return false;
-}

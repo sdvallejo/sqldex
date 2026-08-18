@@ -27,6 +27,7 @@ import {
   insertValueCount,
   joinMultipliesAggregate,
   joinWithoutCondition,
+  aggregateWithoutGroupBy,
   leftJoinArithmetic,
   literalTypeMismatch,
   nullableScalarSubquery,
@@ -856,10 +857,24 @@ test("an expression grouped by as written is grouped, and the clause may name th
   assert.deepEqual(run(onlyFullGroupBy, byLabel), []);
 });
 
-test("an aggregate with no grouping at all makes the rest of the list arbitrary", () => {
-  assert.equal(run(onlyFullGroupBy, "SELECT o.status, COUNT(*) FROM orders o;").length, 1);
-  // …and an ordinary select, which is neither grouped nor aggregated, is not this rule's business.
-  assert.deepEqual(run(onlyFullGroupBy, "SELECT o.status, o.total FROM orders o;"), []);
+test("a query with no grouping at all belongs to the other rule", () => {
+  // `query/aggregate-without-group-by` answers that one, and needs neither the keys nor the closure
+  // this one is built on. Splitting them is what lets the cheap answer be trusted on its own.
+  assert.deepEqual(run(onlyFullGroupBy, "SELECT o.status, COUNT(*) FROM orders o;"), []);
+  assert.equal(run(aggregateWithoutGroupBy, "SELECT o.status, COUNT(*) FROM orders o;").length, 1);
+
+  // And an ordinary select is neither rule's business.
+  assert.deepEqual(run(aggregateWithoutGroupBy, "SELECT o.status, o.total FROM orders o;"), []);
+});
+
+test("what the aggregate rule leaves alone", () => {
+  const cases = [
+    "SELECT COUNT(*) FROM orders o;",
+    "SELECT SUM(o.total) AS total FROM orders o;",
+    "SELECT *, COUNT(*) FROM orders o;",
+    "SELECT o.status, COUNT(*) FROM orders o GROUP BY o.status;",
+  ];
+  for (const src of cases) assert.deepEqual(run(aggregateWithoutGroupBy, src), [], src);
 });
 
 test("the variables of a SELECT … INTO are not columns of the query", () => {
