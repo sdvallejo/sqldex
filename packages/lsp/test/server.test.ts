@@ -429,6 +429,36 @@ test("a config file appearing rebuilds the project rather than patching it", asy
   await client.stop();
 });
 
+test("a project can ask for the catalog without the underlines", async () => {
+  // The one setting that is about the editor and not about the analysis: `sqldex check` reports
+  // either way, so what CI fails on does not move with it.
+  const client = await start(project("shop"));
+
+  const opened = client.nextDiagnostics(client.uri(SP));
+  client.open(SP, SP_TEXT);
+  assert.equal((await opened).length, 1);
+
+  writeFileSync(client.path(".sqldex.json"), JSON.stringify({ diagnostics: { enabled: false } }));
+
+  // Emptied rather than left alone: turning it off has to clear what is already on screen, or the
+  // findings outlive the setting that produced them.
+  const cleared = client.nextDiagnostics(client.uri(SP));
+  client.connection.sendNotification(DidChangeWatchedFilesNotification.type, {
+    changes: [{ uri: client.uri(".sqldex.json"), type: FileChangeType.Created }],
+  });
+  assert.deepEqual(await cleared, []);
+
+  // And back: the setting is the only thing that changed, so the finding is still there to make.
+  writeFileSync(client.path(".sqldex.json"), JSON.stringify({ diagnostics: { enabled: true } }));
+  const restated = client.nextDiagnostics(client.uri(SP));
+  client.connection.sendNotification(DidChangeWatchedFilesNotification.type, {
+    changes: [{ uri: client.uri(".sqldex.json"), type: FileChangeType.Changed }],
+  });
+  assert.equal((await restated).length, 1);
+
+  await client.stop();
+});
+
 // -------------------------------------------------------------------- features
 
 test("hover, completion and signature help all answer over the wire", async () => {

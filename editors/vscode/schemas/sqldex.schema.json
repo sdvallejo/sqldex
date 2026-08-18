@@ -31,7 +31,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "description": "Publish diagnostics while editing. Read into the config and acted on nowhere today: the server publishes either way, and `sqldex check` reports either way. Documented here rather than left out so that a file containing it is not marked as wrong." },
+        "enabled": { "type": "boolean", "default": true, "description": "Publish diagnostics while editing. Turning it off silences the editor and nothing else — `sqldex check` reports either way, so what CI fails on does not move with it. It is the blunt instrument; `groups` and `rules` are where a repo that dislikes two rules should go first." },
         "groups": {
           "description": "By group. { \"audit\": \"off\" } in a repository with no aud_ mirror-table convention.",
           "type": "object",

@@ -151,7 +151,12 @@ export function createServer(connection: Connection): void {
     if (!document || !workspace) return;
 
     const src = document.getText();
-    connection.sendDiagnostics({ uri, diagnostics: diagnosticsOf(src, workspace.diagnose(src)) });
+    // A project can ask for the catalog without the underlines. Sending an empty list rather than
+    // returning early is what makes turning it off *clear* the screen: the config is reloaded and
+    // every open document republished, and a silent return would leave the old findings frozen
+    // where they are, outliving the setting that produced them.
+    const found = workspace.config.diagnostics.enabled ? diagnosticsOf(src, workspace.diagnose(src)) : [];
+    connection.sendDiagnostics({ uri, diagnostics: found });
     reported.add(uri);
   }
 
@@ -202,6 +207,13 @@ export function createServer(connection: Connection): void {
     connection.console.info(
       `sqldex: ${root} — ${count(tables, "table")} and ${count(routines, "routine")} in ${count(files, "file")}.`,
     );
+    // Worth a line of its own: everything else about this server keeps working, so the one symptom
+    // is silence, and silence is what a person reads as "it is not running".
+    if (!workspace.config.diagnostics.enabled) {
+      connection.console.info(
+        "sqldex: diagnostics are off for this project — .sqldex.json sets diagnostics.enabled to false.",
+      );
+    }
 
     if (canWatch) {
       // Without this the catalog only learns about a file when that file is saved in this editor. A

@@ -11,7 +11,7 @@ import { basename, dirname, join } from "node:path";
 import { after, test } from "node:test";
 
 import { detectSources, detectTargets, isDdlProject, resolveProject } from "../src/catalog/project.ts";
-import { CONFIG_FILES, get, invalidate, schemas } from "../src/config/config.ts";
+import { CONFIG_FILES, defaults, get, invalidate, schemas } from "../src/config/config.ts";
 
 after(() => invalidate());
 
@@ -113,6 +113,17 @@ test("the project file wins over the options, which win over the defaults", () =
   assert.equal(config.diagnostics.groups.query, "off", "the options still apply where it is silent");
   assert.equal(config.diagnostics.enabled, true, "and they reach keys the project file omits");
   assert.deepEqual(config.diagnostics.rules, {}, "and the defaults where both are silent");
+});
+
+test("diagnostics are on unless a project says otherwise", () => {
+  // The one key that only the editor reads. It is on by default because the alternative — a server
+  // that starts, indexes everything and then says nothing — reads as broken rather than as quiet.
+  assert.equal(defaults.diagnostics.enabled, true);
+
+  const root = makeRepo(["tables", "sps"]);
+  writeFileSync(join(root, ".sqldex.json"), '{ "diagnostics": { "enabled": false } }');
+  invalidate();
+  assert.equal(get(root).diagnostics.enabled, false);
 });
 
 test("invalid JSON is reported and treated as absent, rather than refusing to start", () => {

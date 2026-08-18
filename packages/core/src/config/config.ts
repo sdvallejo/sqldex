@@ -35,10 +35,19 @@ export interface Source {
  */
 export interface DiagnosticsConfig {
   /**
-   * Publish diagnostics while editing. Off by default because procedural SQL has too many ways of
-   * naming something a static reader cannot see — SQL built as a string, tables created in another
-   * session, session variables — for underlining a whole file to be a good first impression. A
-   * `sqldex check` run reports either way: asking for it *is* the opt-in.
+   * Publish diagnostics while editing.
+   *
+   * On, and the switch is here for the repo where it should not be. Procedural SQL has ways of
+   * naming things a static reader cannot see — SQL built as a string, a table created in another
+   * session, a session variable — and a repo with enough of them wants the catalog, the navigation
+   * and the completion without the underlines that come with them.
+   *
+   * It silences the **editor** and nothing else: `sqldex check` reports either way, so what CI fails
+   * on does not move when this does. That asymmetry is the whole point of having the key rather than
+   * telling people to turn every group off.
+   *
+   * `groups` and `rules` are the narrower knobs, and are where a repo that dislikes two rules should
+   * go first. This one is the blunt instrument.
    */
   enabled: boolean;
   /** By group: `{ "audit": "off" }` in a repo with no mirror-table convention. */
@@ -94,7 +103,7 @@ export const defaults: Config = {
   // a duplicated schema and would pollute the catalog with phantom definitions.
   exclude: ["deploy.sql", "rollback.sql"],
   diagnostics: {
-    enabled: false,
+    enabled: true,
     // Empty on purpose: every rule ships at the severity it declares. What a rule is for, and
     // why it is worth its false positives, belongs in that rule's `docs` — one place, which is
     // also what `sqldex explain` prints. Restating it here as a list of flags is how the two

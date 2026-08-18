@@ -267,11 +267,16 @@ than only switching it off:
 ```json
 {
   "diagnostics": {
+    "enabled": true,
     "groups": { "audit": "off" },
     "rules": { "query/join-without-condition": "error" }
   }
 }
 ```
+
+`enabled` is the one key that only the editor reads: turning it off leaves a repo with the catalog,
+the navigation and the completion and none of the underlines, while `sqldex check` goes on reporting
+exactly as before. What CI fails on does not move with it.
 
 ```sql
 -- sqldex:ignore                       -- the next line, whatever the rule
@@ -286,7 +291,7 @@ which is why registration order is deliberate and listing order is not.
 ## Development
 
 ```
-npm test                        # 449 tests, hand-written fixtures only
+npm test                        # 451 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"
