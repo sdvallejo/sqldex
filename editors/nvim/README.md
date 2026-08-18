@@ -1,7 +1,61 @@
 # sqldex for Neovim
 
-A client for the `sqldex-lsp` language server. It is configuration, not code: the server does the
-work, and this says how to start it, for which buffers, and which directory is the project.
+*Gotta index 'em all!*
+
+A repository full of `CREATE TABLE` and `CREATE PROCEDURE` files **is** a database schema, and this
+makes Neovim read it as one. Open a stored procedure and every table in the project is already
+known — its columns, their types, which ones are nullable, where each foreign key leads, and the
+values a one-letter status column is allowed to hold. No database connection, no credentials,
+nothing running: the catalog is built from the `.sql` files themselves.
+
+What that buys you is the answer to the questions a schema repository raises all day. *What is
+`c.doc_type` and what can it hold. Which table is `d` again. Who else writes to this table. What
+would this rename touch.* All of it is a keypress, and none of it is a text search.
+
+If you have used **DataGrip's DDL data source** — point the IDE at a directory of `.sql` files and it
+builds a schema out of them, so navigation and inspections work with no database running — that is
+the idea this comes from, in Neovim, with a rule set written specifically for MySQL. The
+[longer version](../../README.md#where-the-idea-comes-from) is in the project's own README.
+
+## What you get, and how to reach it
+
+Neovim maps most of it to keys you already have:
+
+| | |
+|---|---|
+| **The column under the cursor**, in full — its type, whether it is nullable, whether it is a primary or unique key, and the table its foreign key points at. Plus its `DEFAULT`, its `COMMENT`, and the values it is allowed to hold: the set the comment documents, or, where nobody wrote one down, the codes the procedures are seen comparing it against | `K` |
+| **The table under the cursor** — its `CREATE TABLE`, exactly as the repository has it | `K` |
+| **What a two-letter alias stands for**, and what a temporary table holds and which file created it | `K` |
+| **Findings as you type** — 38 rules over names, schema, queries and routines: a column that does not exist, an `INSERT` whose value count does not match, an `UPDATE` with no filter, a variable never read, a foreign key with no index | `]d`, `[d`, `:lua vim.diagnostic.open_float()` |
+| **Where a name is defined**, and where its foreign key leads | `grt` for the definition, `gri` for the foreign key's target |
+| **Everywhere a table or column is used** — whole identifiers, so searching `orders` does not also hand you `aud_orders` | `grr` |
+| **Rename it across the project**, definition and uses together | `grn` |
+| **Statements written from the catalog** — expand a `*` into the columns it stands for, generate a `SELECT`, an `INSERT` or an `UPDATE` over the table under the cursor, add the columns an audit twin is missing, or rewrite a table's audit triggers | `gra` |
+| **Outline, and every name in the project** | `gO`, and `:lua vim.lsp.buf.workspace_symbol()` |
+| **What a routine calls, and who calls it** | `:lua vim.lsp.buf.incoming_calls()` |
+| **Completion that knows the schema** — the columns of the alias you just typed a dot after, the tables in the project, a routine's parameters | see below |
+| **Types and aliases inline**, without hovering | see below |
+
+Two of these are off by default in Neovim and worth turning on for this server:
+
+```lua
+vim.api.nvim_create_autocmd("LspAttach", {
+  callback = function(event)
+    local client = vim.lsp.get_client_by_id(event.data.client_id)
+    if not client or client.name ~= "sqldex" then return end
+
+    -- The column type on a qualified reference, and what a two-letter alias stands for.
+    vim.lsp.inlay_hint.enable(true, { bufnr = event.buf })
+    -- Completion without a plugin. Trigger characters included, so `o.` opens the list.
+    vim.lsp.completion.enable(true, client.id, event.buf, { autotrigger = true })
+  end,
+})
+```
+
+Everything above comes from the `sqldex-lsp` language server; this directory is the client that
+starts it. It is configuration, not code: the server does the work, and this says how to start it,
+for which buffers, and which directory is the project. What gets reported is never decided here —
+it lives in the project's own `.sqldex.json`, the same file `sqldex check` reads in CI.
 
 ## What you need
 
@@ -39,37 +93,6 @@ vim.lsp.enable "sqldex"
 
 What you give up by doing that is the part of `lsp/sqldex.lua` that is a decision rather than a
 value: which directories declare a project, and the file watching described below.
-
-## What you get, and how to reach it
-
-Neovim maps most of it out of the box:
-
-| | |
-|---|---|
-| Findings as you type | the diagnostics you already have — `]d`, `[d`, `:lua vim.diagnostic.open_float()` |
-| What is this | `K` |
-| Where is it defined | `grt` for the column's own line, `gri` for what its foreign key points at |
-| Who uses it | `grr` |
-| Rename it everywhere | `grn` |
-| Rewrite this for me | `gra` — expand a `*`, generate a statement, bring an audit twin up to date |
-| Outline, and the project's symbols | `gO`, and `:lua vim.lsp.buf.workspace_symbol()` |
-| What a routine calls, and who calls it | `:lua vim.lsp.buf.incoming_calls()` |
-
-Two are off by default in Neovim and worth turning on for this server:
-
-```lua
-vim.api.nvim_create_autocmd("LspAttach", {
-  callback = function(event)
-    local client = vim.lsp.get_client_by_id(event.data.client_id)
-    if not client or client.name ~= "sqldex" then return end
-
-    -- The column type on a qualified reference, and what a two-letter alias stands for.
-    vim.lsp.inlay_hint.enable(true, { bufnr = event.buf })
-    -- Completion without a plugin. Trigger characters included, so `o.` opens the list.
-    vim.lsp.completion.enable(true, client.id, event.buf, { autotrigger = true })
-  end,
-})
-```
 
 ## Why it asks to watch files
 

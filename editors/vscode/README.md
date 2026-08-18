@@ -1,9 +1,52 @@
 # sqldex for VS Code
 
-A client for the `sqldex-lsp` language server. It implements no feature: the server does the work
-and decides everything about a project from that project's own `.sqldex.json`. What is here is the
-three questions a client has to answer — how to start the server, for which documents, and which
-directory is the project — plus one that only a multi-root editor has to ask.
+*Gotta index 'em all!*
+
+A repository full of `CREATE TABLE` and `CREATE PROCEDURE` files **is** a database schema, and this
+makes VS Code read it as one. Open a stored procedure and every table in the project is already
+known — its columns, their types, which ones are nullable, where each foreign key leads, and the
+values a one-letter status column is allowed to hold. No database connection, no credentials,
+nothing running: the catalog is built from the `.sql` files themselves.
+
+What that buys you is the answer to the questions a schema repository raises all day. *What is
+`c.doc_type` and what can it hold. Which table is `d` again. Who else writes to this table. What
+would this rename touch.* All of it is a keypress, and none of it is a text search.
+
+If you have used **DataGrip's DDL data source** — point the IDE at a directory of `.sql` files and it
+builds a schema out of them, so navigation and inspections work with no database running — that is
+the idea this comes from, in VS Code, with a rule set written specifically for MySQL. The
+[longer version](../../README.md#where-the-idea-comes-from) is in the project's own README.
+
+## What you get, and how to reach it
+
+VS Code maps all of it to what you already press:
+
+| | |
+|---|---|
+| **The column under the cursor**, in full — its type, whether it is nullable, whether it is a primary or unique key, and the table its foreign key points at. Plus its `DEFAULT`, its `COMMENT`, and the values it is allowed to hold: the set the comment documents, or, where nobody wrote one down, the codes the procedures are seen comparing it against | hover |
+| **The table under the cursor** — its `CREATE TABLE`, exactly as the repository has it | hover |
+| **What a two-letter alias stands for**, and what a temporary table holds and which file created it | hover |
+| **Findings as you type** — 38 rules over names, schema, queries and routines: a column that does not exist, an `INSERT` whose value count does not match, an `UPDATE` with no filter, a variable never read, a foreign key with no index | the Problems panel and the squiggles; <kbd>F8</kbd> walks them |
+| **Where a name is defined**, and where its foreign key leads | <kbd>F12</kbd>, and <kbd>Ctrl</kbd>+<kbd>F12</kbd> for the foreign key's target |
+| **Everywhere a table or column is used** — whole identifiers, so searching `orders` does not also hand you `aud_orders` | <kbd>Shift</kbd>+<kbd>F12</kbd> |
+| **Rename it across the project**, definition and uses together | <kbd>F2</kbd> — this extension's own rename, see below |
+| **Statements written from the catalog** — expand a `*` into the columns it stands for, generate a `SELECT`, an `INSERT` or an `UPDATE` over the table under the cursor, add the columns an audit twin is missing, or rewrite a table's audit triggers | <kbd>Ctrl</kbd>+<kbd>.</kbd> |
+| **Outline, and every name in the project** | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>, and <kbd>Ctrl</kbd>+<kbd>T</kbd> |
+| **What a routine calls, and who calls it** | right-click → Peek → Call Hierarchy |
+| **Completion that knows the schema** — the columns of the alias you just typed a dot after, the tables in the project, a routine's parameters | as you type; `o.` opens the list |
+| **Column types and what an alias stands for, inline** | inlay hints, on unless you turned them off globally |
+
+Editing `.sqldex.json` gets completion and validation of its own, from a schema this extension
+contributes: the keys, the five rule groups, the severities, and the shape of a rule id. Rule **ids**
+are deliberately not enumerated in it — a list of them here would be one more copy to keep in step
+with the engine, and a stale one would flag a rule that exists. `sqldex rules` prints the current
+list, and `sqldex explain <id>` prints one rule's whole reasoning.
+
+Everything above comes from the `sqldex-lsp` language server; this extension is the client that
+starts it, and it implements no feature of its own. What is here is the three questions a client has
+to answer — how to start the server, for which documents, and which directory is the project — plus
+one that only a multi-root editor has to ask. What gets reported is never decided here: it lives in
+the project's own `.sqldex.json`, the same file `sqldex check` reads in CI.
 
 ## What you need
 
@@ -43,28 +86,6 @@ code --extensionDevelopmentPath="$PWD/editors/vscode" ~/src/your-schema-repo
 
 Nothing has to be configured either way. The extension wakes when a `.sql` file is opened or a
 `.sqldex.json` is in the tree, and starts a server only for folders that are schema projects.
-
-## What you get, and how to reach it
-
-VS Code maps all of it to what you already press:
-
-| | |
-|---|---|
-| Findings as you type | the Problems panel, and the squiggles — <kbd>F8</kbd> walks them |
-| What is this | hover |
-| Where is it defined | <kbd>F12</kbd>, and <kbd>Ctrl</kbd>+<kbd>F12</kbd> for what a foreign key points at |
-| Who uses it | <kbd>Shift</kbd>+<kbd>F12</kbd> |
-| Rename it everywhere | <kbd>F2</kbd> — this extension's own rename, see below |
-| Rewrite this for me | <kbd>Ctrl</kbd>+<kbd>.</kbd> — expand a `*`, generate a statement, bring an audit twin up to date |
-| Outline, and the project's symbols | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>, and <kbd>Ctrl</kbd>+<kbd>T</kbd> |
-| What a routine calls, and who calls it | right-click → Peek → Call Hierarchy |
-| Column types and what an alias stands for | inlay hints, on unless you turned them off globally |
-
-Editing `.sqldex.json` gets completion and validation of its own, from a schema this extension
-contributes: the keys, the five rule groups, the severities, and the shape of a rule id. Rule **ids**
-are deliberately not enumerated in it — a list of them here would be one more copy to keep in step
-with the engine, and a stale one would flag a rule that exists. `sqldex rules` prints the current
-list, and `sqldex explain <id>` prints one rule's whole reasoning.
 
 ## Rename, and why it has a command of its own
 

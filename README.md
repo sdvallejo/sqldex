@@ -1,5 +1,7 @@
 # sqldex
 
+*Gotta index 'em all!*
+
 Static analysis for MySQL schemas that live as `.sql` files in a repository.
 
 A repo full of `CREATE TABLE` and `CREATE PROCEDURE` files *is* a database schema, but no tool
@@ -12,6 +14,28 @@ it with a foreign key, which values is this status column allowed to hold.
 It is written for schemas dumped out of a live database with `SHOW CREATE`, which are the messy
 ones: thousands of files, no migrations, procedures that build temporary tables in one place and
 read them in another, names in two languages and three casing styles.
+
+The name is what the tool does — it indexes a schema — read as the obvious pun, since a catalog of
+several hundred creatures you did not design and have to look up constantly is a fair description of
+somebody else's database.
+
+## Where the idea comes from
+
+From DataGrip's **DDL data source**: point the IDE at a directory of `.sql` files and it builds a
+schema out of them, so completion, navigation and inspections work with no database running. That is
+exactly the right premise for a repository whose schema *is* its files, and sqldex is that premise
+taken on its own — as a command that runs in CI, a library, and a language server any editor can
+speak to, with a rule set written specifically for MySQL and a written argument behind each rule.
+
+Nothing else nearby occupies quite the same place. The general SQL linters — `sqlfluff` most of all —
+are dialect-aware but schema-blind: they judge style, layout and structural ambiguity, and cannot
+know that a `WHERE` touches only part of a unique key, because they never see the key. The tools that
+do read a real schema are aimed at migrations rather than at everyday SQL: `skeema lint` validates
+MySQL DDL against a server, `atlas migrate lint` classifies a change as destructive or backwards-incompatible,
+`squawk` does the same for Postgres. And the SQL language servers that already give completion from a
+live connection, such as `sqls` and `sql-language-server`, stop there — the catalog is used for names,
+not for claims about the code. What is left over is this: a catalog built from the files, and rules
+that use it to say something checkable about the queries and procedures written against them.
 
 ## Status
 
@@ -302,7 +326,7 @@ and those are two defects with two fixes.
 ## Development
 
 ```
-npm test                        # 451 tests, hand-written fixtures only
+npm test                        # 490 tests, hand-written fixtures only
 npm run typecheck
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"
