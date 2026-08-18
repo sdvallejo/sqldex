@@ -89,9 +89,23 @@ export type RuleScope =
  * catalog was built.
  */
 export interface RuleCatalog extends CatalogLookup {
-  columnTypes(): Map<string, Map<string, number>>;
-  /** Which tables declare each foreign key name, folded — a name MySQL scopes to the database. */
-  constraintNames(): Map<string, string[]>;
+  /** Every table the project defines, by folded name. */
+  readonly tables: ReadonlyMap<string, Table>;
+  /**
+   * A derivation over **all** the tables at once, computed on first ask and kept.
+   *
+   * The questions that need this are the ones no single table can answer — how a column name is
+   * typed across the schema, which tables claim a constraint name — and there is no end to them.
+   * A method per question is how this interface used to grow, and every one of them cost a change
+   * here, in the catalog, in the overlay and in every hand-built catalog a test writes. So the
+   * question comes from the rule instead: it passes the function that builds its index, and gets
+   * the same instance back for the rest of the project's life.
+   *
+   * `key` is what identifies the derivation, so two rules asking the same thing pay once. The
+   * engine caches per project and drops everything when a file is reparsed, because a saved
+   * `CREATE TABLE` is exactly when these answers change.
+   */
+  index<T>(key: string, build: (tables: ReadonlyMap<string, Table>) => T): T;
 }
 
 /** Common to every scope: where we are, and how to say something about it. */

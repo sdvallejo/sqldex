@@ -17,7 +17,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { columnTypeCensus, constraintOwners } from "../src/catalog/catalog.ts";
 import { defaults } from "../src/config/config.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
 import type { Routine } from "../src/model/routine.ts";
@@ -75,8 +74,8 @@ function catalogOf(schema: string, routineSrc = ROUTINES): RuleCatalog {
     routine: (name) => (name === undefined ? undefined : routines.get(name.toLowerCase())),
     trigger: () => undefined,
     tempTable: () => undefined,
-    columnTypes: () => columnTypeCensus(mysql, tables),
-    constraintNames: () => constraintOwners(mysql, tables),
+    tables,
+    index: (_key, build) => build(tables),
   };
 }
 

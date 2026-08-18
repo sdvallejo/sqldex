@@ -249,8 +249,8 @@ export class Catalog implements CatalogLookup {
   private readonly sourceCache = new Map<string, string>();
   private readonly sourceOrder: string[] = [];
   private incomingFksCache?: Map<string, IncomingFk[]>;
-  private columnTypesCache?: Map<string, Map<string, number>>;
-  private constraintNamesCache?: Map<string, string[]>;
+  /** Derivations over every table at once, by the key the asker gave them. */
+  private readonly indexes = new Map<string, unknown>();
   private observedValuesCache?: Map<string, ColumnValue[]>;
 
   private constructor(dialect: Dialect, root: string, options?: Partial<Config>) {
@@ -406,8 +406,7 @@ export class Catalog implements CatalogLookup {
     // is exactly when a foreign key or a column's type changes, so keeping them across a reparse
     // would answer with the schema as it was before the save.
     this.incomingFksCache = undefined;
-    this.columnTypesCache = undefined;
-    this.constraintNamesCache = undefined;
+    this.indexes.clear();
     this.observedValuesCache = undefined;
 
     if (!this.absorb(path, entry.kind)) this.files.delete(path);
@@ -468,16 +467,12 @@ export class Catalog implements CatalogLookup {
    * counting them doubles every tally without adding a case, and a migration table's stale type
    * is not evidence about the current schema.
    */
-  columnTypes(): Map<string, Map<string, number>> {
-    this.columnTypesCache ??= columnTypeCensus(this.dialect, this.tables);
-    return this.columnTypesCache;
+  index<T>(key: string, build: (tables: ReadonlyMap<string, Table>) => T): T {
+    if (!this.indexes.has(key)) this.indexes.set(key, build(this.tables));
+    return this.indexes.get(key) as T;
   }
 
-  constraintNames(): Map<string, string[]> {
-    this.constraintNamesCache ??= constraintOwners(this.dialect, this.tables);
-    return this.constraintNamesCache;
-  }
-
+  
   /**
    * Which tables point at `name` with a foreign key, and through which key.
    *

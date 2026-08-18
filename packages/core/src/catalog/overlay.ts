@@ -18,10 +18,11 @@
  *
  *   - **The file's own definition wins** over a project table of the same name. The file is what is
  *     going to run; if it says what the table looks like, that is the shape its statements see.
- *   - **`columnTypes()` delegates untouched.** That census is a statement about the whole schema —
- *     `schema/divergent-type` asks "in how many of the tables that have this column" — and a
- *     migration is not one more table in it. Folding one in would move the denominator that the
- *     answer is measured against.
+ *   - **The whole-schema derivations delegate untouched**, `tables` and `index` both. A census of
+ *     how a column is typed everywhere is a statement about the schema — `schema/divergent-type`
+ *     asks "in how many of the tables that have this column" — and a migration is not one more
+ *     table in it. Folding one in would move the denominator the answer is measured against, and
+ *     would rebuild it on every keystroke besides.
  *   - **The caller composes this, not `check`.** Which catalog a file resolves against is the
  *     question of whoever is running, not of the engine. A sweep of a deploy directory wants a file
  *     to see itself; a caller asking what this file looks like against the schema *as it stands*
@@ -78,9 +79,10 @@ export function withOwnDefinitions(
     routine: (name) => base.routine(name),
     trigger: (name) => base.trigger(name),
     tempTable: (name) => base.tempTable(name),
-    // The file's own definitions do not change who else declares a constraint name; what the buffer
-    // is redefining is already one of the owners the catalog knows.
-    constraintNames: () => base.constraintNames(),
-    columnTypes: () => base.columnTypes(),
+    // The derivations stay the catalog's. What the buffer redefines is a table the project already
+    // has, so a census of every table's columns or of who claims a constraint name is the same
+    // answer either way — and recomputing it per keystroke would cost the whole schema.
+    tables: base.tables,
+    index: (key, build) => base.index(key, build),
   };
 }

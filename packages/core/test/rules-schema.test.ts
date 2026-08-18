@@ -19,7 +19,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { columnTypeCensus, constraintOwners } from "../src/catalog/catalog.ts";
 import { defaults } from "../src/config/config.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
 import type { Table } from "../src/model/table.ts";
@@ -55,8 +54,8 @@ function run(rule: Rule, src: string, schema = src): string[] {
     routine: () => undefined,
     trigger: () => undefined,
     tempTable: () => undefined,
-    columnTypes: () => columnTypeCensus(mysql, tables),
-    constraintNames: () => constraintOwners(mysql, tables),
+    tables,
+    index: (_key, build) => build(tables),
   };
 
   return check(

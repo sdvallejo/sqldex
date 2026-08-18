@@ -1,5 +1,9 @@
+import { constraintOwners } from "../../catalog/catalog.ts";
 import type { Rule } from "../rule.ts";
 import { joinNames } from "../support.ts";
+
+/** The key this rule's derivation is filed under, so a second asker pays nothing. */
+const OWNERS = "constraint-owners";
 
 export const duplicateConstraintName: Rule = {
   id: "schema/duplicate-constraint-name",
@@ -26,14 +30,14 @@ Two tables of the same name are not this: a repository defining a table twice is
 and the catalog's own duplicate report is where it belongs.`,
 
   check(ctx) {
-    const owners = ctx.catalog.constraintNames();
+    const owners = ctx.catalog.index(OWNERS, (tables) => constraintOwners(ctx.dialect, tables));
 
     for (const fk of ctx.table.foreignKeys) {
       if (!fk.name || fk.columnSpans.length === 0) continue;
       const declared = owners.get(ctx.dialect.foldIdentifier(fk.name, false));
       if (!declared || declared.length < 2) continue;
 
-      const others = declared.filter((name) => name !== ctx.table.name);
+      const others = declared.filter((name: string) => name !== ctx.table.name);
       if (others.length === 0) continue;
 
       ctx.report(

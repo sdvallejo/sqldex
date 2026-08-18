@@ -1,4 +1,5 @@
 import { normaliseType } from "../../catalog/catalog.ts";
+import { columnTypeCensus } from "../../catalog/catalog.ts";
 import type { Rule } from "../rule.ts";
 
 /**
@@ -11,6 +12,9 @@ import type { Rule } from "../rule.ts";
 const OUTLIER_SHARE = 0.8;
 const OUTLIER_MAX = 2;
 const OUTLIER_MIN_TOTAL = 5;
+
+/** The key this rule's derivation is filed under, so a second asker pays nothing. */
+const CENSUS = "column-types";
 
 export const divergentType: Rule = {
   id: "schema/divergent-type",
@@ -45,7 +49,7 @@ mistake — only that one table stands alone.`,
     const key = ctx.table.name.toLowerCase();
     if (key.startsWith("aud_") || key.endsWith("mig")) return;
 
-    const census = ctx.catalog.columnTypes();
+    const census = ctx.catalog.index(CENSUS, (tables) => columnTypeCensus(ctx.dialect, tables));
 
     for (const column of ctx.table.columns) {
       const types = census.get(ctx.dialect.foldIdentifier(column.name, column.quoted));

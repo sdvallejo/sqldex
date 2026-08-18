@@ -9,12 +9,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { columnTypeCensus, constraintOwners } from "../src/catalog/catalog.ts";
 import { withOwnDefinitions } from "../src/catalog/overlay.ts";
 import { defaults } from "../src/config/config.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
 import type { Table } from "../src/model/table.ts";
 import { check, Registry } from "../src/rules/registry.ts";
+import { columnTypeCensus } from "../src/catalog/catalog.ts";
 import type { RuleCatalog } from "../src/rules/rule.ts";
 import { allRules } from "../src/rules/index.ts";
 import { parseDDL } from "../src/syntax/fast/ddl.ts";
@@ -39,8 +39,8 @@ function projectCatalog(schema: string): RuleCatalog {
     routine: () => undefined,
     trigger: () => undefined,
     tempTable: () => undefined,
-    columnTypes: () => columnTypeCensus(mysql, tables),
-    constraintNames: () => constraintOwners(mysql, tables),
+    tables,
+    index: (_key, build) => build(tables),
   };
 }
 
@@ -162,7 +162,9 @@ test("the type census is the project's, unmoved by the file", () => {
   const src = "CREATE TABLE staging_customers (customer_id int NOT NULL, email text NOT NULL);";
   const layered = withOwnDefinitions(base, mysql, src, tokenize(src));
 
-  assert.deepEqual(layered.columnTypes().get("email"), base.columnTypes().get("email"));
+  const census = (catalog: RuleCatalog): Map<string, number> | undefined =>
+    catalog.index("column-types", (tables) => columnTypeCensus(mysql, tables)).get("email");
+  assert.deepEqual(census(layered), census(base));
 });
 
 test("a file that declares nothing is handed the catalog itself", () => {
