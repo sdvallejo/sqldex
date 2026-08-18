@@ -1,5 +1,5 @@
+import { auditTableName } from "../../analysis/audit.ts";
 import type { Rule } from "../rule.ts";
-import { auditTableName } from "./convention.ts";
 
 export const auditTableOutOfSync: Rule = {
   id: "audit/table-out-of-sync",

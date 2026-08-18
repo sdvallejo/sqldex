@@ -1,6 +1,6 @@
+import { auditTableName } from "../../analysis/audit.ts";
 import { kw } from "../../syntax/fast/tok.ts";
 import type { Rule } from "../rule.ts";
-import { auditTableName } from "./convention.ts";
 
 export const auditTriggerMissingColumn: Rule = {
   id: "audit/trigger-missing-column",

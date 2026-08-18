@@ -25,14 +25,18 @@ import {
   DidChangeWatchedFilesNotification,
   CallHierarchyIncomingCallsRequest,
   CallHierarchyPrepareRequest,
+  CodeActionRequest,
   CompletionRequest,
+  DefinitionRequest,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   DidSaveTextDocumentNotification,
+  DocumentSymbolRequest,
   FileChangeType,
   HoverRequest,
   InitializedNotification,
   InitializeRequest,
+  InlayHintRequest,
   PrepareRenameRequest,
   PublishDiagnosticsNotification,
   ReferencesRequest,
@@ -43,6 +47,9 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
   TextDocumentSyncKind,
+  TypeDefinitionRequest,
+  WorkspaceSymbolRequest,
+  type CodeAction,
   type CompletionList,
   type Diagnostic,
   type InitializeResult,
@@ -215,6 +222,16 @@ test("initialize promises exactly what the server can do", async () => {
   // Deferring the documentation is the whole reason a list of a few thousand items is cheap.
   assert.equal(capabilities.completionProvider?.resolveProvider, true);
   assert.deepEqual(capabilities.signatureHelpProvider?.triggerCharacters, ["(", ","]);
+
+  assert.equal(capabilities.definitionProvider, true);
+  // A column's foreign key, which is the schema's answer to what kind of thing the column holds.
+  assert.equal(capabilities.typeDefinitionProvider, true);
+  assert.equal(capabilities.documentSymbolProvider, true);
+  assert.equal(capabilities.workspaceSymbolProvider, true);
+  assert.equal(capabilities.inlayHintProvider, true);
+  // Declared so that a client filtering by kind — asking only for the quick fixes it shows in a
+  // lightbulb — knows there are none here to ask for.
+  assert.deepEqual(capabilities.codeActionProvider, { codeActionKinds: ["refactor.rewrite"] });
 
   assert.equal(capabilities.referencesProvider, true);
   assert.equal(capabilities.callHierarchyProvider, true);
@@ -501,6 +518,66 @@ test("references, rename and call hierarchy all answer over the wire", async () 
     item: items[0]!,
   });
   assert.deepEqual(incoming, []);
+
+  await client.stop();
+});
+
+test("goto, symbols, hints and actions all answer over the wire", async () => {
+  // The last of the three: what is checked here is the wiring and the shapes that travel — a
+  // location that may be one or many, a tree of symbols, a request that carries a range rather than
+  // a position. The answers themselves are `navigation`, `outline` and `actions`.
+  const client = await start(project("shop"));
+  const uri = client.uri(SP);
+
+  const opened = client.nextDiagnostics(uri);
+  client.open(SP, SP_TEXT);
+  await opened;
+
+  const onOrders = { line: 2, character: 16 };
+  const jumped = await client.connection.sendRequest(DefinitionRequest.type, {
+    textDocument: { uri },
+    position: onOrders,
+  });
+  // A single place travels as one object and not as a list of one, which is what the protocol
+  // allows and what a client is written against.
+  assert.ok(jumped && !Array.isArray(jumped));
+  assert.match(jumped.uri, /tables\/orders\.sql$/);
+
+  // On `customer_id` in the column list, whose foreign key leads to the customers table.
+  const typed = await client.connection.sendRequest(TypeDefinitionRequest.type, {
+    textDocument: { uri },
+    position: { line: 2, character: 35 },
+  });
+  assert.ok(typed && !Array.isArray(typed));
+  assert.match(typed.uri, /tables\/customers\.sql$/);
+
+  const outline = await client.connection.sendRequest(DocumentSymbolRequest.type, {
+    textDocument: { uri },
+  });
+  assert.deepEqual(outline?.map((symbol) => symbol.name), ["sp_settle_orders"]);
+
+  // The one request that is about the project rather than about a file, and it is answered for a
+  // file the client never opened.
+  const picked = await client.connection.sendRequest(WorkspaceSymbolRequest.type, { query: "customers" });
+  assert.deepEqual(picked?.map((symbol) => symbol.name), ["customers"]);
+
+  const hints = await client.connection.sendRequest(InlayHintRequest.type, {
+    textDocument: { uri },
+    range: { start: { line: 0, character: 0 }, end: { line: 4, character: 0 } },
+  });
+  // This procedure qualifies nothing, so there is nothing to annotate — and an empty list is the
+  // answer, not a failure.
+  assert.deepEqual(hints, []);
+
+  const actions = await client.connection.sendRequest(CodeActionRequest.type, {
+    textDocument: { uri },
+    range: { start: onOrders, end: onOrders },
+    context: { diagnostics: [] },
+  });
+  assert.deepEqual(
+    actions?.map((action) => (action as CodeAction).title),
+    ["Generate SELECT over orders", "Generate INSERT into orders", "Generate UPDATE of orders"],
+  );
 
   await client.stop();
 });

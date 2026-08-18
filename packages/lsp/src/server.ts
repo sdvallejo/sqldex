@@ -26,33 +26,42 @@
 import { CONFIG_FILES, resolveProject } from "@sqldex/core";
 import { fileURLToPath } from "node:url";
 import {
+  CodeActionKind,
   DidChangeWatchedFilesNotification,
   TextDocumentSyncKind,
   TextDocuments,
   type CallHierarchyIncomingCall,
   type CallHierarchyItem,
   type CallHierarchyOutgoingCall,
+  type CodeAction,
   type CompletionItem,
   type CompletionList,
   type Connection,
+  type DocumentSymbol,
   type Hover,
   type InitializeParams,
   type InitializeResult,
+  type InlayHint,
   type Location,
   type SignatureHelp,
+  type SymbolInformation,
   type TextDocumentPositionParams,
   type WorkspaceEdit,
 } from "vscode-languageserver";
 import { TextDocument } from "vscode-languageserver-textdocument";
 
 import { diagnosticsOf } from "./convert.ts";
-import { Analyses, at, type At } from "./documents.ts";
+import { Analyses, at, type Analysed, type At } from "./documents.ts";
 import { incomingCalls, outgoingCalls, prepareCallHierarchy } from "./features/call-hierarchy.ts";
+import { codeActions } from "./features/code-action.ts";
 import { complete, resolveItem } from "./features/completion.ts";
+import { definition, typeDefinition } from "./features/definition.ts";
 import { hover } from "./features/hover.ts";
+import { inlayHints } from "./features/inlay.ts";
 import { references } from "./features/references.ts";
 import { prepareRename, rename } from "./features/rename.ts";
 import { signatureHelp } from "./features/signature.ts";
+import { documentSymbols, workspaceSymbols } from "./features/symbols.ts";
 import { Workspace } from "./workspace.ts";
 
 /** How long after the last keystroke before a document is checked again. */
@@ -89,6 +98,15 @@ function capabilities(): InitializeResult["capabilities"] {
       resolveProvider: true,
     },
     signatureHelpProvider: { triggerCharacters: ["(", ","] },
+    definitionProvider: true,
+    // A column's foreign key, which is the schema's answer to "what kind of thing is this".
+    typeDefinitionProvider: true,
+    documentSymbolProvider: true,
+    workspaceSymbolProvider: true,
+    inlayHintProvider: true,
+    // The kinds are declared so that a client which filters by them — asking only for the quick
+    // fixes it shows in a lightbulb — knows there are none here to ask for.
+    codeActionProvider: { codeActionKinds: [CodeActionKind.RefactorRewrite] },
     referencesProvider: true,
     // `prepareProvider` is what stops the client from opening a rename box over a keyword or a
     // number. Without it every position in the file looks renameable until the edit comes back
@@ -217,6 +235,12 @@ export function createServer(connection: Connection): void {
     return at(workspace, analyses.of(document), params.position);
   }
 
+  /** The same, for the two requests that are about a whole document rather than a place in one. */
+  function analysed(uri: string): Analysed | undefined {
+    const document = documents.get(uri);
+    return document && workspace ? analyses.of(document) : undefined;
+  }
+
   connection.onHover((params): Hover | undefined => {
     const here = positioned(params);
     return here && hover(here);
@@ -233,6 +257,39 @@ export function createServer(connection: Connection): void {
   });
 
   connection.onCompletionResolve((item): CompletionItem => (workspace ? resolveItem(workspace, item) : item));
+
+  connection.onDefinition((params): Location | Location[] | undefined => {
+    const here = positioned(params);
+    return here && definition(here);
+  });
+
+  connection.onTypeDefinition((params): Location | Location[] | undefined => {
+    const here = positioned(params);
+    return here && typeDefinition(here);
+  });
+
+  connection.onDocumentSymbol((params): DocumentSymbol[] | undefined => {
+    const document = analysed(params.textDocument.uri);
+    return document && workspace ? documentSymbols(workspace, document) : undefined;
+  });
+
+  // The one request in the protocol that is about the project and not about a file, which is why it
+  // needs no open document: the picker is opened before anything has been opened at all.
+  connection.onWorkspaceSymbol((params): SymbolInformation[] => {
+    return workspace ? workspaceSymbols(workspace, params.query) : [];
+  });
+
+  connection.languages.inlayHint.on((params): InlayHint[] => {
+    const document = analysed(params.textDocument.uri);
+    return document && workspace ? inlayHints(workspace, document, params.range) : [];
+  });
+
+  connection.onCodeAction((params): CodeAction[] => {
+    // The client sends a selection, and what the actions are about is where it starts. Reading the
+    // end instead would make selecting a whole line offer the actions of whatever follows it.
+    const here = positioned({ textDocument: params.textDocument, position: params.range.start });
+    return here ? codeActions(here) : [];
+  });
 
   connection.onReferences((params): Location[] | undefined => {
     const here = positioned(params);

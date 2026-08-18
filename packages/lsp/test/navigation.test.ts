@@ -1,5 +1,5 @@
 /**
- * References, rename and call hierarchy, against fixture projects.
+ * Goto, references, rename and call hierarchy, against fixture projects.
  *
  * Two projects, because the questions need different shapes of repo: `shop` has tables and columns
  * with uses spread over its procedures, and `chain` is procedures that call each other.
@@ -14,6 +14,7 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -23,6 +24,7 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 
 import { Analysed, at, type At } from "../src/documents.ts";
 import { incomingCalls, outgoingCalls, prepareCallHierarchy } from "../src/features/call-hierarchy.ts";
+import { definition, typeDefinition } from "../src/features/definition.ts";
 import { references } from "../src/features/references.ts";
 import { prepareRename, rename } from "../src/features/rename.ts";
 import { Workspace } from "../src/workspace.ts";
@@ -79,6 +81,99 @@ function callers(name: string): string[] {
 function callees(name: string): string[] {
   return (outgoingCalls(chain, hierarchyItem(name)) ?? []).map((call) => call.to.name);
 }
+
+/**
+ * Where each answer lands, as `file:line what-it-covers`.
+ *
+ * The text under the range is read back out of the file rather than trusted from the request,
+ * because an offset that is right by one lands on a plausible-looking neighbouring word and an
+ * assertion on line numbers alone would not notice.
+ */
+function landings(result: Location | Location[] | undefined, from: At): string[] {
+  const list = result === undefined ? [] : Array.isArray(result) ? result : [result];
+  return list.map((place) => {
+    const path = fileURLToPath(place.uri);
+    // The open document is the buffer, which is the one file that has no disk copy in these tests.
+    const src = place.uri === from.document.uri ? from.text : readFileSync(path, "utf8");
+    const line = src.split(/\r?\n/)[place.range.start.line] ?? "";
+    return `${basename(path)}:${place.range.start.line} ${line.slice(place.range.start.character, place.range.end.character)}`;
+  });
+}
+
+// ------------------------------------------------------------------------ goto
+
+test("a table name leads to its CREATE TABLE", () => {
+  const here = cursor("SELECT * FROM ord|ers;");
+  // The span is the name as written, backticks included, which is the same one rename replaces.
+  assert.deepEqual(landings(definition(here), here), ["orders.sql:0 `orders`"]);
+});
+
+test("a qualified column leads to its own line inside its table", () => {
+  const here = cursor("SELECT o.tot|al FROM orders o;");
+  assert.deepEqual(landings(definition(here), here), ["orders.sql:3 `total`"]);
+});
+
+test("an alias leads to the table it stands for and not to itself", () => {
+  const here = cursor("SELECT |o.total FROM orders o;");
+  assert.deepEqual(landings(definition(here), here), ["orders.sql:0 `orders`"]);
+});
+
+test("a parameter leads to the signature that declares it, in the buffer", () => {
+  // Nothing on disk answers this: the file is unsaved and the name is a parameter of two other
+  // procedures besides.
+  //
+  // The landing is the routine's name and not the parameter's own: a parameter carries no position
+  // of its own, and the signature is where it is declared. Pointing at the word itself would mean
+  // recording a span per parameter, which nothing else needs.
+  const here = cursor(
+    `CREATE PROCEDURE \`sp_scratch\`(IN pCustomerId int)
+BEGIN
+  SELECT * FROM orders WHERE customer_id = pCustom|erId;
+END;`,
+  );
+  assert.deepEqual(landings(definition(here), here), ["sp_scratch.sql:0 `sp_scratch`"]);
+});
+
+test("a routine leads to the file that defines it", () => {
+  const here = cursor("CALL sp_customer_repor|t(1, @total);");
+  assert.deepEqual(landings(definition(here), here), ["sp_customer_report.sql:1 `sp_customer_report`"]);
+});
+
+test("a temporary table leads to the procedure that creates it", () => {
+  // The thing you cannot find by searching: the name is written in every file that touches it and
+  // created in exactly one.
+  const here = inChain("SELECT * FROM tmp_j|obs;");
+  assert.deepEqual(landings(definition(here), here), ["sp_stage.sql:2 tmp_jobs"]);
+});
+
+test("a bare column in a join leads to every table that has one, and the editor picks", () => {
+  // Exactly the case where you do not know which table it came from, which is why both are sent.
+  const here = cursor("SELECT order_i|d FROM orders o JOIN shipments s ON s.order_id = o.order_id;");
+  assert.deepEqual(landings(definition(here), here), ["orders.sql:1 `order_id`", "shipments.sql:2 `order_id`"]);
+});
+
+test("a qualifier that resolves to nothing leads nowhere", () => {
+  assert.equal(definition(cursor("SELECT zz.tot|al FROM orders o;")), undefined);
+});
+
+// -------------------------------------------------------------- type definition
+
+test("a column with a foreign key leads to the column it points at", () => {
+  // `customer_id` is not an `int`, it is a customer, and this is where that is declared.
+  const here = cursor("SELECT o.customer_i|d FROM orders o;");
+  assert.deepEqual(landings(typeDefinition(here), here), ["customers.sql:1 `customer_id`"]);
+});
+
+test("a column without a foreign key has no type to lead to", () => {
+  assert.equal(typeDefinition(cursor("SELECT o.tot|al FROM orders o;")), undefined);
+});
+
+test("the same key reached twice is one answer", () => {
+  // A bare column resolves against both relations of the join, and both are the same table; what
+  // has to be unique is where it leads, not the route.
+  const here = cursor("SELECT order_i|d FROM shipments a JOIN shipments b ON a.order_id = b.order_id;");
+  assert.deepEqual(landings(typeDefinition(here), here), ["orders.sql:1 `order_id`"]);
+});
 
 // ------------------------------------------------------------------ references
 

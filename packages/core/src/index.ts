@@ -1,3 +1,13 @@
+export type { AuditInsert, Insertion } from "./analysis/audit.ts";
+export {
+  AUDIT_PREFIX,
+  auditDefinition,
+  auditTableName,
+  insertions,
+  missingColumns,
+  prefixCount,
+  triggerInserts,
+} from "./analysis/audit.ts";
 export type { ResolvedSelect, SelectListColumns } from "./analysis/locals.ts";
 export { collect, selectListColumns } from "./analysis/locals.ts";
 export type {

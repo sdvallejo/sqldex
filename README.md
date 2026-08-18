@@ -24,7 +24,7 @@ published to npm yet, so using it means a checkout.
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
 | Lint rules | 27 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
-| `sqldex-lsp` language server | findings as you type, hover, completion, signature help, references, rename, call hierarchy |
+| `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
 | Editor extensions | not built |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
