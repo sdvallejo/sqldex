@@ -15,7 +15,7 @@ would this rename touch.* All of it is a keypress, and none of it is a text sear
 If you have used **DataGrip's DDL data source** — point the IDE at a directory of `.sql` files and it
 builds a schema out of them, so navigation and inspections work with no database running — that is
 the idea this comes from, in VS Code, with a rule set written specifically for MySQL. The
-[longer version](../../README.md#where-the-idea-comes-from) is in the project's own README.
+[longer version](https://github.com/sdvallejo/sqldex#where-the-idea-comes-from) is in the project's own README.
 
 ## What you get, and how to reach it
 

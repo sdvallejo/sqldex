@@ -1,9 +1,37 @@
 {
   "name": "@sqldex/core",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Catalog, name resolution and lint rules for MySQL schemas that live as .sql files in a repository.",
+  "license": "MIT",
+  "author": "Sergio Vallejo",
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "homepage": "https://github.com/sdvallejo/sqldex#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sdvallejo/sqldex.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/sdvallejo/sqldex/issues"
+  },
+  "keywords": [
+    "mysql",
+    "sql",
+    "lint",
+    "linter",
+    "static-analysis",
+    "schema",
+    "ddl",
+    "language-server",
+    "lsp"
+  ],
   "exports": {
     ".": "./src/index.ts"
-  }
+  },
+  "files": [
+    "src"
+  ]
 }

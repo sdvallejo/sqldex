@@ -24,6 +24,7 @@
  */
 
 import { CONFIG_FILES, resolveProject } from "@sqldex/core";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   CodeActionKind,
@@ -67,7 +68,28 @@ import { Workspace } from "./workspace.ts";
 /** How long after the last keystroke before a document is checked again. */
 const DEBOUNCE_MS = 250;
 
-export const SERVER_INFO = { name: "sqldex", version: "0.0.0" } as const;
+/**
+ * What the client shows about the server it is talking to.
+ *
+ * Read from the package rather than written down a second time. This number is how somebody tells
+ * an old process from the files it came from — a window left open across an upgrade keeps running
+ * the server it started with — and a version that has to be remembered by hand is one that stops
+ * being true on the first release nobody remembered it on. The `.vsix` carries each package's
+ * manifest beside its sources, so the answer is the same from a checkout and from an installed
+ * extension.
+ */
+function serverVersion(): string {
+  try {
+    const manifest = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+    return JSON.parse(manifest).version;
+  } catch {
+    // Running from somewhere that did not bring the manifest along. Saying so beats a number that
+    // would be a lie, since the whole point of this string is telling two builds apart.
+    return "unknown";
+  }
+}
+
+export const SERVER_INFO = { name: "sqldex", version: serverVersion() } as const;
 
 /**
  * Everything this server can do, stated once.

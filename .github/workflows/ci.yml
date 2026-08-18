@@ -1,0 +1,44 @@
+# What has to hold on somebody else's machine, not just on the one it was written on.
+#
+# The suite declares no schema and reaches no network: every test builds its project out of fixtures
+# checked in beside it, which is what lets this run with nothing configured. The performance budget
+# is deliberately **not** here — it measures over private corpora, and stays where they live.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.18 is the floor the README promises: the release where type stripping stopped needing
+        # a flag, and therefore where a `bin` that is a `.ts` file runs at all.
+        node: ["22.18", "24", "26"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm test
+
+  typecheck:
+    # Once, on the floor version: the types do not depend on which Node runs them, and a second copy
+    # of this job would only be a second thing to keep in step.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+      - run: npm ci
+      - run: npm run typecheck

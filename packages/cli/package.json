@@ -1,15 +1,43 @@
 {
-  "name": "@sqldex/cli",
-  "version": "0.0.0",
-  "private": true,
+  "name": "sqldex",
+  "version": "0.1.0",
+  "description": "Static analysis for MySQL schemas that live as .sql files in a repository.",
+  "license": "MIT",
+  "author": "Sergio Vallejo",
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "homepage": "https://github.com/sdvallejo/sqldex#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sdvallejo/sqldex.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/sdvallejo/sqldex/issues"
+  },
+  "keywords": [
+    "mysql",
+    "sql",
+    "lint",
+    "linter",
+    "static-analysis",
+    "schema",
+    "ddl",
+    "language-server",
+    "lsp"
+  ],
   "bin": {
     "sqldex": "./src/main.ts"
   },
   "exports": {
     ".": "./src/main.ts"
   },
+  "files": [
+    "src"
+  ],
   "dependencies": {
-    "@sqldex/core": "*"
+    "@sqldex/core": "^0.1.0"
   }
 }
