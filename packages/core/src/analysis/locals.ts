@@ -366,6 +366,7 @@ export function collect(
   tokens: readonly Token[],
   offset: number,
   routines: readonly Routine[] = [],
+  from = 0,
 ): Locals {
   const items: Local[] = [];
 
@@ -389,7 +390,11 @@ export function collect(
   }
 
   let triggerTable: string | undefined;
+  // `from` is what makes these one routine's locals instead of the file's. A file with two
+  // procedures declares each one's variables in its own body, and a walk that starts at zero hands
+  // the second one the first one's `DECLARE`s — same names, different variables.
   let i = 0;
+  while (i < tokens.length && tokens[i]!.s < from) i++;
   while (i < tokens.length && tokens[i]!.s < offset) {
     const t = tokens[i]!;
     if (kw(t, "DECLARE")) {

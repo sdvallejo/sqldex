@@ -9,7 +9,11 @@
 import type { Table } from "../../model/table.ts";
 import { relations } from "../../syntax/fast/stmt.ts";
 import { kw, punct, splitCommas } from "../../syntax/fast/tok.ts";
-import type { DocumentContext } from "../rule.ts";
+import type { BaseContext } from "../rule.ts";
+import type { TokenRange } from "../../syntax/types.ts";
+
+/** What this needs of a context: the tokens, the catalog, and the statements to pair up. */
+type WithStatements = BaseContext & { statements(): readonly TokenRange[] };
 
 /**
  * The tainted variables, folded, each with the `Table.column` it came from.
@@ -18,7 +22,7 @@ import type { DocumentContext } from "../rule.ts";
  * them. A slot holding an expression, or a column from a relation that did not resolve, taints
  * nothing: a variable is only ever tainted from a column known to be nullable, never from a guess.
  */
-export function nullableSources(ctx: DocumentContext): Map<string, string> {
+export function nullableSources(ctx: WithStatements): Map<string, string> {
   const tainted = new Map<string, string>();
   const { tokens, dialect } = ctx;
 

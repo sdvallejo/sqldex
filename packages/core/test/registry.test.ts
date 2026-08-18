@@ -74,6 +74,8 @@ function counter(id: string, scope: Rule["scope"]): Rule {
         scope,
         check: (ctx) => ctx.report({ s: ctx.tokens[ctx.statement.from]!.s, e: 1 }, "statement"),
       };
+    case "routine":
+      return { ...rule, scope, check: (ctx) => ctx.report(ctx.routine.nameSpan, ctx.routine.name) };
     case "table":
       return { ...rule, scope, check: (ctx) => ctx.report(ctx.table.nameSpan, ctx.table.name) };
     case "trigger":
@@ -255,7 +257,7 @@ test("what the cap drops is chosen by severity, so an error is never lost to a h
     id: "names/serious",
     severity: "error",
     // One report, on the last token, so arrival order would have thrown it away.
-    check: (ctx) => {
+    check: (ctx: DocumentContext) => {
       const last = ctx.tokens.at(-1);
       if (last) ctx.report(last, "the thing that matters");
     },

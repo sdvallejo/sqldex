@@ -15,7 +15,7 @@ export const declareAfterStatement: Rule = {
   id: "routine/declare-after-statement",
   group: "routine",
   severity: "error",
-  scope: "document",
+  scope: "routine",
   docs: `A \`DECLARE\` after the block has started doing things.
 
 MySQL wants every declaration at the top of its \`BEGIN … END\`, before the first statement. One that
@@ -41,7 +41,8 @@ close statements rather than blocks, which is the one thing this has to read cor
     const blocks: boolean[] = [];
     let starting = false;
 
-    for (let i = 0; i < tokens.length; i++) {
+    // The body only: each routine opens its own declaration section, and the header is not it.
+    for (let i = ctx.body.from; i <= ctx.body.to; i++) {
       const t = tokens[i]!;
 
       if (kw(t, "BEGIN")) {

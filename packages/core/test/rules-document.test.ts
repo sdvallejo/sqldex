@@ -533,3 +533,45 @@ test("a handler's own body does not count as the block having started", () => {
   );
   assert.deepEqual(run(declareAfterStatement, src), []);
 });
+
+// ------------------------------------------- one file, two routines, two sets of variables
+
+test("a variable read in the next routine is still unread in the one that declared it", () => {
+  // The engine used to answer this over the whole file, so a name declared here and read *there*
+  // looked used. Two procedures share no variables: these are two `v_count`s that happen to be
+  // spelled the same.
+  const src = [
+    "CREATE PROCEDURE sp_first(IN p_a int)",
+    "BEGIN",
+    "  DECLARE v_count int;",
+    "  SET v_count = 1;",
+    "END;",
+    "CREATE PROCEDURE sp_second(IN p_b int)",
+    "BEGIN",
+    "  SELECT v_count;",
+    "END;",
+  ].join("\n");
+
+  assert.deepEqual(run(unusedVariable, src), ["v_count is assigned but never read"]);
+});
+
+test("and a taint does not cross into it either", () => {
+  // `SELECT nullable INTO v` in one routine said nothing about the `v` of the next one, but the
+  // taint was keyed by name over the whole file and reached it anyway.
+  const src = [
+    "CREATE PROCEDURE sp_first(IN p_order int)",
+    "BEGIN",
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  SELECT v_disc;",
+    "END;",
+    "CREATE PROCEDURE sp_second(IN p_order int)",
+    "BEGIN",
+    "  DECLARE v_disc decimal(10,2);",
+    "  SET v_disc = 1;",
+    "  SELECT v_disc * 2;",
+    "END;",
+  ].join("\n");
+
+  assert.deepEqual(run(nullableIntoArithmetic, src), []);
+});

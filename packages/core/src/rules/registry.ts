@@ -38,6 +38,7 @@ import { kw, kwAny } from "../syntax/fast/tok.ts";
 import type { Span, Token, TokenRange } from "../syntax/types.ts";
 import type {
   DocumentContext,
+  RoutineContext,
   Rule,
   RuleCatalog,
   ScopeInfo,
@@ -372,6 +373,7 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   const base = { dialect, catalog, schemas, src, tokens, locals, report };
 
   const documentRules = active.filter((a) => a.rule.scope === "document");
+  const routineRules = active.filter((a) => a.rule.scope === "routine");
   const statementRules = active.filter((a) => a.rule.scope === "statement");
   const tableRules = active.filter((a) => a.rule.scope === "table");
   const triggerRules = active.filter((a) => a.rule.scope === "trigger");
@@ -396,6 +398,38 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
     for (const entry of documentRules) {
       current = entry;
       if (entry.rule.scope === "document") entry.rule.check(ctx);
+    }
+  }
+
+  if (routineRules.length > 0 && parsedRoutines.routines.length > 0) {
+    // One routine's body runs from the end of its header to the start of the next one's name, which
+    // is the bound `collect` already uses to decide which routine an offset belongs to.
+    const found = parsedRoutines.routines;
+    for (const [at, routine] of found.entries()) {
+      const endOffset = found[at + 1]?.nameSpan.s ?? src.length;
+      let from = 0;
+      while (from < tokens.length && tokens[from]!.s < routine.headerEnd) from++;
+      let to = from;
+      while (to + 1 < tokens.length && tokens[to + 1]!.s < endOffset) to++;
+      if (to < from) continue;
+
+      const body = { from, to };
+      // This routine's own locals: its parameters, and the declarations inside its body — not the
+      // ones a routine above it in the same file made.
+      const own = collect(dialect, src, tokens, endOffset, found, routine.headerEnd);
+      let bodyStatements: TokenRange[] | undefined;
+      const ctx: RoutineContext = {
+        ...base,
+        locals: own,
+        routine,
+        body,
+        statements: () =>
+          (bodyStatements ??= statements(tokens).filter((s) => s.from >= body.from && s.to <= body.to)),
+      };
+      for (const entry of routineRules) {
+        current = entry;
+        if (entry.rule.scope === "routine") entry.rule.check(ctx);
+      }
     }
   }
 

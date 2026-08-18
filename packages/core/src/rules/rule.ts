@@ -39,6 +39,7 @@ import type { CatalogLookup } from "../catalog/catalog.ts";
 import type { DiagnosticTag, Severity } from "../diagnostics.ts";
 import type { Locals } from "../model/locals.ts";
 import type { Relation } from "../model/query.ts";
+import type { Routine } from "../model/routine.ts";
 import type { Table, Trigger } from "../model/table.ts";
 import type { Span, Token, TokenRange } from "../syntax/types.ts";
 
@@ -73,6 +74,8 @@ export type RuleGroup =
 export type RuleScope =
   /** Once per file. */
   | "document"
+  /** Once per `CREATE PROCEDURE` or `CREATE FUNCTION`, with that routine's own locals. */
+  | "routine"
   /** Once per non-DDL statement, with its relations already resolved. */
   | "statement"
   /** Once per non-temporary `CREATE TABLE` in the file. */
@@ -200,6 +203,23 @@ export interface StatementContext extends BaseContext {
   scopeAt(index: number): ScopeInfo | undefined;
 }
 
+/**
+ * One routine, which is the bound most of the procedural rules actually want.
+ *
+ * They used to take `document` and mean this: whether a variable is ever read, or a cursor ever
+ * opened, is a question about a routine and the file was the nearest thing the engine offered. Two
+ * procedures in one file made that wrong in a way nothing reported — same variable name, two
+ * declarations, one answer — and these repositories only got away with it by putting one routine in
+ * each file.
+ */
+export interface RoutineContext extends BaseContext {
+  readonly routine: Routine;
+  /** The body, header excluded: where this routine's statements and declarations live. */
+  readonly body: TokenRange;
+  /** The body's statements, computed on first call and kept. */
+  statements(): readonly TokenRange[];
+}
+
 export interface TableContext extends BaseContext {
   readonly table: Table;
 }
@@ -208,7 +228,7 @@ export interface TriggerContext extends BaseContext {
   readonly trigger: Trigger;
 }
 
-export type RuleContext = DocumentContext | StatementContext | TableContext | TriggerContext;
+export type RuleContext = DocumentContext | RoutineContext | StatementContext | TableContext | TriggerContext;
 
 interface RuleBase {
   /**
@@ -252,6 +272,7 @@ interface RuleBase {
 /** A rule is its scope plus a `check` that matches it: the pairing is what the union enforces. */
 export type Rule =
   | (RuleBase & { readonly scope: "document"; check(ctx: DocumentContext): void })
+  | (RuleBase & { readonly scope: "routine"; check(ctx: RoutineContext): void })
   | (RuleBase & { readonly scope: "statement"; check(ctx: StatementContext): void })
   | (RuleBase & { readonly scope: "table"; check(ctx: TableContext): void })
   | (RuleBase & { readonly scope: "trigger"; check(ctx: TriggerContext): void });

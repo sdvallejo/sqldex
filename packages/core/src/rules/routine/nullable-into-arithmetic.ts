@@ -10,7 +10,7 @@ export const nullableIntoArithmetic: Rule = {
   // the sum before the comparison ever sees it, so the sum is where the reader has to look.
   supersedes: ["routine/nullable-variable-in-predicate"],
   severity: "warn",
-  scope: "document",
+  scope: "routine",
   docs: `A nullable column reaching arithmetic through a variable.
 
 The same defect as a nullable column entering an expression directly, with one hop added: the column
@@ -35,6 +35,8 @@ A read wrapped in \`COALESCE\` / \`IFNULL\` / \`IF\` is not reported: that is th
     const { written } = assignmentTargets(ctx);
 
     ctx.tokens.forEach((t, i) => {
+      // Only this routine's body: a file can hold two, and one's variables are not the other's.
+      if (i < ctx.body.from || i > ctx.body.to) return;
       if (t.t !== "id" || t.q || written.has(i) || punct(ctx.tokens[i - 1], ".")) return;
       const origin = tainted.get(ctx.dialect.foldIdentifier(t.v, false));
       if (!origin) return;

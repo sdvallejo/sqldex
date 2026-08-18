@@ -65,13 +65,21 @@ import { redundantIndex } from "./schema/redundant-index.ts";
  * What they have in common is the question they ask: whether a variable is ever read, or whether a
  * name is ambiguous in its query, can only be answered having looked at everything.
  */
-export const documentRules = [
+export const documentRules = [ambiguousColumn] as const;
+
+/**
+ * The rules that read one routine, with that routine's own locals.
+ *
+ * All of these used to be `document` and mean this. The file was the nearest bound the engine
+ * offered, and it is the wrong one: two procedures in one file share no variables, and answering
+ * "is this ever read" over both of them is answering a question nobody asked.
+ */
+export const routineRules = [
   declareAfterStatement,
   unusedVariable,
   variableNeverAssigned,
   nullableIntoArithmetic,
   nullableVariableInPredicate,
-  ambiguousColumn,
   cursorNeverOpened,
 ] as const;
 
@@ -122,7 +130,7 @@ export const schemaRules = [
  * a rule of its own should not be editing everybody else's.
  */
 export function allRules(): Registry {
-  return new Registry().add(...documentRules, ...schemaRules, ...statementRules);
+  return new Registry().add(...documentRules, ...routineRules, ...schemaRules, ...statementRules);
 }
 
 export {

@@ -1,6 +1,7 @@
 import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
-import type { DocumentContext, Rule } from "../rule.ts";
+import type { BaseContext, Rule } from "../rule.ts";
+import type { TokenRange } from "../../syntax/types.ts";
 import { assignmentTargets } from "../support.ts";
 import { nullableSources } from "./nullable-sources.ts";
 
@@ -75,7 +76,7 @@ function negated(tokens: readonly Token[], idx: number): string | undefined {
  * whether a particular `OR` covers a particular `AND`, which is a parse this backend does not do,
  * and being wrong about that would mean arguing with the author's own guard.
  */
-function nullTested(ctx: DocumentContext): Map<number, Set<string>> {
+function nullTested(ctx: BaseContext & { statements(): readonly TokenRange[] }): Map<number, Set<string>> {
   const { tokens, dialect } = ctx;
   const byStatement = new Map<number, Set<string>>();
 
@@ -97,7 +98,7 @@ export const nullableVariableInPredicate: Rule = {
   id: "routine/nullable-variable-in-predicate",
   group: "routine",
   severity: "warn",
-  scope: "document",
+  scope: "routine",
   docs: `A nullable column reaching a **negated** comparison, or a \`CONCAT\`, through a variable.
 
 The third place a taint from \`SELECT col INTO v\` escapes, after arithmetic, and the two ways it does
@@ -148,6 +149,8 @@ fixed, and in return it is never wrong about what tainted it.`,
 
     let statement = 0;
     tokens.forEach((t, i) => {
+      // Only this routine's body: a file can hold two, and one's variables are not the other's.
+      if (i < ctx.body.from || i > ctx.body.to) return;
       while (statement < statements.length && statements[statement]!.to < i) statement++;
 
       if (t.t !== "id" || t.q || written.has(i) || punct(tokens[i - 1], ".")) return;

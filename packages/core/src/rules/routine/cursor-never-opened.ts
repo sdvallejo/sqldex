@@ -5,7 +5,7 @@ export const cursorNeverOpened: Rule = {
   id: "routine/cursor-never-opened",
   group: "routine",
   severity: "warn",
-  scope: "document",
+  scope: "routine",
   docs: `A cursor declared and never opened.
 
 A cursor is only useful through \`OPEN\` / \`FETCH\` / \`CLOSE\`. One that is never opened does nothing,
@@ -23,6 +23,8 @@ years, and it must not be what hides the finding.`,
 
     const opened = new Set<string>();
     ctx.tokens.forEach((t, i) => {
+      // Only this routine's body: a file can hold two, and one's variables are not the other's.
+      if (i < ctx.body.from || i > ctx.body.to) return;
       const name = ctx.tokens[i + 1];
       if (kw(t, "OPEN") && name?.t === "id") {
         opened.add(ctx.dialect.foldIdentifier(name.v, name.q ?? false));

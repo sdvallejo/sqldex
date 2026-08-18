@@ -16,7 +16,7 @@ export const variableNeverAssigned: Rule = {
   // taint rule says it might be.
   supersedes: ["routine/nullable-into-arithmetic"],
   severity: "warn",
-  scope: "document",
+  scope: "routine",
   docs: `A variable read when it can only hold NULL.
 
 A \`DECLARE\` with no \`DEFAULT\` starts as NULL. If nothing ever assigns it, every read is a read of
@@ -57,6 +57,8 @@ to start empty.`,
     const { written, callOuts } = assignmentTargets(ctx);
 
     ctx.tokens.forEach((t, i) => {
+      // Only this routine's body: a file can hold two, and one's variables are not the other's.
+      if (i < ctx.body.from || i > ctx.body.to) return;
       if (t.t !== "id" || t.q) return;
       const entry = declared.get(ctx.dialect.foldIdentifier(t.v, false));
       if (!entry || t.s === entry.item.nameSpan.s) return;

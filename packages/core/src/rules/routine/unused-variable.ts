@@ -12,7 +12,7 @@ export const unusedVariable: Rule = {
   id: "routine/unused-variable",
   group: "routine",
   severity: "hint",
-  scope: "document",
+  scope: "routine",
   docs: `A \`DECLARE\` variable nobody reads.
 
 Two cases, and they get different wording because they mean different things:
@@ -51,6 +51,8 @@ for both. That under-reports, which is the right direction to be wrong in.`,
     const { written } = assignmentTargets(ctx);
 
     ctx.tokens.forEach((t, i) => {
+      // Only this routine's body: a file can hold two, and one's variables are not the other's.
+      if (i < ctx.body.from || i > ctx.body.to) return;
       if (t.t !== "id" || t.q) return;
       const entry = declared.get(ctx.dialect.foldIdentifier(t.v, false));
       // The `DECLARE` itself is not a use, and is recognised by its offset.

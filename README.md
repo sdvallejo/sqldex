@@ -219,9 +219,9 @@ Each carries its own reasoning in `rule.docs`, including what it deliberately do
 several of these are only usable because they stand down in a case they cannot decide, and that is
 worth reading before turning one off as noisy.
 
-Writing your own is the same shape. A rule declares which subject it wants, and the engine hands it
-that subject with the shared work already done — the relations resolved, the query scopes cut, the
-routine's locals gathered. A rule never lexes, never parses and never opens a file; the schema rules
+Writing your own is the same shape. A rule declares which subject it wants — a file, a routine, a
+statement, a `CREATE TABLE`, a trigger — and the engine hands it that subject with the shared work
+already done: the relations resolved, the query scopes cut, that routine's own locals gathered. A rule never lexes, never parses and never opens a file; the schema rules
 see only the model and the catalog, while the ones asking lexical questions — *is this variable ever
 read*, *is this name inside a `COALESCE`* — also get the token stream, because there is nowhere else
 for such a fact to live.
