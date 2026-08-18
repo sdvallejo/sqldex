@@ -165,7 +165,7 @@ function doCheck(positionals: readonly string[], flags: Flags, streams: Streams)
     }
   }
 
-  const report = run({ paths: positionals, only, registry, cwd: streams.cwd });
+  const report = run({ paths: positionals, only, registry, cwd: streams.cwd, onWarning: streams.err });
   if (flags.quiet) {
     // Dropped from the report entirely, counts included, rather than merely hidden: a summary
     // counting hints under output that shows none is a report about a different run.

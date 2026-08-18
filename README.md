@@ -278,6 +278,10 @@ than only switching it off:
 the navigation and the completion and none of the underlines, while `sqldex check` goes on reporting
 exactly as before. What CI fails on does not move with it.
 
+A key the engine does not read is reported rather than ignored in silence — `diagnostic` for
+`diagnostics` leaves every rule on, and the person who wrote it believes otherwise. It stays a
+warning and never a failure: a file written for a later version has to keep working on this one.
+
 ```sql
 -- sqldex:ignore                       -- the next line, whatever the rule
 -- sqldex:ignore query/unfiltered-write -- the next line, that rule only

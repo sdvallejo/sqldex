@@ -73,11 +73,13 @@ export type {
 export type {
   BaseContext,
   DocumentContext,
+  RoutineContext,
   Rule,
   RuleCatalog,
   RuleContext,
   RuleGroup,
   RuleScope,
+  ScopeInfo,
   StatementContext,
   TableContext,
   TriggerContext,

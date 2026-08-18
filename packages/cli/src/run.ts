@@ -57,6 +57,13 @@ export interface RunOptions {
   only?: ReadonlySet<string>;
   registry: Registry;
   cwd: string;
+  /**
+   * Where a complaint about the project file goes.
+   *
+   * Not a finding: a key nothing reads is not a defect in the SQL, and burying it among them would
+   * make it a line in a list nobody counts. It belongs where the invocation's own problems go.
+   */
+  onWarning?: (message: string) => void;
 }
 
 /** POSIX-separated and root-relative, so a report reads the same on either platform. */
@@ -124,7 +131,7 @@ export function run(options: RunOptions): Report {
   const started = performance.now();
   const root = rootFor(options.paths, options.cwd);
   const catalog = Catalog.build(mysql, root);
-  const config = get(root);
+  const config = get(root, undefined, options.onWarning);
   const schemas = configuredSchemas(root);
 
   const findings: Finding[] = [];

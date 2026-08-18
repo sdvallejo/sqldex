@@ -171,3 +171,41 @@ test("the editor client and the engine agree on what declares a project", () => 
     );
   }
 });
+
+test("a key nothing reads is said out loud, and still ignored", () => {
+  // The silent version of this is the defect the engine reports on in SQL: a setting that describes
+  // behaviour the code does not have. Somebody writes `diagnostic` and believes a group is off.
+  const root = makeRepo(["tables", "sps"]);
+  writeFileSync(
+    join(root, ".sqldex.json"),
+    JSON.stringify({ diagnostic: { groups: { query: "off" } }, diagnostics: { enabled: false, rulez: {} } }),
+  );
+  invalidate();
+
+  const warnings: string[] = [];
+  const config = get(root, undefined, (message) => warnings.push(message));
+
+  assert.equal(warnings.length, 2, warnings.join(" | "));
+  assert.match(warnings[0] ?? "", /nothing reads diagnostic, did you mean diagnostics\?/);
+  assert.match(warnings[1] ?? "", /nothing reads rulez in diagnostics/);
+  // Ignored, not fatal: a file written for a later sqldex has to keep working on this one.
+  assert.equal(config.diagnostics.enabled, false, "the keys it does know still apply");
+  assert.deepEqual(config.diagnostics.groups, {});
+});
+
+test("the complaint reaches whoever can show it, not whoever reads the file first", () => {
+  // A run builds its catalog before it renders anything, so the first read has nowhere to put a
+  // warning — and the cache would have swallowed every later chance.
+  const root = makeRepo(["tables", "sps"]);
+  writeFileSync(join(root, ".sqldex.json"), JSON.stringify({ nonsense: true }));
+  invalidate();
+
+  get(root);
+  const warnings: string[] = [];
+  get(root, undefined, (message) => warnings.push(message));
+  assert.equal(warnings.length, 1, "said on the first ask that can hear it");
+
+  const again: string[] = [];
+  get(root, undefined, (message) => again.push(message));
+  assert.deepEqual(again, [], "and once per project, not once per ask");
+});

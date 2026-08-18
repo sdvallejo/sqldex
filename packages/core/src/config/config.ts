@@ -160,6 +160,15 @@ export function merge<T>(base: T, ...overrides: readonly (Partial<T> | undefined
 
 /** Already-read config files, keyed by root. */
 const projectCache = new Map<string, Record<string, unknown>>();
+/**
+ * Roots whose unread keys have already been complained about.
+ *
+ * The complaint belongs to whoever can show it, and that is not whoever reads the file first: a run
+ * builds its catalog before it renders anything, so the first read has nowhere to put a warning and
+ * the cache would have swallowed every later chance. Keyed by root and cleared with the cache, so a
+ * long-lived editor says it once per project rather than once per keystroke.
+ */
+const warned = new Set<string>();
 
 /**
  * Reads and decodes a root's config file. Returns `{}` if there is none.
@@ -169,7 +178,13 @@ const projectCache = new Map<string, Record<string, unknown>>();
  */
 function readProjectFile(root: string, onWarning?: (message: string) => void): Record<string, unknown> {
   const cached = projectCache.get(root);
-  if (cached) return cached;
+  if (cached) {
+    if (onWarning && !warned.has(root)) {
+      warned.add(root);
+      warnUnknown(join(root, CONFIG_FILES[0]), cached, onWarning);
+    }
+    return cached;
+  }
 
   let decoded: Record<string, unknown> = {};
   for (const name of CONFIG_FILES) {
@@ -182,8 +197,13 @@ function readProjectFile(root: string, onWarning?: (message: string) => void): R
     }
     try {
       const parsed: unknown = JSON.parse(raw);
-      if (isPlainObject(parsed)) decoded = parsed;
-      else onWarning?.(`${path} is not a JSON object, ignoring it`);
+      if (isPlainObject(parsed)) {
+        decoded = parsed;
+        if (onWarning) {
+          warned.add(root);
+          warnUnknown(path, decoded, onWarning);
+        }
+      } else onWarning?.(`${path} is not a JSON object, ignoring it`);
     } catch (error) {
       onWarning?.(`invalid ${path}, ignoring it (${String(error)})`);
     }
@@ -192,6 +212,46 @@ function readProjectFile(root: string, onWarning?: (message: string) => void): R
 
   projectCache.set(root, decoded);
   return decoded;
+}
+
+/**
+ * Keys a project file may set, and the ones inside the two nested objects.
+ *
+ * `root_markers` is deliberately absent: it is used to *find* the file, so a file cannot set it, and
+ * saying so is more useful than accepting it and ignoring it.
+ */
+const KNOWN: ReadonlyMap<string, readonly string[]> = new Map([
+  ["", ["sources", "targets", "schemas", "exclude", "diagnostics", "inlay_hints", "dialect"]],
+  ["diagnostics", ["enabled", "groups", "rules"]],
+  ["inlay_hints", ["column_types", "alias_tables"]],
+]);
+
+/**
+ * Warns about a key nothing will ever read.
+ *
+ * A misspelling here is silent in the worst way: `"diagnostic"` for `"diagnostics"` leaves every
+ * rule on, and the person who wrote it believes they turned a group off. It is the defect this
+ * engine reports on in SQL — a setting that describes behaviour the code does not have — and there
+ * is no reason to have it in our own file format.
+ *
+ * Unknown keys are still ignored rather than fatal. A project may be read by an older sqldex than
+ * the one it was written for, and refusing to run because of a key from the future would make every
+ * upgrade a flag day.
+ */
+function warnUnknown(path: string, decoded: Record<string, unknown>, onWarning?: (message: string) => void): void {
+  if (!onWarning) return;
+  for (const [where, allowed] of KNOWN) {
+    const object = where === "" ? decoded : decoded[where];
+    if (!isPlainObject(object)) continue;
+    for (const key of Object.keys(object)) {
+      if (allowed.includes(key)) continue;
+      const near = allowed.find((candidate) => candidate.startsWith(key.slice(0, 4)));
+      const inside = where === "" ? "" : ` in ${where}`;
+      onWarning(
+        `${path}: nothing reads ${key}${inside}${near ? `, did you mean ${near}?` : ""} — it is ignored`,
+      );
+    }
+  }
 }
 
 /** The effective config for a root. */
@@ -223,6 +283,11 @@ export function schemas(root: string | undefined, options?: Partial<Config>): Se
 
 /** Forgets a root's cached config file (or every one), so a reindex picks up new values. */
 export function invalidate(root?: string): void {
-  if (root === undefined) projectCache.clear();
-  else projectCache.delete(root);
+  if (root === undefined) {
+    projectCache.clear();
+    warned.clear();
+  } else {
+    projectCache.delete(root);
+    warned.delete(root);
+  }
 }
