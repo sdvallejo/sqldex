@@ -30,6 +30,7 @@ import {
   auditTriggerMissingColumn,
   divergentType,
   fkMissingIndex,
+  fkTypeMismatch,
   fkUnknownColumn,
   fkUnknownTable,
   indexUnknownColumn,
@@ -481,4 +482,89 @@ test("a trigger on a table the catalog does not have is not judged", () => {
     "END;",
   ].join("\n");
   assert.deepEqual(run(auditTriggerMissingColumn, trigger, trigger), []);
+});
+
+// ------------------------------------------- a foreign key whose two ends are different types
+
+/** A parent whose key is a wide, signed integer, and a child that may or may not match it. */
+const parent = "CREATE TABLE customers (customer_id bigint NOT NULL, PRIMARY KEY (customer_id));";
+
+function child(type: string): string {
+  return [
+    parent,
+    "CREATE TABLE orders (",
+    "  order_id int NOT NULL,",
+    `  customer_id ${type} NOT NULL,`,
+    "  PRIMARY KEY (order_id),",
+    "  CONSTRAINT fk_customer FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+    ");",
+  ].join("\n");
+}
+
+test("a key pairing two different integer types is one InnoDB would refuse", () => {
+  assert.deepEqual(run(fkTypeMismatch, child("int")), [
+    "foreign key fk_customer: customer_id is int, and customers.customer_id is bigint — InnoDB refuses the constraint",
+  ]);
+  assert.deepEqual(run(fkTypeMismatch, child("bigint")), []);
+});
+
+test("the sign counts and the display width does not", () => {
+  // `bigint(20)` is `bigint`, and reporting that pair would report every schema an older server
+  // dumped. `bigint unsigned` is a different set of numbers, and InnoDB says so.
+  assert.deepEqual(run(fkTypeMismatch, child("bigint(20)")), []);
+  assert.equal(run(fkTypeMismatch, child("bigint unsigned")).length, 1);
+});
+
+test("a character key may differ in length, and may not differ in collation", () => {
+  const text = (parentType: string, childType: string): string =>
+    [
+      `CREATE TABLE codes (code ${parentType} NOT NULL, PRIMARY KEY (code));`,
+      "CREATE TABLE uses (",
+      `  code ${childType} NOT NULL,`,
+      "  CONSTRAINT fk_code FOREIGN KEY (code) REFERENCES codes (code)",
+      ");",
+    ].join("\n");
+
+  assert.deepEqual(run(fkTypeMismatch, text("varchar(40)", "varchar(20)")), [], "length is allowed to differ");
+  assert.equal(
+    run(fkTypeMismatch, text("varchar(40) COLLATE utf8mb4_unicode_ci", "varchar(20) COLLATE utf8_spanish_ci")).length,
+    1,
+    "collation is not",
+  );
+});
+
+test("a fixed-precision type is compared with its size, which InnoDB demands", () => {
+  const money = (childType: string): string =>
+    [
+      "CREATE TABLE totals (amount decimal(10,2) NOT NULL, PRIMARY KEY (amount));",
+      "CREATE TABLE lines (",
+      `  amount ${childType} NOT NULL,`,
+      "  CONSTRAINT fk_amount FOREIGN KEY (amount) REFERENCES totals (amount)",
+      ");",
+    ].join("\n");
+
+  assert.deepEqual(run(fkTypeMismatch, money("decimal(10,2)")), []);
+  assert.equal(run(fkTypeMismatch, money("decimal(12,2)")).length, 1);
+});
+
+test("a pair it cannot resolve is somebody else's finding", () => {
+  // The target table missing, and then the target column missing: `schema/fk-unknown-table` and
+  // `schema/fk-unknown-column` each say the useful thing, and this stays quiet rather than adding
+  // a second complaint about one line.
+  const noTable = [
+    "CREATE TABLE orders (",
+    "  customer_id int NOT NULL,",
+    "  CONSTRAINT fk_customer FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+    ");",
+  ].join("\n");
+  const noColumn = [
+    "CREATE TABLE customers (customer_id bigint NOT NULL, PRIMARY KEY (customer_id));",
+    "CREATE TABLE orders (",
+    "  customer_id int NOT NULL,",
+    "  CONSTRAINT fk_customer FOREIGN KEY (customer_id) REFERENCES customers (client_id)",
+    ");",
+  ].join("\n");
+
+  assert.deepEqual(run(fkTypeMismatch, noTable), []);
+  assert.deepEqual(run(fkTypeMismatch, noColumn), []);
 });

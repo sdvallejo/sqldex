@@ -22,7 +22,7 @@ published to npm yet, so using it means a checkout.
 |---|---|
 | Catalog and name resolution | works |
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
-| Lint rules | 31 of them, in five groups — see below |
+| Lint rules | 32 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
 | Editor clients | one for Neovim and one for VS Code, in `editors/`; neither is on a marketplace, and the VS Code one packages into a `.vsix` that carries the server |
@@ -204,13 +204,13 @@ Keys are `snake_case` because this is a file format people write by hand, not th
 
 ## Rules
 
-Thirty-one of them, in five groups that say what a rule is *about* — which is what someone
+Thirty-two of them, in five groups that say what a rule is *about* — which is what someone
 turning rules off is choosing between:
 
 | Group | Rules |
 |---|---|
 | `names` | `unknown-table`, `unknown-alias`, `unknown-column`, `unqualified-column`, `unknown-routine`, `ambiguous-column` |
-| `schema` | `fk-unknown-table`, `fk-unknown-column`, `fk-missing-index`, `index-unknown-column`, `redundant-index`, `divergent-type`, `no-primary-key` |
+| `schema` | `fk-unknown-table`, `fk-unknown-column`, `fk-missing-index`, `index-unknown-column`, `redundant-index`, `divergent-type`, `no-primary-key`, `fk-type-mismatch` |
 | `query` | `insert-value-count`, `insert-unknown-column`, `unfiltered-write`, `join-without-condition`, `collation-mismatch`, `left-join-arithmetic`, `join-multiplies-aggregate`, `nullable-scalar-subquery`, `scalar-subquery-many-rows` |
 | `routine` | `call-arity`, `out-argument-not-variable`, `cursor-never-opened`, `unused-variable`, `variable-never-assigned`, `nullable-into-arithmetic`, `nullable-variable-in-predicate` |
 | `audit` | `table-out-of-sync`, `trigger-missing-column` |

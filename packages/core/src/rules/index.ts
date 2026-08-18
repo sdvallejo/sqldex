@@ -41,6 +41,7 @@ import { unusedVariable } from "./routine/unused-variable.ts";
 import { variableNeverAssigned } from "./routine/variable-never-assigned.ts";
 import { divergentType } from "./schema/divergent-type.ts";
 import { fkMissingIndex } from "./schema/fk-missing-index.ts";
+import { fkTypeMismatch } from "./schema/fk-type-mismatch.ts";
 import { fkUnknownColumn } from "./schema/fk-unknown-column.ts";
 import { fkUnknownTable } from "./schema/fk-unknown-table.ts";
 import { indexUnknownColumn } from "./schema/index-unknown-column.ts";
@@ -117,6 +118,7 @@ export const schemaRules = [
   fkUnknownColumn,
   fkUnknownTable,
   fkMissingIndex,
+  fkTypeMismatch,
   indexUnknownColumn,
   redundantIndex,
   divergentType,
@@ -144,6 +146,7 @@ export {
   divergentType,
   fkMissingIndex,
   fkUnknownColumn,
+  fkTypeMismatch,
   fkUnknownTable,
   indexUnknownColumn,
   insertUnknownColumn,
