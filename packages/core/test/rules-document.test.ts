@@ -27,6 +27,7 @@ import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
 import {
   ambiguousColumn,
   cursorNeverOpened,
+  declareAfterStatement,
   nullableIntoArithmetic,
   nullableVariableInPredicate,
   unusedVariable,
@@ -494,4 +495,42 @@ test("a read that is both arithmetic and negated belongs to the arithmetic rule"
     found.map((d) => d.code),
     ["routine/nullable-into-arithmetic"],
   );
+});
+
+// --------------------------------------------- a DECLARE after the block started working
+
+test("a variable declared where it is needed rather than where it is allowed", () => {
+  // The shape a counter added in a hurry takes, halfway down a long procedure. MySQL refuses the
+  // routine outright, so what breaks is the deploy.
+  const src = body("  SET p_order = 1;", "  DECLARE v_count int;", "  SELECT 1;");
+  assert.deepEqual(run(declareAfterStatement, src), [
+    "a DECLARE has to come before the block's first statement, or the routine does not parse",
+  ]);
+});
+
+test("declarations first is the ordinary shape, and is not reported", () => {
+  const src = body("  DECLARE v_count int;", "  DECLARE v_total decimal(10,2);", "  SET v_count = 1;");
+  assert.deepEqual(run(declareAfterStatement, src), []);
+});
+
+test("each BEGIN opens a section of its own", () => {
+  // A nested block may declare at its own top, however far down the outer block it sits.
+  const src = body("  SET p_order = 1;", "  BEGIN", "    DECLARE v_inner int;", "    SET v_inner = 2;", "  END;");
+  assert.deepEqual(run(declareAfterStatement, src), []);
+});
+
+test("END IF closes a statement, not the block", () => {
+  // If it were read as the block's end, everything after it would be outside any block and the
+  // rule would go silent exactly where it is needed.
+  const src = body("  IF p_order > 0 THEN", "    SET p_order = 2;", "  END IF;", "  DECLARE v_late int;");
+  assert.equal(run(declareAfterStatement, src).length, 1);
+});
+
+test("a handler's own body does not count as the block having started", () => {
+  const src = body(
+    "  DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; END;",
+    "  DECLARE v_count int;",
+    "  SET v_count = 1;",
+  );
+  assert.deepEqual(run(declareAfterStatement, src), []);
 });

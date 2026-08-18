@@ -38,6 +38,7 @@ import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
 import { selectIntoManyRows } from "./routine/select-into-many-rows.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
+import { declareAfterStatement } from "./routine/declare-after-statement.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
 import { nullableVariableInPredicate } from "./routine/nullable-variable-in-predicate.ts";
 import { unusedVariable } from "./routine/unused-variable.ts";
@@ -70,6 +71,7 @@ import { redundantIndex } from "./schema/redundant-index.ts";
  * has to look.
  */
 export const documentRules = [
+  declareAfterStatement,
   unusedVariable,
   variableNeverAssigned,
   nullableIntoArithmetic,
@@ -151,6 +153,7 @@ export {
   callArity,
   collationMismatch,
   cursorNeverOpened,
+  declareAfterStatement,
   divergentType,
   duplicateConstraintName,
   fkMissingIndex,
