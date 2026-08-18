@@ -26,10 +26,10 @@
 
 "use strict";
 
-const { commands, RelativePattern, Uri, window, workspace } = require("vscode");
+const { commands, window, workspace } = require("vscode");
 const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
 
-const { projectRoot } = require("./project.js");
+const { documentGlob, projectRoot } = require("./project.js");
 const { serverCommand } = require("./server.js");
 
 /** The running clients, by the folder each was started for. */
@@ -51,17 +51,15 @@ function start(folder, context) {
   const root = projectRoot(folder.uri.fsPath);
   if (root && clients.has(root)) return;
   if (!root) {
-    output.appendLine(
-      `${folder.uri.fsPath} is not a schema project — nothing started. A .sqldex.json makes it one.`,
-    );
+    output.info(`${folder.uri.fsPath} is not a schema project — nothing started. A .sqldex.json makes it one.`);
     return;
   }
 
   const configured = workspace.getConfiguration("sqldex", folder).get("server.path");
   const { command, args, why, problem } = serverCommand(context.extensionPath, configured);
-  output.appendLine(`${root}: starting ${[command, ...args].join(" ")} — ${why}`);
+  output.info(`${root}: starting ${[command, ...args].join(" ")} — ${why}`);
   if (problem) {
-    output.appendLine(`  ${problem}`);
+    output.warn(problem);
     void window.showWarningMessage(`sqldex: ${problem}`);
   }
 
@@ -71,9 +69,8 @@ function start(folder, context) {
     { run: { command, args, transport: TransportKind.stdio }, debug: { command, args, transport: TransportKind.stdio } },
     {
       // Scoped to the project, not to the folder: a folder opened *inside* a repo still wants every
-      // answer the repo's catalog can give. A `RelativePattern` rather than a joined string because
-      // a Windows path is not a glob.
-      documentSelector: [{ scheme: "file", language: "sql", pattern: new RelativePattern(Uri.file(root), "**/*") }],
+      // answer the repo's catalog can give.
+      documentSelector: [{ scheme: "file", language: "sql", pattern: documentGlob(root) }],
       workspaceFolder: folder,
       outputChannel: output,
       // The server registers `**/*.sql` and the config file once it is up, and this client creates
@@ -83,7 +80,14 @@ function start(folder, context) {
   );
 
   clients.set(root, client);
-  void client.start();
+  // Never `void`: a client that fails to start reports through the channel it was given, and if it
+  // cannot — which is how this went wrong once already — the failure reaches nobody at all. The
+  // notification is the difference between "sqldex is broken" and "sqldex does nothing".
+  client.start().catch((error) => {
+    clients.delete(root);
+    output.error(`could not start the server for ${root}: ${error?.stack ?? error}`);
+    void window.showErrorMessage(`sqldex could not start its server: ${error?.message ?? error}`);
+  });
 }
 
 async function stop(root) {
@@ -94,7 +98,12 @@ async function stop(root) {
 }
 
 function activate(context) {
-  output = window.createOutputChannel("sqldex");
+  // A **log** channel, not a plain one: the language client calls `.error()` and `.info()` on
+  // whatever it is given, and a plain output channel has neither. Getting this wrong is not a
+  // missing line in a log — it is the client crashing inside its own error handler, which swallows
+  // both the failure it was reporting and the notification it was about to show. Nothing appears
+  // anywhere, which is the worst way for a client to fail.
+  output = window.createOutputChannel("sqldex", { log: true });
   context.subscriptions.push(output);
 
   for (const folder of workspace.workspaceFolders ?? []) start(folder, context);
@@ -118,7 +127,7 @@ function activate(context) {
     commands.registerCommand("sqldex.restart", async () => {
       for (const key of [...clients.keys()]) await stop(key);
       for (const folder of workspace.workspaceFolders ?? []) start(folder, context);
-      output.appendLine("restarted.");
+      output.info("restarted.");
     }),
   );
 }

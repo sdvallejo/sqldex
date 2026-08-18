@@ -18,7 +18,7 @@ const { join } = require("node:path");
 const { test } = require("node:test");
 
 const { bundle } = require("../bundle-server.js");
-const { projectRoot } = require("../project.js");
+const { documentGlob, projectRoot } = require("../project.js");
 const { isRecentEnough, serverCommand } = require("../server.js");
 
 /** A directory tree, made where the test can afford to make one. */
@@ -55,6 +55,16 @@ test("a repository that merely holds a .sql file starts nothing", () => {
 test("a folder opened inside a project resolves to the project", () => {
   const root = tree("tablas", "sp");
   assert.equal(projectRoot(join(root, "sp")), root);
+});
+
+test("the document glob is a string, and a Windows path is turned into one", () => {
+  // Not a `RelativePattern`: the client converts every filter through the protocol, whose relative
+  // pattern has a *string* baseUri, and an editor `RelativePattern` fails that test silently — the
+  // filter survives with no pattern at all and the server starts answering about every project in
+  // the window. A string is carried through untouched.
+  assert.equal(typeof documentGlob("/repo/db"), "string");
+  assert.equal(documentGlob("/repo/db"), "/repo/db/**/*");
+  assert.equal(documentGlob("C:\\Users\\me\\db"), "C:/Users/me/db/**/*");
 });
 
 // -------------------------------------------------------------- what to start

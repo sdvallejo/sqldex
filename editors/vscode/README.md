@@ -137,9 +137,10 @@ too: a directory VS Code does not watch is one the server is never told about.
 ## When nothing happens
 
 The **sqldex** output channel, first. It has both sides in it: this client's line about what it
-started and why, and the server's own line about which project it built and how much is in it — or
-why it built nothing, which is the answer worth reading when the extension started something and the
-answers still come back empty.
+started and why, the server's own line about which project it built and how much is in it — or why
+it built nothing, which is the answer worth reading when the extension started something and the
+answers still come back empty — and, if the server could not be started at all, the error, which
+also arrives as a notification.
 
 If the client says the folder is not a schema project, that is the guard above. A project is a
 directory holding `.sqldex.json`, `tablas/`, `sp/`, or `tables/` beside `sps/` or `functions/`. An
