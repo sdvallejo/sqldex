@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { columnTypeCensus } from "../src/catalog/catalog.ts";
+import { columnTypeCensus, constraintOwners } from "../src/catalog/catalog.ts";
 import type { TempTableEntry } from "../src/catalog/catalog.ts";
 import { defaults } from "../src/config/config.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
@@ -112,6 +112,7 @@ function catalogOf(): RuleCatalog {
     trigger: () => undefined,
     tempTable: (name) => (name?.toLowerCase() === TEMP.name ? TEMP : undefined),
     columnTypes: () => columnTypeCensus(mysql, tables),
+    constraintNames: () => constraintOwners(mysql, tables),
   };
 }
 

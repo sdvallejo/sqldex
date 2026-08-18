@@ -14,7 +14,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { columnTypeCensus } from "../src/catalog/catalog.ts";
+import { columnTypeCensus, constraintOwners } from "../src/catalog/catalog.ts";
 import { defaults } from "../src/config/config.ts";
 import type { Config } from "../src/config/config.ts";
 import type { Diagnostic } from "../src/diagnostics.ts";
@@ -37,6 +37,7 @@ function catalogOf(ddl = ""): RuleCatalog {
     trigger: () => undefined,
     tempTable: () => undefined,
     columnTypes: () => columnTypeCensus(mysql, tables),
+    constraintNames: () => constraintOwners(mysql, tables),
   };
 }
 

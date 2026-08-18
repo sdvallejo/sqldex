@@ -19,7 +19,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { columnTypeCensus } from "../src/catalog/catalog.ts";
+import { columnTypeCensus, constraintOwners } from "../src/catalog/catalog.ts";
 import { defaults } from "../src/config/config.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
 import type { Table } from "../src/model/table.ts";
@@ -29,6 +29,7 @@ import {
   auditTableOutOfSync,
   auditTriggerMissingColumn,
   divergentType,
+  duplicateConstraintName,
   fkMissingIndex,
   fkTypeMismatch,
   fkUnknownColumn,
@@ -55,6 +56,7 @@ function run(rule: Rule, src: string, schema = src): string[] {
     trigger: () => undefined,
     tempTable: () => undefined,
     columnTypes: () => columnTypeCensus(mysql, tables),
+    constraintNames: () => constraintOwners(mysql, tables),
   };
 
   return check(
@@ -567,4 +569,48 @@ test("a pair it cannot resolve is somebody else's finding", () => {
 
   assert.deepEqual(run(fkTypeMismatch, noTable), []);
   assert.deepEqual(run(fkTypeMismatch, noColumn), []);
+});
+
+// ------------------------------------------ two tables claiming one constraint name
+
+test("a constraint name is the database's, not the table's", () => {
+  const src = [
+    "CREATE TABLE customers (customer_id int NOT NULL, PRIMARY KEY (customer_id));",
+    "CREATE TABLE orders (",
+    "  customer_id int NOT NULL,",
+    "  CONSTRAINT fk_customer FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+    ");",
+    "CREATE TABLE invoices (",
+    "  customer_id int NOT NULL,",
+    "  CONSTRAINT fk_customer FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+    ");",
+  ].join("\n");
+
+  // Both ends are reported, because each file is the one somebody is reading when they hit it.
+  assert.deepEqual(run(duplicateConstraintName, src), [
+    "the name fk_customer is already a constraint of invoices, and MySQL scopes it to the database rather than the table",
+    "the name fk_customer is already a constraint of orders, and MySQL scopes it to the database rather than the table",
+  ]);
+});
+
+test("two names that differ, and a key with no name at all, are nobody's collision", () => {
+  const distinct = [
+    "CREATE TABLE customers (customer_id int NOT NULL, PRIMARY KEY (customer_id));",
+    "CREATE TABLE orders (",
+    "  customer_id int NOT NULL,",
+    "  CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+    ");",
+    "CREATE TABLE invoices (",
+    "  customer_id int NOT NULL,",
+    "  CONSTRAINT fk_invoices_customer FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+    ");",
+  ].join("\n");
+  const unnamed = [
+    "CREATE TABLE customers (customer_id int NOT NULL, PRIMARY KEY (customer_id));",
+    "CREATE TABLE orders (customer_id int NOT NULL, FOREIGN KEY (customer_id) REFERENCES customers (customer_id));",
+    "CREATE TABLE invoices (customer_id int NOT NULL, FOREIGN KEY (customer_id) REFERENCES customers (customer_id));",
+  ].join("\n");
+
+  assert.deepEqual(run(duplicateConstraintName, distinct), []);
+  assert.deepEqual(run(duplicateConstraintName, unnamed), []);
 });

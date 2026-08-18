@@ -90,6 +90,8 @@ export type RuleScope =
  */
 export interface RuleCatalog extends CatalogLookup {
   columnTypes(): Map<string, Map<string, number>>;
+  /** Which tables declare each foreign key name, folded — a name MySQL scopes to the database. */
+  constraintNames(): Map<string, string[]>;
 }
 
 /** Common to every scope: where we are, and how to say something about it. */

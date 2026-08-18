@@ -178,6 +178,28 @@ export function normaliseType(type: ColumnType | undefined): string {
 }
 
 /**
+ * Which tables declare each foreign key name, folded.
+ *
+ * A cross-table fact and therefore the catalog's to answer: MySQL scopes a constraint name to the
+ * **database**, not to the table, so whether a name is free is a question about every other file.
+ * Standalone like the type census, so the rule and a test that builds one by hand agree.
+ */
+export function constraintOwners(dialect: Dialect, tables: ReadonlyMap<string, Table>): Map<string, string[]> {
+  const owners = new Map<string, string[]>();
+  for (const table of tables.values()) {
+    for (const fk of table.foreignKeys) {
+      if (!fk.name) continue;
+      const key = dialect.foldIdentifier(fk.name, false);
+      const declared = owners.get(key);
+      if (declared) {
+        if (!declared.includes(table.name)) declared.push(table.name);
+      } else owners.set(key, [table.name]);
+    }
+  }
+  return owners;
+}
+
+/**
  * How each column name is typed across a whole schema: `{ status: { "char(1)": 12 } }`.
  *
  * Standalone rather than a method so that the rule which reads a census and a test which builds
@@ -228,6 +250,7 @@ export class Catalog implements CatalogLookup {
   private readonly sourceOrder: string[] = [];
   private incomingFksCache?: Map<string, IncomingFk[]>;
   private columnTypesCache?: Map<string, Map<string, number>>;
+  private constraintNamesCache?: Map<string, string[]>;
   private observedValuesCache?: Map<string, ColumnValue[]>;
 
   private constructor(dialect: Dialect, root: string, options?: Partial<Config>) {
@@ -384,6 +407,7 @@ export class Catalog implements CatalogLookup {
     // would answer with the schema as it was before the save.
     this.incomingFksCache = undefined;
     this.columnTypesCache = undefined;
+    this.constraintNamesCache = undefined;
     this.observedValuesCache = undefined;
 
     if (!this.absorb(path, entry.kind)) this.files.delete(path);
@@ -447,6 +471,11 @@ export class Catalog implements CatalogLookup {
   columnTypes(): Map<string, Map<string, number>> {
     this.columnTypesCache ??= columnTypeCensus(this.dialect, this.tables);
     return this.columnTypesCache;
+  }
+
+  constraintNames(): Map<string, string[]> {
+    this.constraintNamesCache ??= constraintOwners(this.dialect, this.tables);
+    return this.constraintNamesCache;
   }
 
   /**

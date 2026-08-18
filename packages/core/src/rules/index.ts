@@ -43,6 +43,7 @@ import { nullableVariableInPredicate } from "./routine/nullable-variable-in-pred
 import { unusedVariable } from "./routine/unused-variable.ts";
 import { variableNeverAssigned } from "./routine/variable-never-assigned.ts";
 import { divergentType } from "./schema/divergent-type.ts";
+import { duplicateConstraintName } from "./schema/duplicate-constraint-name.ts";
 import { fkMissingIndex } from "./schema/fk-missing-index.ts";
 import { fkTypeMismatch } from "./schema/fk-type-mismatch.ts";
 import { fkUnknownColumn } from "./schema/fk-unknown-column.ts";
@@ -125,6 +126,7 @@ export const schemaRules = [
   fkUnknownTable,
   fkMissingIndex,
   fkTypeMismatch,
+  duplicateConstraintName,
   indexUnknownColumn,
   redundantIndex,
   divergentType,
@@ -150,6 +152,7 @@ export {
   collationMismatch,
   cursorNeverOpened,
   divergentType,
+  duplicateConstraintName,
   fkMissingIndex,
   fkUnknownColumn,
   fkTypeMismatch,

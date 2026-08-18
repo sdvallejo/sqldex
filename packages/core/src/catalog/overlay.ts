@@ -78,6 +78,9 @@ export function withOwnDefinitions(
     routine: (name) => base.routine(name),
     trigger: (name) => base.trigger(name),
     tempTable: (name) => base.tempTable(name),
+    // The file's own definitions do not change who else declares a constraint name; what the buffer
+    // is redefining is already one of the owners the catalog knows.
+    constraintNames: () => base.constraintNames(),
     columnTypes: () => base.columnTypes(),
   };
 }
