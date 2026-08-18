@@ -1,6 +1,6 @@
+import { isLeftPrefix } from "../shared/keys.ts";
 import type { Span } from "../../syntax/types.ts";
 import type { Rule } from "../rule.ts";
-import { isLeftPrefix } from "../support.ts";
 
 interface Key {
   name: string;

@@ -1,8 +1,8 @@
+import { bareColumnCandidate } from "../shared/names.ts";
 import { selectListColumns } from "../../analysis/locals.ts";
 import { cteNames } from "../../syntax/fast/stmt.ts";
 import { kw } from "../../syntax/fast/tok.ts";
 import type { Rule } from "../rule.ts";
-import { bareColumnCandidate } from "../support.ts";
 
 export const unqualifiedColumn: Rule = {
   id: "names/unqualified-column",

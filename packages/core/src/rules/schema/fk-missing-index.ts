@@ -1,6 +1,7 @@
+import { isLeftPrefix } from "../shared/keys.ts";
+import { SYSTEM_SCHEMAS } from "../shared/names.ts";
 import type { Table } from "../../model/table.ts";
 import type { Rule } from "../rule.ts";
-import { isLeftPrefix, SYSTEM_SCHEMAS } from "../support.ts";
 import { fkLabel } from "./fk-unknown-table.ts";
 
 /** The target's keys, in the order worth trying them: the primary key, then each index. */

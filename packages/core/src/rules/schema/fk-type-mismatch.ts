@@ -1,6 +1,6 @@
+import { SYSTEM_SCHEMAS } from "../shared/names.ts";
 import type { Column } from "../../model/table.ts";
 import type { Rule } from "../rule.ts";
-import { SYSTEM_SCHEMAS } from "../support.ts";
 import { fkLabel } from "./fk-unknown-table.ts";
 
 /** Types written more than one way, folded to the one the comparison uses. */

@@ -1,6 +1,6 @@
+import { BUILTIN_NAMES, SYSTEM_SCHEMAS } from "../shared/names.ts";
 import { qualifierIn } from "../../analysis/resolve.ts";
 import type { Rule } from "../rule.ts";
-import { BUILTIN_NAMES, SYSTEM_SCHEMAS } from "../support.ts";
 
 export const unknownColumn: Rule = {
   id: "names/unknown-column",

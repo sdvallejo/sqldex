@@ -1,5 +1,5 @@
+import { SYSTEM_SCHEMAS } from "../shared/names.ts";
 import type { Rule } from "../rule.ts";
-import { SYSTEM_SCHEMAS } from "../support.ts";
 
 export const fkUnknownColumn: Rule = {
   id: "schema/fk-unknown-column",

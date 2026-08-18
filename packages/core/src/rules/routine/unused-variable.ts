@@ -1,6 +1,6 @@
+import { assignmentTargets } from "../shared/writes.ts";
 import type { Local } from "../../model/locals.ts";
 import type { Rule } from "../rule.ts";
-import { assignmentTargets } from "../support.ts";
 
 interface Tally {
   item: Local;

@@ -1,7 +1,8 @@
+import { singleTableQuery } from "../shared/keys.ts";
+import { joinNames } from "../shared/names.ts";
+import { foldsToOneRow, halfPinnedKey, limitsToOne } from "../shared/rows.ts";
 import { kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
-import { foldsToOneRow, halfPinnedKey, limitsToOne } from "../one-row.ts";
 import type { Rule, ScopeInfo, StatementContext } from "../rule.ts";
-import { joinNames, singleTableQuery } from "../support.ts";
 
 /**
  * Words before a `(SELECT …)` that say it is not being read as one value.

@@ -8,9 +8,9 @@
  * calls fine.
  */
 
-import type { Table } from "../model/table.ts";
-import { kw, matchingParen, punct } from "../syntax/fast/tok.ts";
-import type { Token } from "../syntax/types.ts";
+import type { Table } from "../../model/table.ts";
+import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
+import type { Token } from "../../syntax/types.ts";
 
 /** Aggregates fold a whole group into one row, which is the other way of having only one. */
 export const AGGREGATES: ReadonlySet<string> = new Set([

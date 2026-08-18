@@ -1,7 +1,8 @@
+import { isKeyLookup } from "../shared/keys.ts";
+import { ARITHMETIC } from "../shared/nulls.ts";
 import { kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
 import type { Rule } from "../rule.ts";
-import { ARITHMETIC, isKeyLookup } from "../support.ts";
 
 /** Words between `SELECT` and the first item, which say nothing about what the item is. */
 const SELECT_MODIFIERS: ReadonlySet<string> = new Set([

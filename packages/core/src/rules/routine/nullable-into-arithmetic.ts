@@ -1,7 +1,8 @@
+import { ARITHMETIC, insideNullSafe } from "../shared/nulls.ts";
+import { nullableSources } from "../shared/taint.ts";
+import { assignmentTargets } from "../shared/writes.ts";
 import { punct } from "../../syntax/fast/tok.ts";
 import type { Rule } from "../rule.ts";
-import { ARITHMETIC, assignmentTargets, insideNullSafe } from "../support.ts";
-import { nullableSources } from "./nullable-sources.ts";
 
 export const nullableIntoArithmetic: Rule = {
   id: "routine/nullable-into-arithmetic",

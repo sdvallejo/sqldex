@@ -1,8 +1,8 @@
+import { bareColumnCandidate, joinNames } from "../shared/names.ts";
 import { columnNames, relation as resolveRelation } from "../../analysis/resolve.ts";
 import { selectListColumns } from "../../analysis/locals.ts";
 import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { DocumentContext, Rule, ScopeInfo } from "../rule.ts";
-import { bareColumnCandidate, joinNames } from "../support.ts";
 
 /** What a scope resolves a bare name against, worked out once per scope. */
 interface Described {

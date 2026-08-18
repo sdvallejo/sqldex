@@ -1,5 +1,5 @@
+import { insertTarget } from "../shared/inserts.ts";
 import type { Rule } from "../rule.ts";
-import { insertTarget } from "./insert-target.ts";
 
 export const insertUnknownColumn: Rule = {
   id: "query/insert-unknown-column",

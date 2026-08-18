@@ -1,7 +1,7 @@
+import { insertTarget } from "../shared/inserts.ts";
 import { kw, punct } from "../../syntax/fast/tok.ts";
 import { arity } from "../routine/call-arity.ts";
 import type { Rule } from "../rule.ts";
-import { insertTarget } from "./insert-target.ts";
 
 export const insertValueCount: Rule = {
   id: "query/insert-value-count",

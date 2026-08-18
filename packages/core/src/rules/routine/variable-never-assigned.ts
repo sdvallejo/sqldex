@@ -1,7 +1,8 @@
+import { insideNullSafe } from "../shared/nulls.ts";
+import { assignmentTargets } from "../shared/writes.ts";
 import type { Local } from "../../model/locals.ts";
 import type { Token } from "../../syntax/types.ts";
 import type { Rule } from "../rule.ts";
-import { assignmentTargets, insideNullSafe } from "../support.ts";
 
 interface Tally {
   item: Local;

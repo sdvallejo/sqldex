@@ -1,8 +1,8 @@
+import { coversUniqueKey, pinnedByWhere } from "../shared/keys.ts";
 import type { Table } from "../../model/table.ts";
 import { relations } from "../../syntax/fast/stmt.ts";
 import { columnList, kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Rule, StatementContext } from "../rule.ts";
-import { coversUniqueKey, pinnedByWhere } from "../support.ts";
 
 const JOIN_BOUNDARY: ReadonlySet<string> = new Set([
   "JOIN",

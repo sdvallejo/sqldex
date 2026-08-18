@@ -1,7 +1,7 @@
+import { ARITHMETIC, insideNullSafe } from "../shared/nulls.ts";
 import { relations } from "../../syntax/fast/stmt.ts";
 import { kw, punct } from "../../syntax/fast/tok.ts";
 import type { Rule, StatementContext } from "../rule.ts";
-import { ARITHMETIC, insideNullSafe } from "../support.ts";
 
 /**
  * Aliases the engine leaves NULL when the outer join finds no row.

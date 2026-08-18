@@ -1,5 +1,5 @@
+import { SYSTEM_SCHEMAS } from "../shared/names.ts";
 import type { Rule } from "../rule.ts";
-import { SYSTEM_SCHEMAS } from "../support.ts";
 
 /** `foreign key <name>` or just `foreign key`, for a message that can name what it is talking about. */
 export function fkLabel(name: string | undefined): string {

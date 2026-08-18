@@ -1,6 +1,6 @@
+import { joinNames } from "../shared/names.ts";
 import { constraintOwners } from "../../catalog/catalog.ts";
 import type { Rule } from "../rule.ts";
-import { joinNames } from "../support.ts";
 
 /** The key this rule's derivation is filed under, so a second asker pays nothing. */
 const OWNERS = "constraint-owners";

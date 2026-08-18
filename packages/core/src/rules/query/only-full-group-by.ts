@@ -1,9 +1,10 @@
+import { coversUniqueKey } from "../shared/keys.ts";
+import { bareColumnCandidate } from "../shared/names.ts";
+import { AGGREGATES } from "../shared/rows.ts";
 import { relations } from "../../syntax/fast/stmt.ts";
 import { columnList, kw, kwAny, matchingParen, punct, splitCommas } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
-import { AGGREGATES } from "../one-row.ts";
 import type { Rule, StatementContext } from "../rule.ts";
-import { bareColumnCandidate, coversUniqueKey } from "../support.ts";
 
 /** Clauses that end the `GROUP BY` list. */
 const AFTER_GROUP: ReadonlySet<string> = new Set(["HAVING", "ORDER", "LIMIT", "INTO", "UNION", "WITH", "PROCEDURE"]);

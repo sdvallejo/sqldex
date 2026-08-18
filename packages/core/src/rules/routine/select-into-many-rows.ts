@@ -1,7 +1,8 @@
+import { singleTableQuery } from "../shared/keys.ts";
+import { joinNames } from "../shared/names.ts";
+import { foldsToOneRow, halfPinnedKey, limitsToOne } from "../shared/rows.ts";
 import { kw, kwAny, punct } from "../../syntax/fast/tok.ts";
-import { foldsToOneRow, halfPinnedKey, limitsToOne } from "../one-row.ts";
 import type { Rule, StatementContext } from "../rule.ts";
-import { joinNames, singleTableQuery } from "../support.ts";
 
 /** What can follow `INTO` and not be a variable: the two forms that write a file. */
 const NOT_VARIABLES: ReadonlySet<string> = new Set(["OUTFILE", "DUMPFILE"]);

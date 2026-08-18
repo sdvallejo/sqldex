@@ -1,9 +1,9 @@
+import { nullableSources } from "../shared/taint.ts";
+import { assignmentTargets } from "../shared/writes.ts";
 import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
 import type { BaseContext, Rule } from "../rule.ts";
 import type { TokenRange } from "../../syntax/types.ts";
-import { assignmentTargets } from "../support.ts";
-import { nullableSources } from "./nullable-sources.ts";
 
 /**
  * The comparisons where a NULL answers the opposite of what the person reading it would.
