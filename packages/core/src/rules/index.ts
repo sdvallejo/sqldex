@@ -28,6 +28,7 @@ import { insertValueCount } from "./query/insert-value-count.ts";
 import { joinMultipliesAggregate } from "./query/join-multiplies-aggregate.ts";
 import { joinWithoutCondition } from "./query/join-without-condition.ts";
 import { leftJoinArithmetic } from "./query/left-join-arithmetic.ts";
+import { nullableScalarSubquery } from "./query/nullable-scalar-subquery.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
 import { callArity } from "./routine/call-arity.ts";
 import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
@@ -67,10 +68,17 @@ export const documentRules = [
 /**
  * The rules that read one statement, in running order.
  *
- * The order follows the dispatch it was taken from, and one pair in it matters: an `INSERT`'s column
- * list is read by `query/insert-unknown-column` **before** `names/unqualified-column` sees the same
- * tokens as bare names. Both would report a column that does not exist there; the insert rule says
- * which table it is missing from, so it goes first. `rules-statement.test.ts` holds that down.
+ * The order follows the dispatch it was taken from, and two pairs in it matter:
+ *
+ *   - An `INSERT`'s column list is read by `query/insert-unknown-column` **before**
+ *     `names/unqualified-column` sees the same tokens as bare names. Both would report a column that
+ *     does not exist there; the insert rule says which table it is missing from, so it goes first.
+ *   - `query/join-multiplies-aggregate` goes before `query/nullable-scalar-subquery`, because both
+ *     report on the aggregate's own name token and `SET x = (SELECT SUM(o.total) FROM o JOIN …) + 1`
+ *     is both things at once. The fan-out wins: it names the join and the key that is not unique
+ *     there, where the other has only "and it could also have been NULL" to add.
+ *
+ * `rules-statement.test.ts` holds both down.
  */
 export const statementRules = [
   unknownTable,
@@ -84,6 +92,7 @@ export const statementRules = [
   unqualifiedColumn,
   leftJoinArithmetic,
   joinMultipliesAggregate,
+  nullableScalarSubquery,
   collationMismatch,
   unfilteredWrite,
   joinWithoutCondition,
@@ -131,6 +140,7 @@ export {
   leftJoinArithmetic,
   noPrimaryKey,
   nullableIntoArithmetic,
+  nullableScalarSubquery,
   outArgumentNotVariable,
   redundantIndex,
   unfilteredWrite,

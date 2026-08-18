@@ -2,7 +2,8 @@
 
 import { isKeyword } from "../dialects/mysql/index.ts";
 import type { Routine } from "../model/routine.ts";
-import { kw, matchingParen, punct, qualifiedName, splitCommas } from "../syntax/fast/tok.ts";
+import type { Table } from "../model/table.ts";
+import { kw, kwAny, matchingParen, punct, qualifiedName, splitCommas } from "../syntax/fast/tok.ts";
 import type { Token } from "../syntax/types.ts";
 import type { BaseContext } from "./rule.ts";
 
@@ -82,6 +83,91 @@ export function insideNullSafe(tokens: readonly Token[], idx: number): boolean {
     }
   }
   return false;
+}
+
+/** Clauses that end a `WHERE`, and after which an equality is no longer part of it. */
+const WHERE_BOUNDARY: ReadonlySet<string> = new Set(["GROUP", "ORDER", "HAVING", "LIMIT", "UNION", "INTO"]);
+
+/**
+ * The columns a `WHERE` fixes to a single value.
+ *
+ * Two rules ask this and they had better agree: one wants to know whether the clause finishes a
+ * composite key a join only half fixed, the other whether a subquery is a lookup of one row rather
+ * than a search that may find none. Both questions are "what does this clause pin down", and a
+ * second copy of the answer would drift.
+ *
+ * Only equalities at the clause's own depth, and only when no `OR` shares that depth: `a = 1 AND b =
+ * 2 OR c` does not fix anything, and telling the difference for real is a parse this backend does
+ * not do. What is on the other side of the `=` is not examined, because it does not matter — a
+ * parameter, a literal or another relation's column all hold still while the table is scanned.
+ *
+ * References qualified by `label` always count. Bare names count only when `bare` says so — a caller
+ * reading one relation's `WHERE` out of a join cannot tell whose column an unqualified name is,
+ * while a caller looking at a query over a single table has nothing else it could belong to.
+ */
+export function pinnedByWhere(
+  tokens: readonly Token[],
+  scope: { from: number; to: number },
+  fold: (name: string) => string,
+  label?: string,
+  bare = false,
+): string[] {
+  let where = -1;
+  let depth = 0;
+  for (let i = scope.from; i <= scope.to; i++) {
+    if (punct(tokens[i], "(")) depth++;
+    else if (punct(tokens[i], ")")) depth--;
+    else if (depth === 0 && kw(tokens[i], "WHERE")) {
+      where = i;
+      break;
+    }
+  }
+  if (where === -1) return [];
+
+  const columns: string[] = [];
+  depth = 0;
+  for (let i = where + 1; i <= scope.to; i++) {
+    const t = tokens[i]!;
+    if (punct(t, "(")) depth++;
+    else if (punct(t, ")")) {
+      if (depth === 0) break;
+      depth--;
+    } else if (depth === 0 && kw(t, "OR")) {
+      return [];
+    } else if (depth === 0 && (kwAny(t, WHERE_BOUNDARY) !== undefined || punct(t, ";"))) {
+      break;
+    } else if (depth === 0 && punct(t, "=")) {
+      for (const side of [i - 3, i + 1] as const) {
+        if (tokens[side]?.t !== "id" || !punct(tokens[side + 1], ".") || tokens[side + 2]?.t !== "id") continue;
+        if (fold(tokens[side]!.v) === label) columns.push(tokens[side + 2]!.v);
+      }
+      if (!bare) continue;
+      for (const side of [i - 1, i + 1] as const) {
+        const name = tokens[side];
+        if (name?.t !== "id" || punct(tokens[side - 1], ".") || punct(tokens[side + 1], ".")) continue;
+        columns.push(name.v);
+      }
+    }
+  }
+  return columns;
+}
+
+/**
+ * Do these columns pin the table to at most one row?
+ *
+ * The primary key or any unique index, wholly covered. Partly covered is not covered: half of a
+ * two-column key identifies a group of rows, and a group is not a row.
+ */
+export function coversUniqueKey(
+  fold: (name: string) => string,
+  table: Table,
+  columns: readonly string[],
+): boolean {
+  const fixed = new Set(columns.map(fold));
+  const covered = (key: readonly string[]): boolean => key.length > 0 && key.every((name) => fixed.has(fold(name)));
+
+  if (covered(table.primaryKey)) return true;
+  return table.indexes.some((index) => index.unique && covered(index.columns));
 }
 
 /** `a and b`, `a, b and c` — a list a person reads rather than one a machine emits. */

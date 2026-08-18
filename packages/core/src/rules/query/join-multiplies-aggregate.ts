@@ -2,9 +2,7 @@ import type { Table } from "../../model/table.ts";
 import { relations } from "../../syntax/fast/stmt.ts";
 import { columnList, kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Rule, StatementContext } from "../rule.ts";
-
-/** Clauses that end a `JOIN`'s condition slot. The same bound `join-without-condition` walks to. */
-const WHERE_BOUNDARY: ReadonlySet<string> = new Set(["GROUP", "ORDER", "HAVING", "LIMIT", "UNION", "INTO"]);
+import { coversUniqueKey, pinnedByWhere } from "../support.ts";
 
 const JOIN_BOUNDARY: ReadonlySet<string> = new Set([
   "JOIN",
@@ -122,56 +120,6 @@ function joinedColumns(ctx: StatementContext, joinIdx: number, label: string): s
 }
 
 /**
- * Columns of the joined relation that the `WHERE` pins to a single value.
- *
- * A join condition is not the only thing that can make a match unique. `JOIN cor USING(a, b) WHERE
- * cor.c = pSomething` fixes all three columns of a three-column key, and the join brings back one
- * row — reporting it would be reporting the most ordinary shape there is.
- *
- * Only equalities at the clause's own depth, and only when no `OR` shares that depth: `a = 1 AND b =
- * 2 OR c` does not fix anything, and telling the difference for real is a parse this backend does
- * not do. What is on the other side of the `=` is not examined, because it does not matter — a
- * parameter, a literal or another relation's column all hold still while the joined table is scanned.
- */
-function pinnedByWhere(ctx: StatementContext, scope: { from: number; to: number }, label: string): string[] {
-  const { tokens, dialect } = ctx;
-  const fold = (name: string): string => dialect.foldIdentifier(name, false);
-
-  let where = -1;
-  let depth = 0;
-  for (let i = scope.from; i <= scope.to; i++) {
-    if (punct(tokens[i], "(")) depth++;
-    else if (punct(tokens[i], ")")) depth--;
-    else if (depth === 0 && kw(tokens[i], "WHERE")) {
-      where = i;
-      break;
-    }
-  }
-  if (where === -1) return [];
-
-  const columns: string[] = [];
-  depth = 0;
-  for (let i = where + 1; i <= scope.to; i++) {
-    const t = tokens[i]!;
-    if (punct(t, "(")) depth++;
-    else if (punct(t, ")")) {
-      if (depth === 0) break;
-      depth--;
-    } else if (depth === 0 && kw(t, "OR")) {
-      return [];
-    } else if (depth === 0 && (kwAny(t, WHERE_BOUNDARY) !== undefined || punct(t, ";"))) {
-      break;
-    } else if (depth === 0 && punct(t, "=")) {
-      for (const side of [i - 3, i + 1] as const) {
-        if (tokens[side]?.t !== "id" || !punct(tokens[side + 1], ".") || tokens[side + 2]?.t !== "id") continue;
-        if (fold(tokens[side]!.v) === label) columns.push(tokens[side + 2]!.v);
-      }
-    }
-  }
-  return columns;
-}
-
-/**
  * Is this join an **anti-join** — kept only for the rows where it found nothing?
  *
  * `LEFT JOIN t ON … WHERE t.id IS NULL` is how everybody writes "the rows without a match", and by
@@ -196,21 +144,6 @@ function isAntiJoin(ctx: StatementContext, scope: { from: number; to: number }, 
     if (keys.has(name) || fan.table.byName.get(name)?.nullable === false) return true;
   }
   return false;
-}
-
-/**
- * Do these columns pin the table to at most one row?
- *
- * The primary key or any unique index, wholly covered. Partly covered is not covered: half of a
- * two-column key identifies a group of rows, which is exactly the case this rule is about.
- */
-function coversUniqueKey(dialect: StatementContext["dialect"], table: Table, columns: readonly string[]): boolean {
-  const fixed = new Set(columns.map((name) => dialect.foldIdentifier(name, false)));
-  const covered = (key: readonly string[]): boolean =>
-    key.length > 0 && key.every((name) => fixed.has(dialect.foldIdentifier(name, false)));
-
-  if (covered(table.primaryKey)) return true;
-  return table.indexes.some((index) => index.unique && covered(index.columns));
 }
 
 export const joinMultipliesAggregate: Rule = {
@@ -274,8 +207,8 @@ What it deliberately leaves alone:
       if (!on || on.length === 0) continue;
 
       const scope = ctx.scopeAt(i);
-      const pinned = scope ? [...on, ...pinnedByWhere(ctx, scope, label)] : on;
-      if (coversUniqueKey(dialect, table, pinned)) continue;
+      const pinned = scope ? [...on, ...pinnedByWhere(tokens, scope, fold, label)] : on;
+      if (coversUniqueKey(fold, table, pinned)) continue;
 
       const fan: Fan = { table, label, on, at: i };
       if (scope && isAntiJoin(ctx, scope, fan)) continue;

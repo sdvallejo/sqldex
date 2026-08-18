@@ -29,6 +29,7 @@ import {
   joinMultipliesAggregate,
   joinWithoutCondition,
   leftJoinArithmetic,
+  nullableScalarSubquery,
   outArgumentNotVariable,
   unfilteredWrite,
   unknownAlias,
@@ -567,5 +568,120 @@ test("a subquery inside the aggregate belongs to itself", () => {
       body("  SET p_id = (SELECT SUM((SELECT COUNT(*) FROM refunds x WHERE x.order_id = c.customer_id)) FROM customers c);"),
     ),
     [],
+  );
+});
+
+// ------------------------------------------- a subquery that is NULL when it finds nothing
+
+test("an unwrapped aggregate in a subquery used as a number", () => {
+  assert.deepEqual(
+    run(
+      nullableScalarSubquery,
+      "SELECT o.total - (SELECT SUM(r.amount) FROM refunds r WHERE r.order_id = o.order_id) FROM orders o;",
+    ),
+    [
+      "SUM is NULL when it aggregates no rows, and that NULL becomes the whole expression: " +
+        "wrap it in COALESCE inside the subquery",
+    ],
+  );
+});
+
+test("the same aggregate wrapped inside the subquery is the fix, and is not reported", () => {
+  assert.deepEqual(
+    run(
+      nullableScalarSubquery,
+      "SELECT o.total - (SELECT COALESCE(SUM(r.amount), 0) FROM refunds r WHERE r.order_id = o.order_id) FROM orders o;",
+    ),
+    [],
+  );
+});
+
+test("a COALESCE around the whole expression does not protect it — it is what hides the defect", () => {
+  // The one place in the engine where a null-safe wrapper is read as an aggravating circumstance:
+  // the NULL is not absorbed, it is turned into a confident zero.
+  const src = body("  SET p_id = COALESCE(p_id + (SELECT SUM(r.amount) FROM refunds r WHERE r.order_id = 1), 0);");
+  assert.equal(run(nullableScalarSubquery, src).length, 1);
+});
+
+test("COUNT answers an empty set with a number, so arithmetic on it is safe", () => {
+  assert.deepEqual(
+    run(nullableScalarSubquery, "SELECT 1 + (SELECT COUNT(*) FROM refunds r WHERE r.order_id = 1);"),
+    [],
+  );
+});
+
+test("each aggregate of an item is judged on its own", () => {
+  const both = "SELECT 1 + (SELECT COALESCE(SUM(r.amount), 0) - COALESCE(MAX(r.amount), 0) FROM refunds r);";
+  const half = "SELECT 1 + (SELECT COALESCE(SUM(r.amount), 0) - MAX(r.amount) FROM refunds r);";
+  assert.deepEqual(run(nullableScalarSubquery, both), []);
+  assert.equal(run(nullableScalarSubquery, half).length, 1);
+});
+
+test("a search that pins half a key can find nothing, and a lookup of the whole key cannot", () => {
+  const search = "SELECT o.total + (SELECT l.amount FROM order_lines l WHERE l.order_id = o.order_id) FROM orders o;";
+  const lookup =
+    "SELECT o.total + (SELECT l.amount FROM order_lines l WHERE l.order_id = o.order_id AND l.line_no = 1) FROM orders o;";
+  assert.deepEqual(run(nullableScalarSubquery, search), [
+    "this subquery is NULL when it matches no row, and that NULL becomes the whole expression",
+  ]);
+  assert.deepEqual(run(nullableScalarSubquery, lookup), []);
+});
+
+test("an unqualified lookup is a lookup: over one table there is nothing else the name could be", () => {
+  assert.deepEqual(
+    run(nullableScalarSubquery, "SELECT 1 + (SELECT total FROM orders WHERE order_id = 7);"),
+    [],
+  );
+});
+
+test("a join can eliminate the row the key found, so it is no longer a lookup", () => {
+  assert.equal(
+    run(
+      nullableScalarSubquery,
+      "SELECT 1 + (SELECT l.amount FROM order_lines l JOIN orders o USING (order_id) WHERE l.order_id = 7 AND l.line_no = 1);",
+    ).length,
+    1,
+  );
+});
+
+test("a GROUP BY can leave an aggregate with no group to answer for", () => {
+  assert.equal(
+    run(
+      nullableScalarSubquery,
+      "SELECT 1 + (SELECT COALESCE(SUM(r.amount), 0) FROM refunds r WHERE r.order_id = 7 GROUP BY r.order_id);",
+    ).length,
+    1,
+  );
+});
+
+test("a SELECT with no FROM computes its row out of nothing", () => {
+  assert.deepEqual(run(nullableScalarSubquery, "SELECT 1 + (SELECT MAX(1));"), []);
+});
+
+test("only an operand: an assignment straight from a subquery leaves the NULL where it can be seen", () => {
+  // `SET v = (SELECT SUM(…))` is a NULL in `v`, which is visible. Folded into a sum it is not, and
+  // that is the difference the rule is drawn on.
+  assert.deepEqual(
+    run(nullableScalarSubquery, body("  SET p_id = (SELECT SUM(r.amount) FROM refunds r WHERE r.order_id = 1);")),
+    [],
+  );
+  assert.deepEqual(
+    run(nullableScalarSubquery, "SELECT o.order_id FROM orders o WHERE o.order_id IN (SELECT r.order_id FROM refunds r);"),
+    [],
+  );
+});
+
+test("an aggregate that is both multiplied by a join and NULL over nothing belongs to the join rule", () => {
+  // Both rules report on the aggregate's own name token. The fan-out says which join multiplies it
+  // and which key is not unique there, so it is registered first; this is what holds that order.
+  const src = body("  SET p_id = (SELECT SUM(o.total) FROM orders o JOIN refunds r USING(order_id)) + 1;");
+  const found = check(
+    new Registry().add(joinMultipliesAggregate, nullableScalarSubquery),
+    { dialect: mysql, catalog: catalogOf(), schemas: new Set(["shop"]), config: defaults },
+    src,
+  );
+  assert.deepEqual(
+    found.map((d) => d.code),
+    ["query/join-multiplies-aggregate"],
   );
 });
