@@ -1,6 +1,6 @@
 {
   "name": "sqldex",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Static analysis for MySQL schemas that live as .sql files in a repository.",
   "license": "MIT",
   "author": "Sergio Vallejo",
@@ -46,7 +46,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@sqldex/core": "^0.1.1"
+    "@sqldex/core": "^0.2.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
