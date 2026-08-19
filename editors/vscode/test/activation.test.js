@@ -119,7 +119,12 @@ test("one server per project, and none for a folder that is not one", () => {
 
   // Three folders, one project: the second is inside the first, and the third declares nothing.
   assert.equal(started.length, 1);
-  assert.equal(started[0].server.run.command, "node");
+  // **Which** command it resolved to is deliberately not asserted here. That answer depends on
+  // whether the machine running the suite has a `sqldex-lsp` installed — and a workspace install
+  // links one into `node_modules/.bin`, which `npm test` puts on the PATH, so this file's own
+  // repository is such a machine. The resolution order is tested in `client.test.js`, where the
+  // probes are injected and the answer does not depend on where the tests happen to run.
+  assert.ok(started[0].server.run.command);
 });
 
 test("the document selector carries a string pattern scoped to the project", () => {
