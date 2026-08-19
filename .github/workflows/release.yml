@@ -18,6 +18,10 @@
 # settings of a package that already exists (npm/cli#8544). So `0.1.0` goes out with a granular
 # token, and the moment it lands the three packages get trusted publishing configured, the token is
 # revoked, the `NPM_TOKEN` secret is deleted, and the three `env:` blocks below come out with it.
+# `--access public` is on the command line as well as in each `publishConfig`. The manifest key did
+# not take for the two scoped packages on the first release — they landed restricted, which on the
+# public registry is indistinguishable from not existing — and the flag is the form that is not
+# ambiguous about who reads it.
 name: Release
 
 on:
@@ -77,14 +81,14 @@ jobs:
 
       # Core first: the other two declare it as a dependency, and a registry that has the dependent
       # before the dependency is a few minutes of a broken install for anyone quick enough to hit it.
-      - run: npm publish -w @sqldex/core
+      - run: npm publish -w @sqldex/core --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - run: npm publish -w @sqldex/lsp
+      - run: npm publish -w @sqldex/lsp --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - run: npm publish -w sqldex
+      - run: npm publish -w sqldex --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
