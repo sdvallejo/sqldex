@@ -50,7 +50,12 @@ jobs:
 
       # Node 22.18 ships npm 10, and trusted publishing needs 11.5.1 or newer. Not required for the
       # token publish below, but this is the step that has to already be here when the token goes.
-      - run: npm install -g npm@latest
+      #
+      # Pinned to the 11 line rather than `@latest`, which is how this failed the first time: npm 12
+      # requires `^22.22.2 || ^24.15.0 || >=26.0.0`, and this job deliberately runs the **floor**
+      # version the README promises. `@latest` on a pinned-floor runner is a step that breaks on
+      # somebody else's release schedule, which is not a thing a publish should depend on.
+      - run: npm install -g npm@11
 
       - run: npm ci
 
