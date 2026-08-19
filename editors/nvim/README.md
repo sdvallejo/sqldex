@@ -69,9 +69,14 @@ it lives in the project's own `.sqldex.json`, the same file `sqldex check` reads
 **Two things have to happen, and every recipe below does both.** The client is `editors/nvim/`
 **inside** this repository rather than its root, so whatever puts it on the runtimepath has to point
 at that directory. And the server is the one part of this that is not Lua — it is the same Node
-program that runs in CI — so the clone needs its dependencies: `npm install --omit=dev`, which is
-1.7 MB and about a second. There is no build step, because the client is what tells Node to resolve
-this project to its own sources.
+program that runs in CI — so the clone needs its dependencies: `npm ci --omit=dev`, which is 1.7 MB
+and about a second. There is no build step, because the client is what tells Node to resolve this
+project to its own sources.
+
+**`ci` rather than `install`, and it matters here**: `npm install` rewrites `package-lock.json` when
+it has anything to add, and a plugin manager reads a modified tracked file as your local work and
+refuses to update over it — lazy.nvim says so and stops. `npm ci` installs the lockfile as written
+and touches nothing, which is what a directory somebody else's tool owns should get.
 
 ### lazy.nvim
 
@@ -79,7 +84,7 @@ this project to its own sources.
 return {
   "sdvallejo/sqldex",
   lazy = false,
-  build = "npm install --omit=dev",
+  build = "npm ci --omit=dev",
   config = function(plugin)
     vim.opt.rtp:append(plugin.dir .. "/editors/nvim")
     vim.cmd.runtime "plugin/sqldex.lua"
@@ -103,7 +108,7 @@ command you reach for precisely when no SQL buffer is doing anything.
 vim.api.nvim_create_autocmd("PackChanged", {
   callback = function(ev)
     if ev.data.spec.name == "sqldex" and ev.data.kind ~= "delete" then
-      vim.system({ "npm", "install", "--omit=dev" }, { cwd = ev.data.path }):wait()
+      vim.system({ "npm", "ci", "--omit=dev" }, { cwd = ev.data.path }):wait()
     end
   end,
 })
@@ -123,7 +128,7 @@ and the append adds the part where there is.
 The only one here that knows about a subdirectory on its own, which makes it the shortest:
 
 ```vim
-Plug 'sdvallejo/sqldex', { 'rtp': 'editors/nvim', 'do': 'npm install --omit=dev' }
+Plug 'sdvallejo/sqldex', { 'rtp': 'editors/nvim', 'do': 'npm ci --omit=dev' }
 ```
 
 ### From a checkout you already have
@@ -147,7 +152,7 @@ npm install -g @sqldex/lsp
 ```
 
 The client prefers an installed `sqldex-lsp` over the clone it sits in, so this makes the
-`npm install --omit=dev` above unnecessary — drop the `build`, the `do`, or the autocommand. What
+`npm ci --omit=dev` above unnecessary — drop the `build`, the `do`, or the autocommand. What
 you gain is a server that is built JavaScript, self-contained, and does not re-run `npm` every time
 the plugin updates; what you give up is having your editor own everything it uses. The other
 published command, `npm install -g sqldex`, is the CLI that runs these same rules over the same
