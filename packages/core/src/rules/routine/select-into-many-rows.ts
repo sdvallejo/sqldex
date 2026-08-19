@@ -1,31 +1,9 @@
 import { singleTableQuery } from "../shared/keys.ts";
 import { joinNames } from "../shared/names.ts";
 import { foldsToOneRow, halfPinnedKey, limitsToOne } from "../shared/rows.ts";
-import { kw, kwAny, punct } from "../../syntax/fast/tok.ts";
-import type { Rule, StatementContext } from "../rule.ts";
-
-/** What can follow `INTO` and not be a variable: the two forms that write a file. */
-const NOT_VARIABLES: ReadonlySet<string> = new Set(["OUTFILE", "DUMPFILE"]);
-
-/**
- * The `INTO` that belongs to this statement, or `-1`.
- *
- * At the statement's own depth, so the `INTO` of a subquery is not mistaken for this one, and both
- * spellings are found: MySQL takes `SELECT a INTO v FROM t` and `SELECT a FROM t INTO v`, and these
- * schemas contain both.
- */
-function intoAt(ctx: StatementContext): number {
-  const { tokens } = ctx;
-  let depth = 0;
-  for (let i = ctx.statement.from; i <= ctx.statement.to; i++) {
-    if (punct(tokens[i], "(")) depth++;
-    else if (punct(tokens[i], ")")) depth--;
-    else if (depth === 0 && kw(tokens[i], "INTO")) {
-      return kwAny(tokens[i + 1], NOT_VARIABLES) === undefined ? i : -1;
-    }
-  }
-  return -1;
-}
+import { intoAt } from "../shared/selects.ts";
+import { kw } from "../../syntax/fast/tok.ts";
+import type { Rule } from "../rule.ts";
 
 export const selectIntoManyRows: Rule = {
   id: "routine/select-into-many-rows",
@@ -61,7 +39,7 @@ What it deliberately leaves alone:
     const { tokens } = ctx;
     if (!kw(tokens[ctx.statement.from], "SELECT")) return;
 
-    const into = intoAt(ctx);
+    const into = intoAt(tokens, ctx.statement.from, ctx.statement.to);
     if (into === -1) return;
 
     if (foldsToOneRow(tokens, ctx.statement.from, ctx.statement.to)) return;

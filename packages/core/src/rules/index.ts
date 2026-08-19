@@ -30,7 +30,9 @@ import { unknownRoutine } from "./names/unknown-routine.ts";
 import { unknownTable } from "./names/unknown-table.ts";
 import { unqualifiedColumn } from "./names/unqualified-column.ts";
 import { collationMismatch } from "./query/collation-mismatch.ts";
+import { enumValueNotDefined } from "./query/enum-value-not-defined.ts";
 import { insertMissingRequiredColumn } from "./query/insert-missing-required-column.ts";
+import { insertSelectColumnCount } from "./query/insert-select-column-count.ts";
 import { insertUnknownColumn } from "./query/insert-unknown-column.ts";
 import { insertValueCount } from "./query/insert-value-count.ts";
 import { joinMultipliesAggregate } from "./query/join-multiplies-aggregate.ts";
@@ -43,6 +45,7 @@ import { scalarSubqueryManyRows } from "./query/scalar-subquery-many-rows.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
 import { callArity } from "./routine/call-arity.ts";
 import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
+import { selectIntoArity } from "./routine/select-into-arity.ts";
 import { selectIntoManyRows } from "./routine/select-into-many-rows.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
@@ -97,16 +100,19 @@ export const statementRules = [
   outArgumentNotVariable,
   insertUnknownColumn,
   insertValueCount,
+  insertSelectColumnCount,
   insertMissingRequiredColumn,
   unqualifiedColumn,
   leftJoinArithmetic,
   joinMultipliesAggregate,
   scalarSubqueryManyRows,
+  selectIntoArity,
   selectIntoManyRows,
   nullableScalarSubquery,
   onlyFullGroupBy,
   aggregateWithoutGroupBy,
   literalTypeMismatch,
+  enumValueNotDefined,
   collationMismatch,
   unfilteredWrite,
   joinWithoutCondition,
@@ -148,12 +154,14 @@ export {
   declareAfterStatement,
   divergentType,
   duplicateConstraintName,
+  enumValueNotDefined,
   fkMissingIndex,
   fkUnknownColumn,
   fkTypeMismatch,
   fkUnknownTable,
   indexUnknownColumn,
   insertMissingRequiredColumn,
+  insertSelectColumnCount,
   insertUnknownColumn,
   insertValueCount,
   joinMultipliesAggregate,
@@ -168,6 +176,7 @@ export {
   outArgumentNotVariable,
   redundantIndex,
   scalarSubqueryManyRows,
+  selectIntoArity,
   selectIntoManyRows,
   unfilteredWrite,
   unknownAlias,

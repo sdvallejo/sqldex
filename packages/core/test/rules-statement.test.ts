@@ -23,8 +23,10 @@ import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
 import {
   callArity,
   collationMismatch,
+  enumValueNotDefined,
   insertMissingRequiredColumn,
   insertUnknownColumn,
+  insertSelectColumnCount,
   insertValueCount,
   joinMultipliesAggregate,
   joinWithoutCondition,
@@ -35,6 +37,7 @@ import {
   onlyFullGroupBy,
   outArgumentNotVariable,
   scalarSubqueryManyRows,
+  selectIntoArity,
   selectIntoManyRows,
   unfilteredWrite,
   unknownAlias,
@@ -87,6 +90,26 @@ const SCHEMA = [
   "  received_at timestamp NOT NULL,",
   "  fee decimal(10,2) NOT NULL,",
   "  PRIMARY KEY (payment_id)",
+  ");",
+  // An enum-like column with its codes written down — the only source the enum rule will use — and
+  // one beside it whose comment is prose, so there is something for it to stand down for.
+  "CREATE TABLE tickets (",
+  "  ticket_id int NOT NULL,",
+  "  state char(1) NOT NULL COMMENT 'O: open, C: closed, X: cancelled',",
+  "  channel char(1) NOT NULL COMMENT 'Where the ticket came from, one letter',",
+  "  PRIMARY KEY (ticket_id)",
+  ");",
+  // The audit twin of `orders`, three columns wider: what a positional `INSERT … SELECT` is counted
+  // against, and where a star has to be expanded to count anything at all.
+  "CREATE TABLE aud_orders (",
+  "  aud_id int NOT NULL AUTO_INCREMENT,",
+  "  changed_at datetime NOT NULL,",
+  "  changed_by varchar(20) NOT NULL,",
+  "  order_id int NOT NULL,",
+  "  customer_id int NOT NULL,",
+  "  status char(1) NOT NULL,",
+  "  total decimal(10,2) NOT NULL,",
+  "  PRIMARY KEY (aud_id)",
   ");",
   // A generated column, so a positional INSERT may pass it DEFAULT or leave it out.
   "CREATE TABLE events (",
@@ -375,6 +398,70 @@ test("a list naming a column the table does not have is left to the rule that sa
   const wrong = "INSERT INTO payments (order_id, nope) VALUES (1, 2);";
   assert.deepEqual(run(insertMissingRequiredColumn, wrong), []);
   assert.deepEqual(run(insertUnknownColumn, wrong), ["payments has no column nope"]);
+});
+
+// ------------------------------------------- INSERT … SELECT: filling the table
+
+test("an INSERT … SELECT short of the table it writes to is reported", () => {
+  // The audit shape, one scalar short: the star is four columns, so this hands over six of seven.
+  const src = "INSERT INTO aud_orders SELECT 0, NOW(), o.* FROM orders o;";
+  assert.deepEqual(run(insertSelectColumnCount, src), [
+    "this SELECT gives aud_orders 6 column(s) and it expects 7",
+  ]);
+});
+
+test("and the same shape that does add up says nothing", () => {
+  const src = "INSERT INTO aud_orders SELECT 0, NOW(), 'me', o.* FROM orders o;";
+  assert.deepEqual(run(insertSelectColumnCount, src), []);
+});
+
+test("the star is counted from the catalog, which is the only place its width lives", () => {
+  // `SELECT *` over a join is every column of both, in order — four and two here.
+  const joined = "INSERT INTO aud_orders SELECT * FROM orders o JOIN customers c USING (customer_id);";
+  assert.deepEqual(run(insertSelectColumnCount, joined), [
+    "this SELECT gives aud_orders 6 column(s) and it expects 7",
+  ]);
+});
+
+test("a star it cannot expand is a width it does not have, so nothing is claimed", () => {
+  // A temporary table's columns are not knowable from here, and this rule reports errors.
+  const temp = "INSERT INTO aud_orders SELECT 0, NOW(), t.* FROM tmp_from_other_sp t;";
+  const derived = "INSERT INTO aud_orders SELECT x.* FROM (SELECT 1 AS n) x;";
+  assert.deepEqual(run(insertSelectColumnCount, temp), []);
+  assert.deepEqual(run(insertSelectColumnCount, derived), []);
+});
+
+test("with a column list the count is against the list, not the table", () => {
+  const src = "INSERT INTO aud_orders (aud_id, changed_at) SELECT 0, NOW(), 'me' FROM orders;";
+  assert.deepEqual(run(insertSelectColumnCount, src), [
+    "this SELECT gives aud_orders 3 column(s) and it expects 2",
+  ]);
+});
+
+test("an empty column list is named as such, rather than left as a count of zero", () => {
+  // `INSERT INTO t () SELECT …` is legal to write and cannot run. "expects 0" would leave the reader
+  // counting the table's columns to work out why.
+  const src = "INSERT INTO aud_orders () SELECT 0, NOW(), 'me', o.* FROM orders o;";
+  assert.deepEqual(run(insertSelectColumnCount, src), [
+    "aud_orders () is an empty column list, and this SELECT hands it 7 column(s)",
+  ]);
+});
+
+test("a generated column may be passed or left out, so both counts are accepted", () => {
+  const withIt = "INSERT INTO events SELECT 1, 'p', DEFAULT;";
+  const without = "INSERT INTO events SELECT 1, 'p';";
+  assert.deepEqual(run(insertSelectColumnCount, withIt), []);
+  assert.deepEqual(run(insertSelectColumnCount, without), []);
+});
+
+test("a UNION is two lists the engine has already compared with each other", () => {
+  const src = "INSERT INTO aud_orders SELECT 0, NOW() UNION SELECT 1, NOW();";
+  assert.deepEqual(run(insertSelectColumnCount, src), []);
+});
+
+test("the VALUES form is the other rule's, and a table nothing defines is nobody's", () => {
+  assert.deepEqual(run(insertSelectColumnCount, "INSERT INTO aud_orders VALUES (1, 2);"), []);
+  assert.deepEqual(run(insertSelectColumnCount, "INSERT INTO nowhere SELECT 1, 2;"), []);
 });
 
 // -------------------------------------------------------- unqualified columns
@@ -877,6 +964,60 @@ test("an unpinned search read as a number belongs to the many-rows rule, not the
   );
 });
 
+// ------------------------------------------ a SELECT … INTO of the wrong width
+
+test("a SELECT … INTO that reads more columns than it fills is reported", () => {
+  const src = body("  SELECT o.order_id, o.customer_id, o.status INTO p_id, p_id FROM orders o;");
+  assert.deepEqual(run(selectIntoArity, src), [
+    "this SELECT reads 3 column(s) into 2 variable(s): MySQL answers error 1222 rather than filling them",
+  ]);
+});
+
+test("both spellings are read, because these schemas contain both", () => {
+  const trailing = body("  SELECT o.order_id, o.customer_id FROM orders o INTO p_id;");
+  assert.deepEqual(run(selectIntoArity, trailing), [
+    "this SELECT reads 2 column(s) into 1 variable(s): MySQL answers error 1222 rather than filling them",
+  ]);
+  const balanced = body("  SELECT o.order_id, o.customer_id FROM orders o INTO p_id, p_id;");
+  assert.deepEqual(run(selectIntoArity, balanced), []);
+});
+
+test("a star is counted from the catalog, and one it cannot expand is not counted at all", () => {
+  const star = body("  SELECT o.* INTO p_id, p_id FROM orders o;");
+  assert.deepEqual(run(selectIntoArity, star), [
+    "this SELECT reads 4 column(s) into 2 variable(s): MySQL answers error 1222 rather than filling them",
+  ]);
+  const temp = body("  SELECT t.* INTO p_id, p_id FROM tmp_from_other_sp t;");
+  assert.deepEqual(run(selectIntoArity, temp), []);
+});
+
+test("a star inside a call is not a select list of its own", () => {
+  // `COUNT(*)` is one value. Reading its star as the table's columns would make every counted
+  // aggregate a mismatch.
+  assert.deepEqual(run(selectIntoArity, body("  SELECT COUNT(*) INTO p_id FROM orders;")), []);
+});
+
+test("OUTFILE names a file rather than variables, and a UNION is two lists", () => {
+  const outfile = body("  SELECT o.order_id, o.status INTO OUTFILE '/tmp/x' FROM orders o;");
+  const union = body("  SELECT 1, 2 UNION SELECT 3, 4 INTO p_id;");
+  assert.deepEqual(run(selectIntoArity, outfile), []);
+  assert.deepEqual(run(selectIntoArity, union), []);
+});
+
+test("a statement that cannot run is not also reported for how many rows it would return", () => {
+  // Both rules see this line. The arity one displaces the other: error 1222 comes first, and
+  // "it might match twice" is advice about a statement that never gets that far.
+  const src = body("  SELECT l.order_id, l.amount INTO p_id FROM order_lines l WHERE l.order_id = 7;");
+  assert.deepEqual(
+    check(
+      new Registry().add(selectIntoArity, selectIntoManyRows),
+      { dialect: mysql, catalog: catalogOf(), schemas: new Set(["shop"]), config: defaults },
+      src,
+    ).map((d) => d.code),
+    ["routine/select-into-arity"],
+  );
+});
+
 // ------------------------------------------ a SELECT … INTO that can match twice
 
 test("a SELECT INTO whose WHERE starts a key and abandons it", () => {
@@ -990,6 +1131,64 @@ test("the variables of a SELECT … INTO are not columns of the query", () => {
 
 test("a star says nothing about which columns those are", () => {
   assert.deepEqual(run(onlyFullGroupBy, "SELECT *, COUNT(*) FROM orders o GROUP BY o.status;"), []);
+});
+
+// ------------------------------------------- a code the column does not declare
+
+test("a comparison against a code the COMMENT does not list is reported", () => {
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.state = 'Z';"), [
+    "t.state declares (O, C, X) and this compares it with 'Z': no row can hold that",
+  ]);
+});
+
+test("a code it does list is not, and case is ignored because the server ignores it", () => {
+  // Under the `_ci` collations these columns carry, `= 'o'` finds the rows holding `'O'`.
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.state = 'O';"), []);
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.state = 'o';"), []);
+});
+
+test("the same mistake read from the other end passes every row instead of none", () => {
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.state != 'Z';"), [
+    "t.state declares (O, C, X) and this compares it with 'Z': every row passes this",
+  ]);
+});
+
+test("an IN list names every code that cannot be there, and says nothing when they all can", () => {
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.state IN ('O', 'Z', 'Q');"), [
+    "t.state declares (O, C, X) and this looks for 'Z', 'Q': no row can hold that",
+  ]);
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.state IN ('O', 'C');"), []);
+});
+
+test("a bare name resolves the same way, when one relation owns it", () => {
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets WHERE state = 'Z';"), [
+    "state declares (O, C, X) and this compares it with 'Z': no row can hold that",
+  ]);
+});
+
+test("a comment that is prose declares no set, and neither does no comment at all", () => {
+  // `channel` has a comment; it is a sentence, not a list. `orders.status` has none. Silence is not
+  // evidence that a code is legal — it is nobody having written the set down.
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.channel = 'Z';"), []);
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM orders o WHERE o.status = 'Z';"), []);
+});
+
+test("the empty string is a real question about real rows", () => {
+  // `char(1) NOT NULL DEFAULT ''` is ordinary, and no comment lists the absence of a code.
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.state = '';"), []);
+});
+
+test("a number is the type rule's finding, and a SET is a different claim", () => {
+  assert.deepEqual(run(enumValueNotDefined, "SELECT * FROM tickets t WHERE t.state = 9;"), []);
+  assert.deepEqual(run(enumValueNotDefined, "UPDATE tickets SET state = 'Z' WHERE ticket_id = 1;"), []);
+});
+
+test("a WHERE beside an assignment is still a comparison", () => {
+  // The `SET` is skipped, not the whole statement: an UPDATE's `WHERE` is where this bites hardest,
+  // because a condition that matches nothing makes the write silently do nothing.
+  assert.deepEqual(run(enumValueNotDefined, "UPDATE tickets SET channel = 'A' WHERE state = 'Z';"), [
+    "state declares (O, C, X) and this compares it with 'Z': no row can hold that",
+  ]);
 });
 
 // ------------------------------------------- a column compared against another type of literal
