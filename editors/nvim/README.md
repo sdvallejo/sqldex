@@ -71,9 +71,9 @@ it lives in the project's own `.sqldex.json`, the same file `sqldex check` reads
   published command, `npm install -g sqldex`, is the CLI that runs these same rules over the same
   project in CI — a different job, and not what Neovim needs.
 
-A checkout of this repository *with its dependencies installed* can run its own server instead, and
-the client prefers an installed `sqldex-lsp` over it. **A clone made by a plugin manager is not that
-checkout**: it has the sources and no `node_modules`, so the server still comes from npm.
+The client prefers an installed `sqldex-lsp` over anything else, and falls back to running the
+server out of the checkout it sits in — which a plugin manager's clone can become, if you would
+rather install nothing globally. That is [below](#without-installing-the-server-globally).
 
 ## Installing
 
@@ -128,6 +128,43 @@ The only one here that knows about a subdirectory on its own, which makes it the
 ```vim
 Plug 'sdvallejo/sqldex', { 'rtp': 'editors/nvim' }
 ```
+
+### Without installing the server globally
+
+The server is the one part of this that is not Lua, and it does not have to live on your `PATH`. The
+client falls back to the checkout it belongs to, and a clone becomes one the moment its dependencies
+are there — which is a hook every manager above already has:
+
+```lua
+-- lazy.nvim, added to the spec
+build = "npm install --omit=dev",
+```
+
+```vim
+" vim-plug
+Plug 'sdvallejo/sqldex', { 'rtp': 'editors/nvim', 'do': 'npm install --omit=dev' }
+```
+
+```lua
+-- vim.pack has no build field, so the hook is an autocommand. Before vim.pack.add.
+vim.api.nvim_create_autocmd("PackChanged", {
+  callback = function(ev)
+    if ev.data.spec.name == "sqldex" and ev.data.kind ~= "delete" then
+      vim.system({ "npm", "install", "--omit=dev" }, { cwd = ev.data.path }):wait()
+    end
+  end,
+})
+```
+
+`--omit=dev` is the whole point of the line: what the server actually needs is the protocol library,
+which is 1.7 MB and a second. Everything else in this repository's `devDependencies` is for building
+and testing it, and none of it runs here — there is **no build step**, because the client tells Node
+to resolve this project to its own sources.
+
+What you give up is what an installed package gives you: it is built JavaScript, self-contained, and
+does not re-run `npm` every time the plugin updates. That is why `npm install -g @sqldex/lsp` is
+still the shorter answer, and this one is for people who would rather their editor own everything it
+uses.
 
 ### By hand, from a checkout
 
