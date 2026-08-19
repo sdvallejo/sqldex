@@ -39,8 +39,13 @@ that use it to say something checkable about the queries and procedures written 
 
 ## Status
 
-**Early, but usable.** The engine, the rules and the command are complete and tested. Nothing is
-published to npm yet, so using it means a checkout.
+**Early, but usable.** The engine, the rules and the command are complete and tested.
+
+```sh
+npm install -g sqldex          # the command
+npm install -g @sqldex/lsp     # the language server, for an editor
+npm install @sqldex/core       # the catalog and the rule engine, as a library
+```
 
 | | |
 |---|---|
