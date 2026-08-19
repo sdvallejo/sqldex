@@ -23,6 +23,7 @@ import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
 import {
   callArity,
   collationMismatch,
+  insertMissingRequiredColumn,
   insertUnknownColumn,
   insertValueCount,
   joinMultipliesAggregate,
@@ -76,6 +77,17 @@ const SCHEMA = [
   // A pair on different collations, which is the only thing the collation rule looks at.
   "CREATE TABLE current_codes (code varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL);",
   "CREATE TABLE legacy_codes (code varchar(10) COLLATE utf8_spanish_ci NOT NULL);",
+  // One column of every kind the required-column rule has to stand down for: a key the engine
+  // fills, a written default, a nullable, and a timestamp whose default may be implicit.
+  "CREATE TABLE payments (",
+  "  payment_id int NOT NULL AUTO_INCREMENT,",
+  "  order_id int NOT NULL,",
+  "  method varchar(10) NOT NULL DEFAULT 'card',",
+  "  note varchar(80) NULL,",
+  "  received_at timestamp NOT NULL,",
+  "  fee decimal(10,2) NOT NULL,",
+  "  PRIMARY KEY (payment_id)",
+  ");",
   // A generated column, so a positional INSERT may pass it DEFAULT or leave it out.
   "CREATE TABLE events (",
   "  event_id int NOT NULL,",
@@ -300,6 +312,54 @@ test("a generated column may be passed DEFAULT or left out, so both counts are a
 test("each tuple of a multi-row INSERT is checked on its own", () => {
   const src = "INSERT INTO orders (order_id, status) VALUES (1, 'A'), (2), (3, 'C');";
   assert.deepEqual(run(insertValueCount, src), ["orders gets 1 value(s) and expects 2"]);
+});
+
+test("a column list that leaves out a required column is an error", () => {
+  assert.deepEqual(run(insertMissingRequiredColumn, "INSERT INTO payments (order_id) VALUES (1);"), [
+    "payments needs a value for fee",
+  ]);
+});
+
+test("a column the engine can fill on its own is not required", () => {
+  // Every one of the four is left out here: the auto-increment key, the written default, the
+  // nullable, and the timestamp. Naming the two that are actually required is enough.
+  const src = "INSERT INTO payments (order_id, fee) VALUES (1, 2.00);";
+  assert.deepEqual(run(insertMissingRequiredColumn, src), []);
+});
+
+test("a generated column is not required either", () => {
+  assert.deepEqual(run(insertMissingRequiredColumn, "INSERT INTO events (event_id, payload) VALUES (1, 'x');"), []);
+  assert.deepEqual(run(insertMissingRequiredColumn, "INSERT INTO events (event_id) VALUES (1);"), [
+    "events needs a value for payload",
+  ]);
+});
+
+test("without a column list this rule says nothing, because the count is the question", () => {
+  assert.deepEqual(run(insertMissingRequiredColumn, "INSERT INTO payments VALUES (1, 2);"), []);
+});
+
+test("INSERT ... SET is a third syntax and is not read as a column list", () => {
+  assert.deepEqual(run(insertMissingRequiredColumn, "INSERT INTO payments SET order_id = 1;"), []);
+});
+
+test("where the values come from does not matter, only the list", () => {
+  const src = "INSERT INTO payments (order_id) SELECT order_id FROM orders;";
+  assert.deepEqual(run(insertMissingRequiredColumn, src), ["payments needs a value for fee"]);
+});
+
+test("an empty parenthesis names nothing, so nothing is missing from it", () => {
+  // `INSERT INTO t () SELECT …` is a positional insert with an empty pair of brackets in front.
+  const empty = "INSERT INTO payments () SELECT * FROM payments;";
+  assert.deepEqual(run(insertMissingRequiredColumn, empty), []);
+  // The pair: a list that does name something is still read.
+  const named = "INSERT INTO payments (order_id) SELECT order_id FROM orders;";
+  assert.deepEqual(run(insertMissingRequiredColumn, named), ["payments needs a value for fee"]);
+});
+
+test("a list naming a column the table does not have is left to the rule that says so", () => {
+  const wrong = "INSERT INTO payments (order_id, nope) VALUES (1, 2);";
+  assert.deepEqual(run(insertMissingRequiredColumn, wrong), []);
+  assert.deepEqual(run(insertUnknownColumn, wrong), ["payments has no column nope"]);
 });
 
 // -------------------------------------------------------- unqualified columns

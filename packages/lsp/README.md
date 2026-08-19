@@ -11,7 +11,7 @@ npm install -g @sqldex/lsp
 sqldex-lsp --stdio
 ```
 
-What it answers: **findings as you type** (38 rules), **hover** — a column's type, whether it is
+What it answers: **findings as you type** (39 rules), **hover** — a column's type, whether it is
 nullable, whether it is a key, the table its foreign key points at and the values it is allowed to
 hold; a table's `CREATE TABLE`; what a two-letter alias stands for — **completion** from the
 catalog, **signature help**, **goto definition** and **type definition** (a foreign key's target),

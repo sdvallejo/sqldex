@@ -30,6 +30,7 @@ import { unknownRoutine } from "./names/unknown-routine.ts";
 import { unknownTable } from "./names/unknown-table.ts";
 import { unqualifiedColumn } from "./names/unqualified-column.ts";
 import { collationMismatch } from "./query/collation-mismatch.ts";
+import { insertMissingRequiredColumn } from "./query/insert-missing-required-column.ts";
 import { insertUnknownColumn } from "./query/insert-unknown-column.ts";
 import { insertValueCount } from "./query/insert-value-count.ts";
 import { joinMultipliesAggregate } from "./query/join-multiplies-aggregate.ts";
@@ -96,6 +97,7 @@ export const statementRules = [
   outArgumentNotVariable,
   insertUnknownColumn,
   insertValueCount,
+  insertMissingRequiredColumn,
   unqualifiedColumn,
   leftJoinArithmetic,
   joinMultipliesAggregate,
@@ -151,6 +153,7 @@ export {
   fkTypeMismatch,
   fkUnknownTable,
   indexUnknownColumn,
+  insertMissingRequiredColumn,
   insertUnknownColumn,
   insertValueCount,
   joinMultipliesAggregate,

@@ -29,7 +29,7 @@ sps/sp_settle_orders.sql
 3 findings in 1 file (1 error, 1 warn, 1 hint)
 ```
 
-38 rules in five groups, `--format` for `pretty`, `json`, `sarif`, `github` and `gitlab`, and
+39 rules in five groups, `--format` for `pretty`, `json`, `sarif`, `github` and `gitlab`, and
 `--diff <base>` to check only what a branch changed. It needs no configuration: two common directory
 layouts are recognised on sight, and anything else works by sweeping `**/*.sql`.
 

@@ -52,7 +52,7 @@ code --install-extension sqldex.sqldex   # VS Code, server included — nothing 
 |---|---|
 | Catalog and name resolution | works |
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
-| Lint rules | 38 of them, in five groups — see below |
+| Lint rules | 39 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
 | Editor clients | one for Neovim and one for VS Code, in `editors/`; the VS Code one is on the Marketplace and carries the server inside the `.vsix`, and `editors/nvim` installs from this repository |
@@ -249,7 +249,7 @@ turning rules off is choosing between:
 |---|---|
 | `names` | `unknown-table`, `unknown-alias`, `unknown-column`, `unqualified-column`, `unknown-routine`, `ambiguous-column` |
 | `schema` | `fk-unknown-table`, `fk-unknown-column`, `fk-missing-index`, `index-unknown-column`, `redundant-index`, `divergent-type`, `no-primary-key`, `fk-type-mismatch`, `duplicate-constraint-name` |
-| `query` | `insert-value-count`, `insert-unknown-column`, `unfiltered-write`, `join-without-condition`, `collation-mismatch`, `left-join-arithmetic`, `join-multiplies-aggregate`, `nullable-scalar-subquery`, `scalar-subquery-many-rows`, `only-full-group-by`, `aggregate-without-group-by`, `literal-type-mismatch` |
+| `query` | `insert-value-count`, `insert-unknown-column`, `insert-missing-required-column`, `unfiltered-write`, `join-without-condition`, `collation-mismatch`, `left-join-arithmetic`, `join-multiplies-aggregate`, `nullable-scalar-subquery`, `scalar-subquery-many-rows`, `only-full-group-by`, `aggregate-without-group-by`, `literal-type-mismatch` |
 | `routine` | `call-arity`, `out-argument-not-variable`, `cursor-never-opened`, `unused-variable`, `variable-never-assigned`, `nullable-into-arithmetic`, `nullable-variable-in-predicate`, `select-into-many-rows`, `declare-after-statement` |
 | `audit` | `table-out-of-sync`, `trigger-missing-column` |
 

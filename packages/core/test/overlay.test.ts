@@ -114,7 +114,7 @@ test("a table nobody defines is still unknown", () => {
 test("a project table the file does not touch keeps its own columns", () => {
   const src = [
     "CREATE TABLE rejection_reasons (reason_id int NOT NULL, PRIMARY KEY (reason_id));",
-    "INSERT INTO customers (customer_id, phone) VALUES (1, '555');",
+    "INSERT INTO customers (customer_id, email, phone) VALUES (1, 'a@b.c', '555');",
   ].join("\n");
   assert.deepEqual(messages(src, true), ["customers has no column phone"]);
 });
@@ -129,7 +129,7 @@ test("the file's own definition wins over the project's", () => {
     "  phone varchar(30) NOT NULL,",
     "  PRIMARY KEY (customer_id)",
     ");",
-    "INSERT INTO customers (customer_id, phone) VALUES (1, '555');",
+    "INSERT INTO customers (customer_id, email, phone) VALUES (1, 'a@b.c', '555');",
   ].join("\n");
   assert.deepEqual(messages(src, true), []);
   assert.deepEqual(messages(src, false), ["customers has no column phone"]);
