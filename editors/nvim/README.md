@@ -61,24 +61,87 @@ it lives in the project's own `.sqldex.json`, the same file `sqldex check` reads
 
 - **Neovim 0.11 or newer**, for `vim.lsp.enable()`.
 - **Node 22.18 or newer**, which is what the server runs on.
-- The server itself, as `sqldex-lsp` on your `PATH`. Inside a checkout of this repository with its
-  dependencies installed, the client finds the server without one being installed.
+- **The server**, which is one command:
+
+  ```sh
+  npm install -g @sqldex/lsp
+  ```
+
+  That puts `sqldex-lsp` on your `PATH`, which is the only thing the client looks for. The other
+  published command, `npm install -g sqldex`, is the CLI that runs these same rules over the same
+  project in CI — a different job, and not what Neovim needs.
+
+A checkout of this repository *with its dependencies installed* can run its own server instead, and
+the client prefers an installed `sqldex-lsp` over it. **A clone made by a plugin manager is not that
+checkout**: it has the sources and no `node_modules`, so the server still comes from npm.
 
 ## Installing
 
-The client is this directory, not the repository root, so whatever puts it on the runtimepath has to
-point at the directory:
+The client is `editors/nvim/` **inside** the repository, not the repository root, so whatever puts
+it on the runtimepath has to point at that directory. Every recipe below is that one sentence in a
+different dialect, and none of them asks you to clone anything yourself.
+
+### Neovim 0.12, with no plugin manager at all
 
 ```lua
--- lazy.nvim, from a checkout
-{ dir = vim.fn.expand "~/src/sqldex/editors/nvim" }
+vim.pack.add { { src = "https://github.com/sdvallejo/sqldex" } }
+vim.opt.rtp:append(vim.fn.stdpath "data" .. "/site/pack/core/opt/sqldex/editors/nvim")
+vim.cmd.runtime "plugin/sqldex.lua"
+```
 
--- or by hand, anywhere in your config
+`vim.pack` puts the repository root on the runtimepath, where there is nothing Neovim wants; the
+second line adds the part where there is, and the third sources the file that a manager pointed at
+the right directory would have sourced by itself.
+
+### lazy.nvim
+
+lazy.nvim has no spec field for a subdirectory of a repository, so the same two lines go in
+`config`, where the clone's own path arrives as a parameter:
+
+```lua
+{
+  "sdvallejo/sqldex",
+  lazy = false,
+  config = function(plugin)
+    vim.opt.rtp:append(plugin.dir .. "/editors/nvim")
+    vim.cmd.runtime "plugin/sqldex.lua"
+  end,
+}
+```
+
+**`lazy = false` is deliberate, and it costs an autocommand** — that is the whole of what loading
+this does. `ft = { "sql", "mysql" }` works and starts the server just the same, but until the first
+SQL buffer exists nothing is loaded, and `:checkhealth sqldex` answers *No healthcheck found* — the
+command you reach for precisely when no SQL buffer is doing anything.
+
+For working on the client itself, a checkout still goes in directly, and this is the one form that
+needs no `rtp` line, because it names the directory:
+
+```lua
+{ dir = vim.fn.expand "~/src/sqldex/editors/nvim" }
+```
+
+### vim-plug
+
+The only one here that knows about a subdirectory on its own, which makes it the shortest:
+
+```vim
+Plug 'sdvallejo/sqldex', { 'rtp': 'editors/nvim' }
+```
+
+### By hand, from a checkout
+
+```lua
 vim.opt.runtimepath:append(vim.fn.expand "~/src/sqldex/editors/nvim")
 ```
 
-There is nothing to call afterwards. A `plugin/` file enables the server, and enabling costs an
-autocommand: it starts when a buffer is SQL *and* sits in a schema project, and never otherwise.
+Nothing follows this one: Neovim sources `plugin/` files from the runtimepath after your config, so
+the append is enough.
+
+Whichever one you use, that is all the wiring there is. The `plugin/` file those recipes reach for
+does exactly one thing — it enables the server — and enabling costs an autocommand: it starts when a
+buffer is SQL *and* sits in a schema project, and never otherwise. Nothing else has to be called,
+and there is no `setup()`.
 
 If you would rather not install anything, the whole client is four lines in your own config:
 
