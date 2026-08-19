@@ -1,0 +1,4 @@
+{
+  "sources": [{ "glob": "*.sql", "kind": "auto" }],
+  "schemas": ["shop"]
+}
