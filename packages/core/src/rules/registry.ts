@@ -27,6 +27,7 @@ import type { Diagnostic, DiagnosticTag, Severity } from "../diagnostics.ts";
 import type { Dialect } from "../dialects/dialect.ts";
 import type { Locals } from "../model/locals.ts";
 import type { QueryScope, Relation } from "../model/query.ts";
+import type { Routine } from "../model/routine.ts";
 import type { Table } from "../model/table.ts";
 import { collect } from "../analysis/locals.ts";
 import { relation as resolveRelation } from "../analysis/resolve.ts";
@@ -90,6 +91,27 @@ function usesDynamicSql(src: string): boolean {
 /** Is a full DDL parse of this file worth it? Mirrors the catalog's own prefilter. */
 function holdsDDL(src: string): boolean {
   return /(create[ \t\n\v\f\r]+(temporary[ \t\n\v\f\r]+)?table)|trigger/i.test(src);
+}
+
+/** The half of `holdsDDL` worth parsing the DDL for when only the triggers are wanted. */
+const HOLDS_TRIGGER = /trigger/i;
+
+/**
+ * A body a statement can sit inside, and the locals that body gives it.
+ *
+ * The file's own locals are not those of anything in particular: `collect` reads the whole file, so
+ * its `routine` is whichever one comes last and its `triggerTable` is whichever trigger comes last.
+ * A statement has to be resolved against the body it is actually in, or a second routine in the file
+ * makes the first one's parameters look like columns nothing declares.
+ */
+interface BodyScope {
+  body: TokenRange;
+  locals: Locals;
+}
+
+/** A `BodyScope` that is a routine, which the routine traversal also needs the routine itself for. */
+interface RoutineScope extends BodyScope {
+  routine: Routine;
 }
 
 /**
@@ -388,6 +410,64 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   };
   let builtStatements: TokenRange[] | undefined;
 
+  // The same, for the DDL: the table traversal, the trigger traversal and the body scopes below all
+  // want it, and a file is parsed for it at most once.
+  let builtDDL: ReturnType<typeof parseDDL> | undefined;
+  const ddlOf = (): ReturnType<typeof parseDDL> => (builtDDL ??= parseDDL(dialect, src, lexed));
+
+  // One routine's body, with the locals that belong to it and nothing else.
+  let builtRoutineScopes: RoutineScope[] | undefined;
+  const routineScopes = (): RoutineScope[] => {
+    if (builtRoutineScopes) return builtRoutineScopes;
+    const found = parsedRoutines.routines;
+    const out: RoutineScope[] = [];
+    // One routine's body runs from the end of its header to the start of the next one's name, which
+    // is the bound `collect` already uses to decide which routine an offset belongs to.
+    for (const [at, routine] of found.entries()) {
+      const endOffset = found[at + 1]?.nameSpan.s ?? src.length;
+      let from = 0;
+      while (from < tokens.length && tokens[from]!.s < routine.headerEnd) from++;
+      let to = from;
+      while (to + 1 < tokens.length && tokens[to + 1]!.s < endOffset) to++;
+      if (to < from) continue;
+      out.push({
+        routine,
+        body: { from, to },
+        // This routine's own locals: its parameters, and the declarations inside its body — not the
+        // ones a routine above it in the same file made.
+        locals: collect(dialect, src, tokens, endOffset, found, routine.headerEnd),
+      });
+    }
+    return (builtRoutineScopes = out);
+  };
+
+  // A trigger's body is the other place a statement sits inside something that gives it names —
+  // `NEW` and `OLD` — and a file with two triggers has two different tables behind them.
+  let builtTriggerScopes: BodyScope[] | undefined;
+  const triggerScopes = (): BodyScope[] => {
+    if (builtTriggerScopes) return builtTriggerScopes;
+    const out: BodyScope[] = [];
+    if (!HOLDS_TRIGGER.test(src)) return (builtTriggerScopes = out);
+    for (const trigger of ddlOf().triggers) {
+      const first = tokens[trigger.body.from];
+      const last = tokens[trigger.body.to];
+      if (!first || !last) continue;
+      out.push({
+        body: trigger.body,
+        // No routines are passed, because a trigger has no parameters, and `triggerTable` is taken
+        // from the parsed trigger rather than re-derived: the walk starts inside the body, past the
+        // `ON` clause it would have had to read.
+        locals: { ...collect(dialect, src, tokens, last.e, [], first.s), triggerTable: trigger.table },
+      });
+    }
+    return (builtTriggerScopes = out);
+  };
+
+  // Both kinds together, in source order, which is the order the statements come in.
+  let builtBodies: BodyScope[] | undefined;
+  const bodies = (): BodyScope[] =>
+    (builtBodies ??= [...routineScopes(), ...triggerScopes()].sort((a, b) => a.body.from - b.body.from));
+
   if (documentRules.length > 0) {
     const ctx: DocumentContext = {
       ...base,
@@ -402,21 +482,7 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   }
 
   if (routineRules.length > 0 && parsedRoutines.routines.length > 0) {
-    // One routine's body runs from the end of its header to the start of the next one's name, which
-    // is the bound `collect` already uses to decide which routine an offset belongs to.
-    const found = parsedRoutines.routines;
-    for (const [at, routine] of found.entries()) {
-      const endOffset = found[at + 1]?.nameSpan.s ?? src.length;
-      let from = 0;
-      while (from < tokens.length && tokens[from]!.s < routine.headerEnd) from++;
-      let to = from;
-      while (to + 1 < tokens.length && tokens[to + 1]!.s < endOffset) to++;
-      if (to < from) continue;
-
-      const body = { from, to };
-      // This routine's own locals: its parameters, and the declarations inside its body — not the
-      // ones a routine above it in the same file made.
-      const own = collect(dialect, src, tokens, endOffset, found, routine.headerEnd);
+    for (const { routine, body, locals: own } of routineScopes()) {
       let bodyStatements: TokenRange[] | undefined;
       const ctx: RoutineContext = {
         ...base,
@@ -434,7 +500,7 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   }
 
   if ((tableRules.length > 0 || triggerRules.length > 0) && holdsDDL(src)) {
-    const ddl = parseDDL(dialect, src, lexed);
+    const ddl = ddlOf();
     if (tableRules.length > 0) {
       for (const table of ddl.tables) {
         // A temporary table is not part of the schema: it has no audit twin, no place in the
@@ -457,8 +523,21 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
   }
 
   if (statementRules.length > 0) {
+    const bodyScopes = bodies();
+    // Both lists are in source order and the bodies do not overlap, so one pointer walks them
+    // together instead of searching the bodies again for every statement.
+    let atBody = 0;
     for (const statement of statements(tokens)) {
       if (kwAny(tokens[statement.from], DDL_STARTERS)) continue;
+
+      while (atBody < bodyScopes.length && bodyScopes[atBody]!.body.to < statement.from) atBody++;
+      const enclosing = bodyScopes[atBody];
+      // The file's locals are right only for a statement that is in no body at all: a script, or the
+      // `INSERT`s of a `carga-valores/` file. Inside one, they are that body's.
+      const scope =
+        enclosing && statement.from >= enclosing.body.from && statement.to <= enclosing.body.to
+          ? enclosing.locals
+          : locals;
 
       const rels = statementRelations(dialect, tokens, statement.from, statement.to);
       const byAlias = new Map<string, Relation>();
@@ -473,7 +552,7 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
 
       const resolved: Table[] = [];
       for (const rel of rels) {
-        const hit = resolveRelation({ dialect, catalog, schemas }, locals, rel);
+        const hit = resolveRelation({ dialect, catalog, schemas }, scope, rel);
         if (hit?.table) resolved.push(hit.table);
       }
 
@@ -500,6 +579,7 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
 
       const ctx: StatementContext = {
         ...base,
+        locals: scope,
         statement,
         relations: rels,
         byAlias,

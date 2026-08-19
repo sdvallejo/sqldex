@@ -218,6 +218,21 @@ test("NEW and OLD are checked against the trigger's own table", () => {
   assert.deepEqual(run(unknownColumn, src), ["orders has no column totl"]);
 });
 
+test("with two triggers in the file, each one's NEW is its own table's", () => {
+  // A statement is resolved against the body it is in. Read against the file, `NEW` is whichever
+  // trigger comes last, so the first one's columns get checked against the second one's table —
+  // which is worse than an unknown name, because it is a confident answer about the wrong table.
+  const src = [
+    "CREATE TRIGGER orders_bi BEFORE INSERT ON orders FOR EACH ROW BEGIN",
+    "  SET @x = NEW.total;",
+    "END;",
+    "CREATE TRIGGER customers_bi BEFORE INSERT ON customers FOR EACH ROW BEGIN",
+    "  SET @y = NEW.label;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
 // ----------------------------------------------------------- CALL: name, arity
 
 test("a CALL to a routine nothing defines is reported", () => {
@@ -393,6 +408,35 @@ test("a WITH name is defined by the statement", () => {
 
 test("a reserved word is not a column, unless it was written delimited", () => {
   assert.deepEqual(run(unqualifiedColumn, "SELECT order_id FROM orders WHERE status IS NOT NULL;"), []);
+});
+
+test("a parameter of the routine the statement is in is not a column", () => {
+  assert.deepEqual(run(unqualifiedColumn, body("  SELECT order_id FROM orders WHERE order_id = p_id;")), []);
+});
+
+test("and it is that routine's parameter, not the last routine's in the file", () => {
+  // Every routine but the last used to lose its parameters, because the locals were collected for
+  // the file at once and `collect` reads the routine at an offset as the last one before it. In a
+  // `sp/` repo of one procedure per file nothing showed; a file holding two reported each of the
+  // first one's parameters as a column nothing declares.
+  const src = [
+    "CREATE PROCEDURE sp_first(IN p_first int)",
+    "BEGIN",
+    "  SELECT order_id FROM orders WHERE order_id = p_first;",
+    "END;",
+    "CREATE PROCEDURE sp_second(IN p_second int)",
+    "BEGIN",
+    "  SELECT order_id FROM orders WHERE order_id = p_second;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
+test("a statement outside every body still has the file's locals", () => {
+  // A `carga-valores/` file is statements and no routine at all, and the temporary table it reads
+  // may be created further down: the file-wide view is the right one where there is no body.
+  const src = ["SELECT * FROM tmp_here;", "CREATE TEMPORARY TABLE tmp_here (id int);"].join("\n");
+  assert.deepEqual(run(unqualifiedColumn, src), []);
 });
 
 // ------------------------------------------------------- LEFT JOIN arithmetic
