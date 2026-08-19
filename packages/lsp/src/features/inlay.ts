@@ -15,15 +15,23 @@
  * `orders`, saying so twenty more times in the same statement is clutter, and at 0.14 per line it is
  * as dense as the type hints while carrying nothing new.
  *
+ * A third kind names the arguments of a `CALL`, which is the one place where the information is not
+ * in the file at all: the signature is somewhere else in the repo. It is sparse for the same reason
+ * the others are — an argument that already carries the parameter's name is left alone.
+ *
  * Inlay hints are off by default in most clients, so this is opt-in by construction; each kind can
  * still be turned off on its own.
  */
 
 import {
   collect,
+  kw,
+  matchingParen,
   punct,
+  qualifiedName,
   relation as resolveRelation,
   relations,
+  splitCommas,
   statements,
   type Locals,
   type Resolved,
@@ -78,10 +86,77 @@ function standingsIn(
   return out;
 }
 
+/**
+ * The parameter names of a `CALL`, drawn in front of the arguments.
+ *
+ * `CALL ssp_anular_operacion(1, 4, @e)` says nothing about what those numbers are, and the signature
+ * that would say it is in another file. This is the one hint whose kind really is `Parameter`.
+ *
+ * Three decisions, each one about not saying what the line already says:
+ *
+ *   - **An argument written with the parameter's own name gets none.** `CALL sp(pIdOrden)` needs no
+ *     label reading `pIdOrden:`, the same way `FROM customers` needs no note that `customers` is
+ *     `customers`. This is what keeps a procedure that forwards its parameters — the common shape in
+ *     a repo of procedures calling procedures — from being covered in hints that repeat the code.
+ *   - **`OUT` and `INOUT` are named as such**, because that is the fact a reader cannot see and most
+ *     needs: the argument is *written*, not read. `routine/out-argument-not-variable` exists for how
+ *     easy that is to get wrong.
+ *   - **Only the positions the signature has.** A `CALL` with too many arguments has no name for the
+ *     extra ones, and `routine/call-arity` has already said the useful thing about it; the prefix
+ *     that does line up is still worth labelling.
+ */
+function callHints(
+  workspace: Workspace,
+  analysed: Analysed,
+  tokens: readonly Token[],
+  statement: TokenRange,
+  from: number,
+  to: number,
+  out: InlayHint[],
+): void {
+  for (let i = statement.from; i <= statement.to; i++) {
+    if (!kw(tokens[i], "CALL")) continue;
+
+    const { name, nextIdx } = qualifiedName(tokens, i + 1);
+    if (!name || !punct(tokens[nextIdx], "(")) continue;
+
+    const routine = workspace.catalog.routine(name);
+    if (!routine || routine.params.length === 0) continue;
+
+    const close = matchingParen(tokens, nextIdx);
+    if (close === -1 || close === nextIdx + 1) continue;
+
+    const args = splitCommas(tokens, nextIdx + 1, close - 1);
+    for (const [at, arg] of args.entries()) {
+      const param = routine.params[at];
+      const first = tokens[arg.from];
+      if (!param || !first) break;
+      if (first.s < from || first.s > to) continue;
+
+      // The argument is the parameter itself, spelled the same: the label would be the code again.
+      const alone = arg.to === arg.from && first.t === "id";
+      if (
+        alone &&
+        workspace.dialect.foldIdentifier(first.v, first.q ?? false) ===
+          workspace.dialect.foldIdentifier(param.name, param.quoted)
+      ) {
+        continue;
+      }
+
+      out.push({
+        position: analysed.document.positionAt(first.s),
+        label: `${param.mode === "IN" ? "" : `${param.mode} `}${param.name}:`,
+        kind: InlayHintKind.Parameter,
+        paddingRight: true,
+      });
+    }
+  }
+}
+
 /** The hints for a document, within the requested range. */
 export function inlayHints(workspace: Workspace, analysed: Analysed, range?: Range): InlayHint[] {
   const settings = workspace.config.inlay_hints;
-  if (!settings.column_types && !settings.alias_tables) return [];
+  if (!settings.column_types && !settings.alias_tables && !settings.call_parameters) return [];
 
   const text = analysed.text;
   const tokens = analysed.lexed.tokens;
@@ -94,6 +169,8 @@ export function inlayHints(workspace: Workspace, analysed: Analysed, range?: Ran
 
   const out: InlayHint[] = [];
   for (const statement of statements(tokens)) {
+    if (settings.call_parameters) callHints(workspace, analysed, tokens, statement, from, to, out);
+
     let standings: Map<string, Standing> | undefined;
     const announced = new Set<string>();
 

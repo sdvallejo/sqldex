@@ -59,6 +59,7 @@ export interface DiagnosticsConfig {
 export interface InlayHintsConfig {
   column_types: boolean;
   alias_tables: boolean;
+  call_parameters: boolean;
 }
 
 export interface Config {
@@ -117,6 +118,9 @@ export const defaults: Config = {
     column_types: true,
     // `o` gains `shipments`, but only the **first** time it appears in a statement.
     alias_tables: true,
+    // `CALL sp_settle(1, @t)` gains `pIdOrden:` and `OUT pTotal:`. Only where the argument does not
+    // already say it: an argument written with the parameter's own name needs no label.
+    call_parameters: true,
   },
   dialect: "mysql",
   root_markers: [".sqldex.json", "tablas", "tables", ".git"],
@@ -223,7 +227,7 @@ function readProjectFile(root: string, onWarning?: (message: string) => void): R
 const KNOWN: ReadonlyMap<string, readonly string[]> = new Map([
   ["", ["sources", "targets", "schemas", "exclude", "diagnostics", "inlay_hints", "dialect"]],
   ["diagnostics", ["enabled", "groups", "rules"]],
-  ["inlay_hints", ["column_types", "alias_tables"]],
+  ["inlay_hints", ["column_types", "alias_tables", "call_parameters"]],
 ]);
 
 /**

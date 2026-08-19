@@ -200,17 +200,38 @@ test("a range is honoured, so a long file costs only what is on screen", () => {
   );
 });
 
+test("a CALL's arguments are labelled with the parameters they fill", () => {
+  // The signature is in another file: `(1, @t)` is the one place the line cannot explain itself.
+  assert.deepEqual(hints("CALL sp_customer_report(1, @t);"), ["pCustomerId:@0:24", "OUT pTotal:@0:27"]);
+});
+
+test("an argument already written with the parameter's name earns no label", () => {
+  // The same principle as an alias that is its table's own name: the label would be the code again.
+  const src = "CREATE PROCEDURE sp_fwd(IN pCustomerId int, OUT pTotal decimal(10,2))\nBEGIN\n  CALL sp_customer_report(pCustomerId, pTotal);\nEND;";
+  assert.deepEqual(hints(src), []);
+});
+
+test("only the positions the signature has, and a routine nothing defines gets none", () => {
+  // `routine/call-arity` has already said the useful thing about the third argument.
+  assert.deepEqual(hints("CALL sp_customer_report(1, @t, 3);"), ["pCustomerId:@0:24", "OUT pTotal:@0:27"]);
+  assert.deepEqual(hints("CALL sp_nowhere(1, 2);"), []);
+});
+
 test("each kind can be turned off on its own", () => {
   const settings = shop.config.inlay_hints;
   try {
-    shop.config.inlay_hints = { column_types: false, alias_tables: true };
+    shop.config.inlay_hints = { column_types: false, alias_tables: true, call_parameters: false };
     assert.deepEqual(hints("SELECT o.total FROM orders o;"), ["orders@0:8"]);
 
-    shop.config.inlay_hints = { column_types: true, alias_tables: false };
+    shop.config.inlay_hints = { column_types: true, alias_tables: false, call_parameters: false };
     assert.deepEqual(hints("SELECT o.total FROM orders o;"), [": decimal(10,2)@0:14"]);
 
-    shop.config.inlay_hints = { column_types: false, alias_tables: false };
+    shop.config.inlay_hints = { column_types: false, alias_tables: false, call_parameters: false };
     assert.deepEqual(hints("SELECT o.total FROM orders o;"), []);
+    assert.deepEqual(hints("CALL sp_customer_report(1, @t);"), []);
+
+    shop.config.inlay_hints = { column_types: false, alias_tables: false, call_parameters: true };
+    assert.deepEqual(hints("CALL sp_customer_report(1, @t);"), ["pCustomerId:@0:24", "OUT pTotal:@0:27"]);
   } finally {
     shop.config.inlay_hints = settings;
   }

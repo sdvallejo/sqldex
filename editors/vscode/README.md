@@ -34,7 +34,7 @@ VS Code maps all of it to what you already press:
 | **Outline, and every name in the project** | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>, and <kbd>Ctrl</kbd>+<kbd>T</kbd> |
 | **What a routine calls, and who calls it** | right-click → Peek → Call Hierarchy |
 | **Completion that knows the schema** — the columns of the alias you just typed a dot after, the tables in the project, a routine's parameters | as you type; `o.` opens the list |
-| **Column types and what an alias stands for, inline** | inlay hints, on unless you turned them off globally |
+| **Column types, what an alias stands for, and a `CALL`'s parameter names, inline** | inlay hints, on unless you turned them off globally |
 
 Editing `.sqldex.json` gets completion and validation of its own, from a schema this extension
 contributes: the keys, the five rule groups, the severities, and the shape of a rule id. Rule **ids**

@@ -96,5 +96,5 @@ export type { ParsedRoutines } from "./syntax/fast/routine.ts";
 export { cleanDoc, parseHeader, parseRoutines } from "./syntax/fast/routine.ts";
 export { cteNames, queryScopes, relations, statementBounds, statements } from "./syntax/fast/stmt.ts";
 export type { QualifiedName } from "./syntax/fast/tok.ts";
-export { kw, kwAny, punct, qualifiedName } from "./syntax/fast/tok.ts";
+export { kw, kwAny, matchingParen, punct, qualifiedName, splitCommas } from "./syntax/fast/tok.ts";
 export type { Comment, Lexed, Position, Span, Token, TokenKind, TokenRange } from "./syntax/types.ts";

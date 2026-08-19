@@ -58,7 +58,12 @@
       "additionalProperties": false,
       "properties": {
         "column_types": { "type": "boolean", "description": "o.status gains : char(1).", "default": true },
-        "alias_tables": { "type": "boolean", "description": "o gains shipments, the first time it appears in a statement.", "default": true }
+        "alias_tables": { "type": "boolean", "description": "o gains shipments, the first time it appears in a statement.", "default": true },
+        "call_parameters": {
+          "type": "boolean",
+          "description": "A CALL's arguments gain the parameters they fill, OUT and INOUT named as such.",
+          "default": true
+        }
       }
     },
     "dialect": {
