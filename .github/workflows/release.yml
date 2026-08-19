@@ -9,6 +9,15 @@
 # `id-token: write` is what makes provenance possible: npm signs the artefact against this
 # workflow's identity, so anyone can verify that the tarball on the registry was built here, from
 # this commit, rather than uploaded from somebody's laptop.
+#
+# ## The token here is transitional, and is meant to be deleted
+#
+# npm's Trusted Publishing exchanges this workflow's OIDC identity for a short-lived credential, so
+# no long-lived token has to exist at all — which is what npm now recommends over the token below.
+# It cannot publish a package's **first** version, though: trusted publishing is configured in the
+# settings of a package that already exists (npm/cli#8544). So `0.1.0` goes out with a granular
+# token, and the moment it lands the three packages get trusted publishing configured, the token is
+# revoked, the `NPM_TOKEN` secret is deleted, and the three `env:` blocks below come out with it.
 name: Release
 
 on:
@@ -38,6 +47,10 @@ jobs:
           node-version: "22.18"
           # Without this the token never reaches npm: it is what writes the auth line into .npmrc.
           registry-url: "https://registry.npmjs.org"
+
+      # Node 22.18 ships npm 10, and trusted publishing needs 11.5.1 or newer. Not required for the
+      # token publish below, but this is the step that has to already be here when the token goes.
+      - run: npm install -g npm@latest
 
       - run: npm ci
 
