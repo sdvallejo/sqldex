@@ -2,16 +2,47 @@
   "name": "sqldex",
   "displayName": "sqldex",
   "description": "Static analysis for MySQL schemas that live as .sql files in a repository.",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "publisher": "sqldex",
+  "icon": "icon.png",
   "categories": [
     "Programming Languages",
     "Linters"
   ],
+  "keywords": [
+    "sql",
+    "mysql",
+    "schema",
+    "linter",
+    "language server"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sdvallejo/sqldex.git",
+    "directory": "editors/vscode"
+  },
+  "homepage": "https://github.com/sdvallejo/sqldex/tree/main/editors/vscode#readme",
+  "bugs": {
+    "url": "https://github.com/sdvallejo/sqldex/issues"
+  },
+  "qna": "https://github.com/sdvallejo/sqldex/issues",
   "engines": {
     "vscode": "^1.91.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "sqldex starts a language server over the folder's own files, and a workspace can name the program to start through sqldex.server.path."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "The catalog is built by reading .sql files from disk, so a folder that is not on one has nothing to read."
+    }
   },
   "main": "./extension.js",
   "activationEvents": [
@@ -71,7 +102,8 @@
     "vscode-languageserver": "^10.1.0"
   },
   "scripts": {
+    "vscode:prepublish": "node bundle-server.js",
     "bundle": "node bundle-server.js",
-    "package": "node bundle-server.js && npx --yes @vscode/vsce package --allow-missing-repository"
+    "package": "npx --yes @vscode/vsce package"
   }
 }

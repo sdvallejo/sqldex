@@ -45,6 +45,7 @@ that use it to say something checkable about the queries and procedures written 
 npm install -g sqldex          # the command
 npm install -g @sqldex/lsp     # the language server, for an editor
 npm install @sqldex/core       # the catalog and the rule engine, as a library
+code --install-extension sqldex.sqldex   # VS Code, server included — nothing else to install
 ```
 
 | | |
@@ -54,7 +55,7 @@ npm install @sqldex/core       # the catalog and the rule engine, as a library
 | Lint rules | 38 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
-| Editor clients | one for Neovim and one for VS Code, in `editors/`; neither is on a marketplace, and the VS Code one packages into a `.vsix` that carries the server |
+| Editor clients | one for Neovim and one for VS Code, in `editors/`; the VS Code one is on the Marketplace and carries the server inside the `.vsix`, and `editors/nvim` installs from this repository |
 | Dialects other than MySQL | not planned for the first release; the engine-specific decisions are already behind a `Dialect` interface |
 | `ALTER TABLE` | not parsed |
 

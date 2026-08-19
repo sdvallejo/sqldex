@@ -22,6 +22,25 @@
 # saying out loud: a fork cannot publish with it, because the trust is pinned to `sdvallejo/sqldex`
 # and to this workflow's filename. Renaming this file breaks publishing until npm is told the new
 # name.
+#
+# ## The one credential that is left, and when it dies
+#
+# `VSCE_PAT` is an Azure DevOps personal access token, and it is the exception to everything above:
+# the VS Code Marketplace has no equivalent of trusted publishing. It is scoped to *Marketplace →
+# Manage* over all accessible organizations, which is the least a publish can be given, and it is
+# the only long-lived secret in this repository.
+#
+# It is also **optional**, and the steps that use it are skipped when it is absent. Getting one is
+# no longer free — Azure DevOps requires an active Azure subscription to create a new organization —
+# and the `.vsix` can be uploaded by hand from the publisher management page, which needs nothing
+# but a Microsoft account. Either way the npm half of the release is unaffected.
+#
+# **Global PATs in Azure DevOps are retired on 2026-12-01.** After that date this step stops working
+# and the replacement is Microsoft Entra ID with workload identity federation — `vsce publish
+# --azure-credential`, against a managed identity added to the publisher as a Contributor. That is a
+# migration with a deadline, not a preference, and it is written here rather than in a plan because
+# this is the file that will break.
+#
 # `--access public` is on the command line as well as in each `publishConfig`. The manifest key did
 # not take for the two scoped packages on the first release — they landed restricted, which on the
 # public registry is indistinguishable from not existing — and the flag is the form that is not
@@ -45,6 +64,12 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # A **boolean**, not the token: the `secrets` context is not one of the contexts a step's `if`
+    # can read, so the question "is it set" has to be answered here, where it can. Answering it with
+    # the secret itself would put the token in the environment of every step in the job, and only
+    # one of them has any business with it.
+    env:
+      HAS_VSCE_PAT: ${{ secrets.VSCE_PAT != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,18 +95,21 @@ jobs:
       # Nothing gets published that does not pass, and the tag push may not have run CI at all.
       - run: npm test
 
+      # The VS Code extension is in here too. It is not a workspace and it is not published to npm,
+      # but it carries a copy of the server, so a version of it that disagrees with the packages is
+      # an extension whose engine is not the one its number claims.
       - name: The tag and the manifests have to agree
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           want="${tag#v}"
-          for pkg in core lsp cli; do
-            have=$(node -p "require('./packages/$pkg/package.json').version")
+          for manifest in packages/core packages/lsp packages/cli editors/vscode; do
+            have=$(node -p "require('./$manifest/package.json').version")
             if [ "$have" != "$want" ]; then
-              echo "::error::packages/$pkg is $have but the tag says $want"
+              echo "::error::$manifest is $have but the tag says $want"
               exit 1
             fi
           done
-          echo "all three are $want"
+          echo "all four are $want"
 
       # Core first: the other two declare it as a dependency, and a registry that has the dependent
       # before the dependency is a few minutes of a broken install for anyone quick enough to hit it.
@@ -90,3 +118,33 @@ jobs:
       - run: npm publish -w @sqldex/lsp --access public
 
       - run: npm publish -w sqldex --access public
+
+      # The extension has its own manifest, its own lockfile and its own dependencies, because it is
+      # not a workspace: `vsce` reads `node_modules` to decide what goes inside the `.vsix`, so this
+      # install is not a convenience, it is what makes the package complete.
+      - run: npm ci
+        if: ${{ env.HAS_VSCE_PAT == 'true' }}
+        working-directory: editors/vscode
+
+      # `vscode:prepublish` copies the server into the extension before `vsce` looks at the
+      # directory, which is why there is no bundling step here: an extension packaged without it
+      # installs perfectly and then has no server to start.
+      #
+      # Conditional because the Marketplace half of a release can be done by hand, and getting a PAT
+      # is no longer free: Azure DevOps requires an active Azure subscription to create a new
+      # organization, and a subscription asks for a card to verify identity. Without the secret the
+      # release still happens — npm and all — and the `.vsix` gets uploaded from the publisher page.
+      - name: Publish the VS Code extension
+        if: ${{ env.HAS_VSCE_PAT == 'true' }}
+        working-directory: editors/vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce publish
+
+      # A skipped step is a step nobody notices. This is the difference between "the extension was
+      # not published" and "the extension is on the Marketplace and I have no idea why it is old".
+      - name: Say that the extension was not published
+        if: ${{ env.HAS_VSCE_PAT != 'true' }}
+        run: |
+          echo "::notice::VSCE_PAT is not set, so the extension was not published."
+          echo "::notice::Build it with 'npm run package' in editors/vscode and upload the .vsix at https://marketplace.visualstudio.com/manage"

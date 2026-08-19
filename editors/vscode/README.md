@@ -57,25 +57,36 @@ the project's own `.sqldex.json`, the same file `sqldex check` reads in CI.
 
 ## Installing
 
-There is no marketplace listing, so installing means a file. Build one from a checkout:
+From the Extensions view — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd>, search **sqldex** — or
+
+```sh
+code --install-extension sqldex.sqldex
+```
+
+**It carries the server with it**, which is what makes it worth installing on a machine that has
+never seen this repository — see below. What it does not carry is Node: the machine installing it
+needs **Node 22.18 or newer** on its `PATH`, and the extension says so in a notification rather than
+failing quietly if it finds an older one.
+
+That is also what decides how a **new rule** reaches you. The engine is inside the extension, so a
+version of the engine is a version of the extension: rules arrive when VS Code updates it, which it
+does on its own. The exception is a `sqldex-lsp` you installed yourself — it wins over the bundled
+copy, and then `npm update -g @sqldex/lsp` is what brings the rule and the extension has nothing to
+do with it.
+
+### Without the marketplace
+
+A `.vsix` is a file, and building one from a checkout is two commands:
 
 ```sh
 cd editors/vscode
 npm install
-npm run package      # downloads vsce on demand; leaves sqldex-0.0.0.vsix beside this file
+npm run package      # downloads vsce on demand; leaves sqldex-<version>.vsix beside this file
 ```
 
-That `.vsix` is the thing to hand to somebody else. They install it with
-
-```sh
-code --install-extension sqldex-0.0.0.vsix
-```
-
-or through the Extensions view: the `…` menu, **Install from VSIX**.
-
-**It carries the server with it**, which is what makes it worth handing over — see below. What it
-does not carry is Node: the machine installing it needs **Node 22.18 or newer** on its `PATH`, and
-the extension says so in a notification rather than failing quietly if it finds an older one.
+That file is the thing to hand to somebody else — an air-gapped machine, a fork, a version that was
+never released. They install it with `code --install-extension sqldex-<version>.vsix`, or through the
+Extensions view: the `…` menu, **Install from VSIX**.
 
 To work on the client itself, skip all of that: open this directory in VS Code and press
 <kbd>F5</kbd>, or
