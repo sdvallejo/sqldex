@@ -50,13 +50,20 @@ end
 ---
 --- When neither is there the installed name is returned anyway, so the failure a person sees is the
 --- client's own "command not found" rather than something invented here.
+---
+--- `--conditions=development` is what makes a checkout resolve to its own **sources**. Every package
+--- here points its exports at `dist/`, which is what gets published and which a checkout has no
+--- reason to build; the `development` condition points at `src/` instead, and it is opt-in because
+--- an installed package must never take it. Without the flag the server starts, imports
+--- `@sqldex/core`, and dies on a `dist/index.js` that was never built — in a process the editor
+--- started, so what a person sees is a client that quit, with the reason only in the log.
 local function command()
   if vim.fn.executable("sqldex-lsp") == 1 then return { "sqldex-lsp", "--stdio" } end
 
   local root = checkout()
   local main = vim.fs.joinpath(root, "packages", "lsp", "src", "main.ts")
   if vim.uv.fs_stat(main) and vim.uv.fs_stat(vim.fs.joinpath(root, "node_modules", "vscode-languageserver")) then
-    return { "node", main, "--stdio" }
+    return { "node", "--conditions=development", main, "--stdio" }
   end
 
   return { "sqldex-lsp", "--stdio" }
