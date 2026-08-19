@@ -95,9 +95,17 @@ adopted at the bottom of the engine so no layer has to translate positions on th
 
 ## Requirements
 
-Node 22.18 or newer. The `.ts` files run directly under Node's native type stripping, so there is
-no build step. 22.18 rather than 22.6 because that is where stripping stopped needing a flag, which
-is what lets the installed command be a `.ts` file like everything else.
+Node 22.18 or newer. **Working on this repository needs no build**: the `.ts` files run directly
+under Node's native type stripping, so the tests, the command and the language server all run from
+source in a checkout. 22.18 rather than 22.6 because that is where stripping stopped needing a flag.
+
+**What is published is JavaScript**, and it has to be. Node refuses to strip types from any file
+under `node_modules`, by design and with no flag to allow it, so a package shipping `.ts` sources
+installs perfectly and then dies at its first import. `npm run build` emits `dist/` and `npm publish`
+runs it; the checkout keeps reading `src/` through a `development` export condition, which is what
+`npm test` and the editor clients ask for. The same restriction is why the VS Code extension copies
+the server *beside* its own code rather than into a `node_modules` — see
+[its README](editors/vscode).
 
 **The engine and the command have no runtime dependencies**: installing `sqldex` or depending on
 `@sqldex/core` pulls in nothing at all. The language server is a separate package and does have one,
@@ -328,6 +336,7 @@ and those are two defects with two fixes.
 ```
 npm test                        # 490 tests, hand-written fixtures only
 npm run typecheck
+npm run build                   # emits dist/ for publishing; not needed to develop
 npm run bench <dir>...          # lexer throughput over a directory of SQL
 npm run check:flat <repo>...    # holds down "auto never finds fewer names"
 ```

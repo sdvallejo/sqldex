@@ -1,6 +1,6 @@
 {
   "name": "sqldex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Static analysis for MySQL schemas that live as .sql files in a repository.",
   "license": "MIT",
   "author": "Sergio Vallejo",
@@ -29,19 +29,27 @@
     "lsp"
   ],
   "bin": {
-    "sqldex": "./src/main.ts"
+    "sqldex": "./dist/main.js"
   },
   "exports": {
-    ".": "./src/main.ts"
+    ".": {
+      "types": "./dist/main.d.ts",
+      "development": "./src/main.ts",
+      "default": "./dist/main.js"
+    }
   },
   "files": [
-    "src"
+    "dist"
   ],
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
   "dependencies": {
-    "@sqldex/core": "^0.1.0"
+    "@sqldex/core": "^0.1.1"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build"
   }
 }

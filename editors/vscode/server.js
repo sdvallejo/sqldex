@@ -112,7 +112,11 @@ function sourced(main, why, version) {
     ? undefined
     : `node ${NEEDS_NODE.major}.${NEEDS_NODE.minor} or newer is what runs the server from source; ` +
       `${found ?? "no node"} was found on the PATH.`;
-  return { command: "node", args: [main, "--stdio"], why, problem };
+  // `--conditions=development` is what makes `@sqldex/core` resolve to the checkout's **source**.
+  // Without it the package's `exports` answer with the built `dist/`, which a checkout is not
+  // required to have: the repository is developed and tested without a build, and building only
+  // for an editor to start would be a build step by the back door.
+  return { command: "node", args: ["--conditions=development", main, "--stdio"], why, problem };
 }
 
 module.exports = { NEEDS_NODE, checkoutOf, isRecentEnough, serverCommand };

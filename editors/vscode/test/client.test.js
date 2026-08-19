@@ -89,7 +89,7 @@ test("a checkout runs its own server, but only one whose dependencies are there"
     nodeVersion: () => "v22.18.0",
   });
   assert.equal(withDeps.command, "node");
-  assert.deepEqual(withDeps.args, ["/repo/packages/lsp/src/main.ts", "--stdio"]);
+  assert.deepEqual(withDeps.args, ["--conditions=development", "/repo/packages/lsp/src/main.ts", "--stdio"]);
   assert.equal(withDeps.problem, undefined);
 
   // The protocol library is the one thing the server cannot do without, and a checkout whose
@@ -111,7 +111,7 @@ test("a packaged extension runs the copy it was packaged with", () => {
     nodeVersion: () => "v22.18.0",
   });
   assert.equal(found.command, "node");
-  assert.match(found.args[0], /server\/lsp\/src\/main\.ts$/);
+  assert.match(found.args[1], /server\/lsp\/src\/main\.ts$/);
 });
 
 test("a checkout beats the bundle, because the bundle is a copy taken from it", () => {
@@ -122,7 +122,7 @@ test("a checkout beats the bundle, because the bundle is a copy taken from it", 
     exists: () => true,
     nodeVersion: () => "v22.18.0",
   });
-  assert.deepEqual(found.args, ["/repo/packages/lsp/src/main.ts", "--stdio"]);
+  assert.deepEqual(found.args, ["--conditions=development", "/repo/packages/lsp/src/main.ts", "--stdio"]);
 });
 
 test("a Node too old to read the server's source says so instead of failing quietly", () => {

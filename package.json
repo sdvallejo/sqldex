@@ -10,9 +10,10 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'packages/*/test/**/*.test.ts' 'editors/*/test/**/*.test.js'",
+    "test": "node --conditions=development --test 'packages/*/test/**/*.test.ts' 'editors/*/test/**/*.test.js'",
     "bench": "node tools/bench.ts",
-    "check:flat": "node tools/check-flat.ts"
+    "check:flat": "node tools/check-flat.ts",
+    "build": "npm run build -w @sqldex/core && npm run build -w @sqldex/lsp && npm run build -w sqldex"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

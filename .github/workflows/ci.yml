@@ -42,3 +42,5 @@ jobs:
           node-version: "22.18"
       - run: npm ci
       - run: npm run typecheck
+      # The build is what publishing ships, and it broke once without anything noticing.
+      - run: npm run build

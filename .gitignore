@@ -26,3 +26,4 @@ editors/vscode/server/
 # What an editor or a file manager leaves lying around.
 .DS_Store
 *.swp
+dist/
