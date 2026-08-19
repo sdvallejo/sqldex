@@ -61,47 +61,25 @@ it lives in the project's own `.sqldex.json`, the same file `sqldex check` reads
 
 - **Neovim 0.11 or newer**, for `vim.lsp.enable()`.
 - **Node 22.18 or newer**, which is what the server runs on.
-- **The server**, which is one command:
-
-  ```sh
-  npm install -g @sqldex/lsp
-  ```
-
-  That puts `sqldex-lsp` on your `PATH`, which is the only thing the client looks for. The other
-  published command, `npm install -g sqldex`, is the CLI that runs these same rules over the same
-  project in CI — a different job, and not what Neovim needs.
-
-The client prefers an installed `sqldex-lsp` over anything else, and falls back to running the
-server out of the checkout it sits in — which a plugin manager's clone can become, if you would
-rather install nothing globally. That is [below](#without-installing-the-server-globally).
+- **npm**, which each recipe below runs once when it installs or updates the plugin. That is how the
+  server gets there, and it is why there is nothing to install by hand.
 
 ## Installing
 
-The client is `editors/nvim/` **inside** the repository, not the repository root, so whatever puts
-it on the runtimepath has to point at that directory. Every recipe below is that one sentence in a
-different dialect, and none of them asks you to clone anything yourself.
-
-### Neovim 0.12, with no plugin manager at all
-
-```lua
-vim.pack.add { { src = "https://github.com/sdvallejo/sqldex" } }
-vim.opt.rtp:append(vim.fn.stdpath "data" .. "/site/pack/core/opt/sqldex/editors/nvim")
-vim.cmd.runtime "plugin/sqldex.lua"
-```
-
-`vim.pack` puts the repository root on the runtimepath, where there is nothing Neovim wants; the
-second line adds the part where there is, and the third sources the file that a manager pointed at
-the right directory would have sourced by itself.
+**Two things have to happen, and every recipe below does both.** The client is `editors/nvim/`
+**inside** this repository rather than its root, so whatever puts it on the runtimepath has to point
+at that directory. And the server is the one part of this that is not Lua — it is the same Node
+program that runs in CI — so the clone needs its dependencies: `npm install --omit=dev`, which is
+1.7 MB and about a second. There is no build step, because the client is what tells Node to resolve
+this project to its own sources.
 
 ### lazy.nvim
 
-lazy.nvim has no spec field for a subdirectory of a repository, so the same two lines go in
-`config`, where the clone's own path arrives as a parameter:
-
 ```lua
-{
+return {
   "sdvallejo/sqldex",
   lazy = false,
+  build = "npm install --omit=dev",
   config = function(plugin)
     vim.opt.rtp:append(plugin.dir .. "/editors/nvim")
     vim.cmd.runtime "plugin/sqldex.lua"
@@ -109,44 +87,19 @@ lazy.nvim has no spec field for a subdirectory of a repository, so the same two 
 }
 ```
 
+lazy.nvim has no spec field for a subdirectory of a repository, which is why the runtimepath line is
+in `config`, where the clone's own path arrives as a parameter. `build` runs in that clone, and
+`vim.cmd.runtime` sources the file a manager pointed at the right directory would have sourced by
+itself.
+
 **`lazy = false` is deliberate, and it costs an autocommand** — that is the whole of what loading
 this does. `ft = { "sql", "mysql" }` works and starts the server just the same, but until the first
 SQL buffer exists nothing is loaded, and `:checkhealth sqldex` answers *No healthcheck found* — the
 command you reach for precisely when no SQL buffer is doing anything.
 
-For working on the client itself, a checkout still goes in directly, and this is the one form that
-needs no `rtp` line, because it names the directory:
+### Neovim 0.12, with no plugin manager at all
 
 ```lua
-{ dir = vim.fn.expand "~/src/sqldex/editors/nvim" }
-```
-
-### vim-plug
-
-The only one here that knows about a subdirectory on its own, which makes it the shortest:
-
-```vim
-Plug 'sdvallejo/sqldex', { 'rtp': 'editors/nvim' }
-```
-
-### Without installing the server globally
-
-The server is the one part of this that is not Lua, and it does not have to live on your `PATH`. The
-client falls back to the checkout it belongs to, and a clone becomes one the moment its dependencies
-are there — which is a hook every manager above already has:
-
-```lua
--- lazy.nvim, added to the spec
-build = "npm install --omit=dev",
-```
-
-```vim
-" vim-plug
-Plug 'sdvallejo/sqldex', { 'rtp': 'editors/nvim', 'do': 'npm install --omit=dev' }
-```
-
-```lua
--- vim.pack has no build field, so the hook is an autocommand. Before vim.pack.add.
 vim.api.nvim_create_autocmd("PackChanged", {
   callback = function(ev)
     if ev.data.spec.name == "sqldex" and ev.data.kind ~= "delete" then
@@ -154,33 +107,58 @@ vim.api.nvim_create_autocmd("PackChanged", {
     end
   end,
 })
+
+vim.pack.add { { src = "https://github.com/sdvallejo/sqldex" } }
+vim.opt.rtp:append(vim.fn.stdpath "data" .. "/site/pack/core/opt/sqldex/editors/nvim")
+vim.cmd.runtime "plugin/sqldex.lua"
 ```
 
-`--omit=dev` is the whole point of the line: what the server actually needs is the protocol library,
-which is 1.7 MB and a second. Everything else in this repository's `devDependencies` is for building
-and testing it, and none of it runs here — there is **no build step**, because the client tells Node
-to resolve this project to its own sources.
+`vim.pack` has no build field, so the dependencies go in a `PackChanged` autocommand, which has to
+be registered *before* `vim.pack.add` to catch the install it triggers. The rest is the same two
+lines: `vim.pack` puts the repository root on the runtimepath, where there is nothing Neovim wants,
+and the append adds the part where there is.
 
-What you give up is what an installed package gives you: it is built JavaScript, self-contained, and
-does not re-run `npm` every time the plugin updates. That is why `npm install -g @sqldex/lsp` is
-still the shorter answer, and this one is for people who would rather their editor own everything it
-uses.
+### vim-plug
 
-### By hand, from a checkout
+The only one here that knows about a subdirectory on its own, which makes it the shortest:
+
+```vim
+Plug 'sdvallejo/sqldex', { 'rtp': 'editors/nvim', 'do': 'npm install --omit=dev' }
+```
+
+### From a checkout you already have
 
 ```lua
+-- lazy.nvim, which needs no runtimepath line here, because this names the directory
+{ dir = vim.fn.expand "~/src/sqldex/editors/nvim" }
+
+-- or by hand, anywhere in your config
 vim.opt.runtimepath:append(vim.fn.expand "~/src/sqldex/editors/nvim")
 ```
 
-Nothing follows this one: Neovim sources `plugin/` files from the runtimepath after your config, so
-the append is enough.
+Nothing follows the second one: Neovim sources `plugin/` files from the runtimepath after your
+config, so the append is enough. Both assume the checkout has its dependencies — `npm install` in it
+— which a checkout you work in already does.
+
+### If you would rather install the server
+
+```sh
+npm install -g @sqldex/lsp
+```
+
+The client prefers an installed `sqldex-lsp` over the clone it sits in, so this makes the
+`npm install --omit=dev` above unnecessary — drop the `build`, the `do`, or the autocommand. What
+you gain is a server that is built JavaScript, self-contained, and does not re-run `npm` every time
+the plugin updates; what you give up is having your editor own everything it uses. The other
+published command, `npm install -g sqldex`, is the CLI that runs these same rules over the same
+project in CI — a different job, and not what Neovim needs.
 
 Whichever one you use, that is all the wiring there is. The `plugin/` file those recipes reach for
 does exactly one thing — it enables the server — and enabling costs an autocommand: it starts when a
 buffer is SQL *and* sits in a schema project, and never otherwise. Nothing else has to be called,
 and there is no `setup()`.
 
-If you would rather not install anything, the whole client is four lines in your own config:
+If you would rather install nothing at all, the whole client is four lines in your own config:
 
 ```lua
 vim.lsp.config("sqldex", {
@@ -192,7 +170,8 @@ vim.lsp.enable "sqldex"
 ```
 
 What you give up by doing that is the part of `lsp/sqldex.lua` that is a decision rather than a
-value: which directories declare a project, and the file watching described below.
+value: which directories declare a project, the fallback that runs a checkout's own server, and the
+file watching described below.
 
 ## Why it asks to watch files
 
