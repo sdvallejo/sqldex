@@ -6,18 +6,22 @@
 # manifests, because a tag that says one thing while the tarball says another is a release nobody
 # can reason about afterwards.
 #
-# `id-token: write` is what makes provenance possible: npm signs the artefact against this
-# workflow's identity, so anyone can verify that the tarball on the registry was built here, from
-# this commit, rather than uploaded from somebody's laptop.
+# `id-token: write` is what this workflow authenticates with, and it does two jobs at once. It is
+# what makes provenance possible — npm signs the artefact against this workflow's identity, so
+# anyone can verify that the tarball on the registry was built here, from this commit, rather than
+# uploaded from somebody's laptop. And since the three packages have Trusted Publishing configured
+# against this repository and this file, it is also the credential: npm exchanges the OIDC identity
+# for a short-lived one at publish time.
 #
-# ## The token here is transitional, and is meant to be deleted
+# ## There is no token here, and that is the point
 #
-# npm's Trusted Publishing exchanges this workflow's OIDC identity for a short-lived credential, so
-# no long-lived token has to exist at all — which is what npm now recommends over the token below.
-# It cannot publish a package's **first** version, though: trusted publishing is configured in the
-# settings of a package that already exists (npm/cli#8544). So `0.1.0` goes out with a granular
-# token, and the moment it lands the three packages get trusted publishing configured, the token is
-# revoked, the `NPM_TOKEN` secret is deleted, and the three `env:` blocks below come out with it.
+# `0.1.0` went out with a granular token, because trusted publishing cannot publish a package's
+# **first** version — it is configured in the settings of a package that already exists
+# (npm/cli#8544). That is no longer true of these three, so the token was revoked and the
+# `NPM_TOKEN` secret deleted. **Nothing about this file is a secret any more**, which is worth
+# saying out loud: a fork cannot publish with it, because the trust is pinned to `sdvallejo/sqldex`
+# and to this workflow's filename. Renaming this file breaks publishing until npm is told the new
+# name.
 # `--access public` is on the command line as well as in each `publishConfig`. The manifest key did
 # not take for the two scoped packages on the first release — they landed restricted, which on the
 # public registry is indistinguishable from not existing — and the flag is the form that is not
@@ -52,8 +56,8 @@ jobs:
           # Without this the token never reaches npm: it is what writes the auth line into .npmrc.
           registry-url: "https://registry.npmjs.org"
 
-      # Node 22.18 ships npm 10, and trusted publishing needs 11.5.1 or newer. Not required for the
-      # token publish below, but this is the step that has to already be here when the token goes.
+      # Node 22.18 ships npm 10, and trusted publishing needs 11.5.1 or newer — so this step is now
+      # what makes the publish possible at all, not a preparation for it.
       #
       # Pinned to the 11 line rather than `@latest`, which is how this failed the first time: npm 12
       # requires `^22.22.2 || ^24.15.0 || >=26.0.0`, and this job deliberately runs the **floor**
@@ -82,13 +86,7 @@ jobs:
       # Core first: the other two declare it as a dependency, and a registry that has the dependent
       # before the dependency is a few minutes of a broken install for anyone quick enough to hit it.
       - run: npm publish -w @sqldex/core --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - run: npm publish -w @sqldex/lsp --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - run: npm publish -w sqldex --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
