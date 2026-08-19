@@ -212,7 +212,8 @@ function applyConstraint(
 
     if (punct(tokens[j], "(")) {
       const list = columnList(tokens, j);
-      table.indexes.push({ name: indexName, columns: list.names, columnSpans: list.spans, unique });
+      const span = list.closeIdx === -1 ? undefined : { s: tokens[i]!.s, e: tokens[list.closeIdx]!.e };
+      table.indexes.push({ name: indexName, columns: list.names, columnSpans: list.spans, unique, span });
       mark(list.names, list.quoted, unique ? "UNI" : "MUL");
     }
   }

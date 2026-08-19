@@ -126,9 +126,9 @@ function capabilities(): InitializeResult["capabilities"] {
     documentSymbolProvider: true,
     workspaceSymbolProvider: true,
     inlayHintProvider: true,
-    // The kinds are declared so that a client which filters by them — asking only for the quick
-    // fixes it shows in a lightbulb — knows there are none here to ask for.
-    codeActionProvider: { codeActionKinds: [CodeActionKind.RefactorRewrite] },
+    // The kinds are declared so that a client which filters by them knows what is here to ask for:
+    // the generative rewrites, cursor-triggered, and the quick fixes anchored to a diagnostic.
+    codeActionProvider: { codeActionKinds: [CodeActionKind.RefactorRewrite, CodeActionKind.QuickFix] },
     referencesProvider: true,
     // `prepareProvider` is what stops the client from opening a rename box over a keyword or a
     // number. Without it every position in the file looks renameable until the edit comes back
@@ -324,10 +324,12 @@ export function createServer(connection: Connection): void {
   });
 
   connection.onCodeAction((params): CodeAction[] => {
-    // The client sends a selection, and what the actions are about is where it starts. Reading the
-    // end instead would make selecting a whole line offer the actions of whatever follows it.
+    // The client sends a selection, and what the cursor-triggered actions are about is where it
+    // starts. Reading the end instead would make selecting a whole line offer the actions of
+    // whatever follows it. The quick fixes are not about the cursor at all — the client already
+    // narrowed `context.diagnostics` to the ones overlapping the selection.
     const here = positioned({ textDocument: params.textDocument, position: params.range.start });
-    return here ? codeActions(here) : [];
+    return here ? codeActions(here, params.context.diagnostics) : [];
   });
 
   connection.onReferences((params): Location[] | undefined => {

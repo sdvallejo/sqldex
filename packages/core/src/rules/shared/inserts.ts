@@ -9,7 +9,6 @@
 import type { Table } from "../../model/table.ts";
 import { columnList, kw, kwAny, punct, qualifiedName } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
-import type { StatementContext } from "../rule.ts";
 
 /** Modifiers allowed between the verb and the table name. */
 const INSERT_MODIFIERS: ReadonlySet<string> = new Set([
@@ -28,7 +27,14 @@ export interface InsertTarget {
   list?: { names: string[]; from: number; to: number };
 }
 
-export function insertTarget(ctx: StatementContext, insertIdx: number): InsertTarget | undefined {
+/** The two things `insertTarget` reads — narrower than `StatementContext` so a caller outside the
+ * engine, with no scope or relations to hand, can still call it. */
+export interface InsertLookup {
+  tokens: readonly Token[];
+  catalog: { table(name: string | undefined): Table | undefined };
+}
+
+export function insertTarget(ctx: InsertLookup, insertIdx: number): InsertTarget | undefined {
   const tokens: readonly Token[] = ctx.tokens;
   let i = insertIdx + 1;
   while (kwAny(tokens[i], INSERT_MODIFIERS)) i++;

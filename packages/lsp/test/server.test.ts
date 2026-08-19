@@ -229,9 +229,9 @@ test("initialize promises exactly what the server can do", async () => {
   assert.equal(capabilities.documentSymbolProvider, true);
   assert.equal(capabilities.workspaceSymbolProvider, true);
   assert.equal(capabilities.inlayHintProvider, true);
-  // Declared so that a client filtering by kind — asking only for the quick fixes it shows in a
-  // lightbulb — knows there are none here to ask for.
-  assert.deepEqual(capabilities.codeActionProvider, { codeActionKinds: ["refactor.rewrite"] });
+  // Declared so that a client filtering by kind knows what is here to ask for: the generative
+  // rewrites, cursor-triggered, and the quick fixes anchored to a diagnostic.
+  assert.deepEqual(capabilities.codeActionProvider, { codeActionKinds: ["refactor.rewrite", "quickfix"] });
 
   assert.equal(capabilities.referencesProvider, true);
   assert.equal(capabilities.callHierarchyProvider, true);

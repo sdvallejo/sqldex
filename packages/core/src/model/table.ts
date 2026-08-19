@@ -60,6 +60,12 @@ export interface Index {
   columns: string[];
   columnSpans: Span[];
   unique: boolean;
+  /**
+   * The whole clause, `UNIQUE`/`KEY`/`INDEX` through the closing parenthesis — not just the column
+   * list `columnSpans` covers. What a code action needs to delete the index cleanly; absent rather
+   * than guessed at when a caller builds an `Index` by hand.
+   */
+  span?: Span;
 }
 
 export interface ForeignKey {

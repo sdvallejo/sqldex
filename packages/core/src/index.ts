@@ -87,6 +87,9 @@ export type {
 export type { CheckOptions } from "./rules/registry.ts";
 export { check, Registry } from "./rules/registry.ts";
 export { allRules, documentRules, routineRules, schemaRules, statementRules } from "./rules/index.ts";
+export { arity } from "./rules/routine/call-arity.ts";
+export type { InsertLookup, InsertTarget } from "./rules/shared/inserts.ts";
+export { insertTarget } from "./rules/shared/inserts.ts";
 export type { Analysis, Context, ContextKind, Cursor } from "./syntax/fast/cursor.ts";
 export { analyze, classify, locateCursor } from "./syntax/fast/cursor.ts";
 export type { ParsedDDL } from "./syntax/fast/ddl.ts";
