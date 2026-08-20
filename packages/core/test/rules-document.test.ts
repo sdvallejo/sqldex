@@ -27,6 +27,7 @@ import {
   ambiguousColumn,
   cursorNeverOpened,
   declareAfterStatement,
+  exclusiveBranchAnd,
   nullableIntoArithmetic,
   nullableVariableInPredicate,
   unusedVariable,
@@ -232,6 +233,290 @@ test("passing it to an IN parameter is not a write", () => {
   assert.deepEqual(run(variableNeverAssigned, src), [
     "v_got is never assigned, so this reads NULL",
   ]);
+});
+
+// ------------------------------------------------- exclusive-branch AND
+
+test("two variables set in different arms of one IF, ANDed together, is reported", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), [
+    "v1 and v2 are set in different branches of the same IF — at most one is ever non-NULL, so this AND can never be true",
+  ]);
+});
+
+test("a write to either variable between the IF and the check is the fix, and stays quiet", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  SET v1 = 0;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("an IS NOT NULL test on either variable, anywhere in the statement, has handled it", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 AND v1 IS NOT NULL THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("<=> is the fix, not the defect", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 <=> 0 AND v2 <=> 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("an OUT argument of a CALL counts as a branch write", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    CALL sp_returns(1, v1);",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), [
+    "v1 and v2 are set in different branches of the same IF — at most one is ever non-NULL, so this AND can never be true",
+  ]);
+});
+
+test("and an OUT argument counts as the intervening write too", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  CALL sp_returns(1, v1);",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("a write before the IF means the variable never started NULL there, and stays quiet", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  SET v1 = -1;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("an unrelated write after the check does not retroactively excuse it", () => {
+  // The cutoff for "did this start NULL" is the IF's own token index, not "anywhere in the
+  // routine" — a write further down, after the defect already fired, must not silence it.
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+    "  SET v1 = 99;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), [
+    "v1 and v2 are set in different branches of the same IF — at most one is ever non-NULL, so this AND can never be true",
+  ]);
+});
+
+test("three arms: non-adjacent arms are still exclusive", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  DECLARE v3 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSEIF p_order = 2 THEN",
+    "    SET v2 = 1;",
+    "  ELSE",
+    "    SET v3 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v3 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), [
+    "v1 and v3 are set in different branches of the same IF — at most one is ever non-NULL, so this AND can never be true",
+  ]);
+});
+
+test("three arms: a variable written in two of them is not exclusive against a partner in one of the same two", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSEIF p_order = 2 THEN",
+    "    SET v1 = 2;",
+    "    SET v2 = 1;",
+    "  ELSE",
+    "    SET v1 = 3;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), [], "arm 2 (0-based 1) writes both, so they are not disjoint");
+});
+
+test("a variable this IF never touches at all is not a partner, however it got its value", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SELECT 1;",
+    "  END IF;",
+    "  SET v2 = 5;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("NOT around the whole AND makes the opposite claim, and is not this rule's business", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF NOT (v1 = 0 AND v2 = 0) THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("a single-branch IF has no second arm for a partner to be exclusive against", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  END IF;",
+    "  SET v2 = 0;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("a write nested inside a BEGIN block inside an arm still belongs to that arm", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    BEGIN",
+    "      SET v1 = 1;",
+    "    END;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), [
+    "v1 and v2 are set in different branches of the same IF — at most one is ever non-NULL, so this AND can never be true",
+  ]);
+});
+
+test("the IF() function inside a condition is not mistaken for control flow", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF IF(p_order > 0, 1, 0) = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), [
+    "v1 and v2 are set in different branches of the same IF — at most one is ever non-NULL, so this AND can never be true",
+  ]);
+});
+
+test("a multi-token right-hand side is a known limitation, not modelled", () => {
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = p_order + 1 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(exclusiveBranchAnd, src), []);
 });
 
 // ------------------------------------------------- nullable through a variable

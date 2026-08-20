@@ -52,7 +52,7 @@ code --install-extension sqldex.sqldex   # VS Code, server included — nothing 
 |---|---|
 | Catalog and name resolution | works |
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
-| Lint rules | 42 of them, in five groups — see below |
+| Lint rules | 43 of them, in five groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
 | Editor clients | one for Neovim and one for VS Code, in `editors/`; the VS Code one is on the Marketplace and carries the server inside the `.vsix`, and `editors/nvim` installs from this repository |
@@ -242,7 +242,7 @@ Keys are `snake_case` because this is a file format people write by hand, not th
 
 ## Rules
 
-Forty-two of them, in five groups that say what a rule is *about* — which is what someone
+Forty-three of them, in five groups that say what a rule is *about* — which is what someone
 turning rules off is choosing between:
 
 | Group | Rules |
@@ -250,7 +250,7 @@ turning rules off is choosing between:
 | `names` | `unknown-table`, `unknown-alias`, `unknown-column`, `unqualified-column`, `unknown-routine`, `ambiguous-column` |
 | `schema` | `fk-unknown-table`, `fk-unknown-column`, `fk-missing-index`, `index-unknown-column`, `redundant-index`, `divergent-type`, `no-primary-key`, `fk-type-mismatch`, `duplicate-constraint-name` |
 | `query` | `insert-value-count`, `insert-select-column-count`, `insert-unknown-column`, `insert-missing-required-column`, `unfiltered-write`, `join-without-condition`, `collation-mismatch`, `left-join-arithmetic`, `join-multiplies-aggregate`, `nullable-scalar-subquery`, `scalar-subquery-many-rows`, `only-full-group-by`, `aggregate-without-group-by`, `literal-type-mismatch`, `enum-value-not-defined` |
-| `routine` | `call-arity`, `out-argument-not-variable`, `cursor-never-opened`, `unused-variable`, `variable-never-assigned`, `nullable-into-arithmetic`, `nullable-variable-in-predicate`, `select-into-arity`, `select-into-many-rows`, `declare-after-statement` |
+| `routine` | `call-arity`, `out-argument-not-variable`, `cursor-never-opened`, `unused-variable`, `variable-never-assigned`, `exclusive-branch-and`, `nullable-into-arithmetic`, `nullable-variable-in-predicate`, `select-into-arity`, `select-into-many-rows`, `declare-after-statement` |
 | `audit` | `table-out-of-sync`, `trigger-missing-column` |
 
 Each carries its own reasoning in `rule.docs`, including what it deliberately does **not** flag —
@@ -340,7 +340,7 @@ and those are two defects with two fixes.
 ## Development
 
 ```
-npm test                        # 490 tests, hand-written fixtures only
+npm test                        # 572 tests, hand-written fixtures only
 npm run typecheck
 npm run build                   # emits dist/ for publishing; not needed to develop
 npm run bench <dir>...          # lexer throughput over a directory of SQL
