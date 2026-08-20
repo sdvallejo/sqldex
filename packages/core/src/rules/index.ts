@@ -50,6 +50,7 @@ import { selectIntoManyRows } from "./routine/select-into-many-rows.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
 import { declareAfterStatement } from "./routine/declare-after-statement.ts";
+import { exclusiveBranchAnd } from "./routine/exclusive-branch-and.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
 import { nullableVariableInPredicate } from "./routine/nullable-variable-in-predicate.ts";
 import { unusedVariable } from "./routine/unused-variable.ts";
@@ -83,6 +84,7 @@ export const routineRules = [
   declareAfterStatement,
   unusedVariable,
   variableNeverAssigned,
+  exclusiveBranchAnd,
   nullableIntoArithmetic,
   nullableVariableInPredicate,
   cursorNeverOpened,
@@ -155,6 +157,7 @@ export {
   divergentType,
   duplicateConstraintName,
   enumValueNotDefined,
+  exclusiveBranchAnd,
   fkMissingIndex,
   fkUnknownColumn,
   fkTypeMismatch,
