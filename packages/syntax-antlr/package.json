@@ -1,7 +1,7 @@
 {
-  "name": "sqldex",
+  "name": "@sqldex/syntax-antlr",
   "version": "0.5.0",
-  "description": "Static analysis for MySQL schemas that live as .sql files in a repository.",
+  "description": "A real MySQL grammar over sqldex's fast backend: syntax errors the permissive lexer never detects.",
   "license": "MIT",
   "author": "Sergio Vallejo",
   "type": "module",
@@ -12,7 +12,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sdvallejo/sqldex.git",
-    "directory": "packages/cli"
+    "directory": "packages/syntax-antlr"
   },
   "bugs": {
     "url": "https://github.com/sdvallejo/sqldex/issues"
@@ -20,22 +20,17 @@
   "keywords": [
     "mysql",
     "sql",
+    "antlr",
+    "syntax",
+    "parser",
     "lint",
-    "linter",
-    "static-analysis",
-    "schema",
-    "ddl",
-    "language-server",
-    "lsp"
+    "linter"
   ],
-  "bin": {
-    "sqldex": "./dist/main.js"
-  },
   "exports": {
     ".": {
-      "types": "./dist/main.d.ts",
-      "development": "./src/main.ts",
-      "default": "./dist/main.js"
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
     }
   },
   "files": [
@@ -47,7 +42,7 @@
   },
   "dependencies": {
     "@sqldex/core": "^0.5.0",
-    "@sqldex/syntax-antlr": "^0.5.0"
+    "antlr4ng": "^3.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

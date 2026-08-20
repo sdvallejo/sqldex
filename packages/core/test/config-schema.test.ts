@@ -33,7 +33,7 @@ test("the editor's schema offers exactly the keys a project file may set", () =>
 
 test("and the same keys inside the two nested objects", () => {
   const schema = JSON.parse(readFileSync(SCHEMA, "utf8")) as Schema;
-  for (const key of ["diagnostics", "inlay_hints"] as const) {
+  for (const key of ["diagnostics", "inlay_hints", "syntax_check"] as const) {
     assert.deepEqual(
       Object.keys(schema.properties[key]?.properties ?? {}).sort(),
       Object.keys(defaults[key]).sort(),

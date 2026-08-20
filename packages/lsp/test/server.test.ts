@@ -200,6 +200,9 @@ BEGIN
 END;
 `;
 
+/** A missing comma between two columns — a real MySQL syntax error, valid as far as the fast lexer is concerned. */
+const BROKEN_TABLE_TEXT = "CREATE TABLE broken (\n  id int NOT NULL\n  name varchar(80)\n);\n";
+
 // ------------------------------------------------------------------- initialize
 
 test("initialize promises exactly what the server can do", async () => {
@@ -320,6 +323,27 @@ test("an edit moves the finding with it, once typing stops", async () => {
 
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0]!.range.start.line, 3);
+
+  await client.stop();
+});
+
+test("a file that does not parse gets a second push, carrying the syntax error alongside the rest", async () => {
+  // The fast lexer's own findings arrive first, immediately — this is what `combined()` computes
+  // with no syntax errors known yet. The real MySQL grammar runs on its own thread and reports back
+  // later, which is why this is the one case in this file that waits for `nextDiagnostics` twice.
+  const client = await start(project("shop"));
+  const uri = client.uri("tables/broken.sql");
+
+  const first = client.nextDiagnostics(uri);
+  client.open("tables/broken.sql", BROKEN_TABLE_TEXT);
+  await first;
+
+  const diagnostics = await client.nextDiagnostics(uri);
+  const syntaxErrors = diagnostics.filter((d) => d.code === "sqldex:syntax-error");
+  assert.equal(syntaxErrors.length, 1);
+  assert.equal(syntaxErrors[0]!.source, "sqldex");
+  assert.equal(syntaxErrors[0]!.severity, 1);
+  assert.match(messageOf(syntaxErrors[0]!), /syntax error:/);
 
   await client.stop();
 });

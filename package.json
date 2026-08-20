@@ -13,7 +13,7 @@
     "test": "node --conditions=development --test 'packages/*/test/**/*.test.ts' 'editors/*/test/**/*.test.js'",
     "bench": "node tools/bench.ts",
     "check:flat": "node tools/check-flat.ts",
-    "build": "npm run build -w @sqldex/core && npm run build -w @sqldex/lsp && npm run build -w sqldex"
+    "build": "npm run build -w @sqldex/core && npm run build -w @sqldex/syntax-antlr && npm run build -w @sqldex/lsp && npm run build -w sqldex"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

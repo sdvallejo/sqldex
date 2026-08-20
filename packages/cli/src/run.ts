@@ -27,6 +27,7 @@ import {
   type Registry,
   type Severity,
 } from "@sqldex/core";
+import { checkSyntax, toDiagnostics } from "@sqldex/syntax-antlr";
 
 /** A diagnostic, placed: which file, and where in it in the terms a person and a CI service use. */
 export interface Finding {
@@ -150,6 +151,10 @@ export function run(options: RunOptions): Report {
     // one of those writes is reported as a table that does not exist.
     const seen = withOwnDefinitions(catalog, mysql, src, lexed);
     const diagnostics = check(options.registry, { dialect: mysql, catalog: seen, schemas, config }, src);
+    // Independent of the rule registry: a file that fails to parse is still linted by the rules
+    // above, which degrade against malformed input rather than refuse it — this is what tells the
+    // reader those findings might be standing on a misparse, not what replaces them.
+    diagnostics.push(...toDiagnostics(checkSyntax(src)));
     if (diagnostics.length === 0) continue;
 
     const starts = lineIndex(src);

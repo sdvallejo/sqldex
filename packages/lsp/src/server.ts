@@ -21,9 +21,20 @@
  * Diagnostics are recomputed a quarter of a second after typing stops, per document. Below that the
  * work is wasted on text nobody has finished writing; above it the report feels detached from the
  * edit. Opening a file skips the wait entirely: there is no keystroke to be in the middle of.
+ *
+ * ## The syntax check arrives separately
+ *
+ * `@sqldex/syntax-antlr` answers a different question — does this even parse — against a real MySQL
+ * grammar, and it is not cheap: a realistic 45 KB routine measured at ~500ms, not a tail case. That
+ * is fine for `sqldex check`, a one-shot process, and unusable inline in a debounce this server
+ * shares with hover and completion, so it runs on its own `worker_threads` thread (`syntax-check.ts`)
+ * and reports back whenever it finishes — a **second** `sendDiagnostics` for the same document,
+ * carrying both the fast findings and the syntax errors together, since the protocol's push replaces
+ * the whole set for a URI rather than adding to it.
  */
 
-import { CONFIG_FILES, resolveProject } from "@sqldex/core";
+import { CONFIG_FILES, resolveProject, type Diagnostic as EngineDiagnostic } from "@sqldex/core";
+import { toDiagnostics } from "@sqldex/syntax-antlr";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -38,6 +49,7 @@ import {
   type CompletionItem,
   type CompletionList,
   type Connection,
+  type Diagnostic as ProtocolDiagnostic,
   type DocumentSymbol,
   type Hover,
   type InitializeParams,
@@ -63,6 +75,7 @@ import { references } from "./features/references.ts";
 import { prepareRename, rename } from "./features/rename.ts";
 import { signatureHelp } from "./features/signature.ts";
 import { documentSymbols, workspaceSymbols } from "./features/symbols.ts";
+import { SyntaxChecker, type SyntaxResponse } from "./syntax-check.ts";
 import { Workspace } from "./workspace.ts";
 
 /** How long after the last keystroke before a document is checked again. */
@@ -162,6 +175,31 @@ export function createServer(connection: Connection): void {
    */
   let snippets = false;
 
+  /**
+   * The rule-registry findings and the last-known syntax errors, together — called both right away
+   * (with nothing yet known from the worker) and again whenever the worker answers, so a response
+   * that arrives after the fast findings does not erase them.
+   */
+  function combined(src: string, syntaxErrors: SyntaxResponse["errors"] = []): ProtocolDiagnostic[] {
+    if (!workspace) return [];
+    // A project can ask for the catalog without the underlines. Computing an empty list rather than
+    // returning early is what makes turning it off *clear* the screen: the config is reloaded and
+    // every open document republished, and a silent return would leave the old findings frozen
+    // where they are, outliving the setting that produced them.
+    const found: EngineDiagnostic[] = workspace.config.diagnostics.enabled ? workspace.diagnose(src) : [];
+    if (workspace.config.syntax_check.enabled) found.push(...toDiagnostics(syntaxErrors));
+    return diagnosticsOf(src, found);
+  }
+
+  const syntaxChecker = new SyntaxChecker((response) => {
+    const document = documents.get(response.uri);
+    // The document closed, or the worker answered a stale request — either way there is nowhere
+    // this belongs. `SyntaxChecker` itself already drops a response superseded by a newer request
+    // for the same URI; this is the other kind of "too late".
+    if (!document) return;
+    connection.sendDiagnostics({ uri: response.uri, diagnostics: combined(document.getText(), response.errors) });
+  });
+
   function publish(uri: string): void {
     const timer = pending.get(uri);
     if (timer) {
@@ -173,13 +211,9 @@ export function createServer(connection: Connection): void {
     if (!document || !workspace) return;
 
     const src = document.getText();
-    // A project can ask for the catalog without the underlines. Sending an empty list rather than
-    // returning early is what makes turning it off *clear* the screen: the config is reloaded and
-    // every open document republished, and a silent return would leave the old findings frozen
-    // where they are, outliving the setting that produced them.
-    const found = workspace.config.diagnostics.enabled ? diagnosticsOf(src, workspace.diagnose(src)) : [];
-    connection.sendDiagnostics({ uri, diagnostics: found });
+    connection.sendDiagnostics({ uri, diagnostics: combined(src) });
     reported.add(uri);
+    if (workspace.config.syntax_check.enabled) syntaxChecker.request(uri, src);
   }
 
   /** Every open document, for when what changed was the schema rather than the text. */
@@ -390,6 +424,7 @@ export function createServer(connection: Connection): void {
     pending.delete(event.document.uri);
     reported.delete(event.document.uri);
     analyses.forget(event.document.uri);
+    syntaxChecker.forget(event.document.uri);
     // A closed document keeps its diagnostics in some clients' problem panes forever otherwise.
     connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
   });
@@ -415,6 +450,7 @@ export function createServer(connection: Connection): void {
   connection.onShutdown(() => {
     for (const timer of pending.values()) clearTimeout(timer);
     pending.clear();
+    syntaxChecker.dispose();
   });
 
   documents.listen(connection);
