@@ -1,6 +1,6 @@
 {
   "name": "@sqldex/syntax-antlr",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A real MySQL grammar over sqldex's fast backend: syntax errors the permissive lexer never detects.",
   "license": "MIT",
   "author": "Sergio Vallejo",
@@ -41,7 +41,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@sqldex/core": "^0.5.0",
+    "@sqldex/core": "^0.6.0",
     "antlr4ng": "^3.0.0"
   },
   "scripts": {

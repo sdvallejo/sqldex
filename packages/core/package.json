@@ -1,6 +1,6 @@
 {
   "name": "@sqldex/core",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Catalog, name resolution and lint rules for MySQL schemas that live as .sql files in a repository.",
   "license": "MIT",
   "author": "Sergio Vallejo",

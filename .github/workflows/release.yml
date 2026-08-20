@@ -9,17 +9,22 @@
 # `id-token: write` is what this workflow authenticates with, and it does two jobs at once. It is
 # what makes provenance possible — npm signs the artefact against this workflow's identity, so
 # anyone can verify that the tarball on the registry was built here, from this commit, rather than
-# uploaded from somebody's laptop. And since the three packages have Trusted Publishing configured
-# against this repository and this file, it is also the credential: npm exchanges the OIDC identity
-# for a short-lived one at publish time.
+# uploaded from somebody's laptop. And for a package with Trusted Publishing configured against this
+# repository and this file, it is also the credential: npm exchanges the OIDC identity for a
+# short-lived one at publish time.
 #
-# ## There is no token here, and that is the point
+# ## There is no token here, and that is the point — except for a package's first version
 #
 # `0.1.0` went out with a granular token, because trusted publishing cannot publish a package's
 # **first** version — it is configured in the settings of a package that already exists
-# (npm/cli#8544). That is no longer true of these three, so the token was revoked and the
-# `NPM_TOKEN` secret deleted. **Nothing about this file is a secret any more**, which is worth
-# saying out loud: a fork cannot publish with it, because the trust is pinned to `sdvallejo/sqldex`
+# (npm/cli#8544). That is no longer true of the original three, so the token that published them was
+# revoked and the `NPM_TOKEN` secret deleted. **`@sqldex/syntax-antlr` needs the same bootstrap**
+# before its `npm publish` step below can run unattended: someone publishes its `0.x.0` by hand, from
+# a real terminal, then adds Trusted Publishing to it in npm's settings pointing at this repository
+# and this file — exactly as was done for the original three. Until then this workflow's publish
+# step for it will fail with the same "package does not exist" error trusted publishing always gives
+# a first version. **Nothing about this file is a secret**, which is worth saying out loud once that
+# bootstrap is done: a fork cannot publish with it, because the trust is pinned to `sdvallejo/sqldex`
 # and to this workflow's filename. Renaming this file breaks publishing until npm is told the new
 # name.
 #
@@ -102,18 +107,21 @@ jobs:
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           want="${tag#v}"
-          for manifest in packages/core packages/lsp packages/cli editors/vscode; do
+          for manifest in packages/core packages/syntax-antlr packages/lsp packages/cli editors/vscode; do
             have=$(node -p "require('./$manifest/package.json').version")
             if [ "$have" != "$want" ]; then
               echo "::error::$manifest is $have but the tag says $want"
               exit 1
             fi
           done
-          echo "all four are $want"
+          echo "all five are $want"
 
-      # Core first: the other two declare it as a dependency, and a registry that has the dependent
-      # before the dependency is a few minutes of a broken install for anyone quick enough to hit it.
+      # Core first, then syntax-antlr (which depends on core), then lsp and cli (which depend on
+      # both) — a registry that has a dependent before its dependency is a few minutes of a broken
+      # install for anyone quick enough to hit it.
       - run: npm publish -w @sqldex/core --access public
+
+      - run: npm publish -w @sqldex/syntax-antlr --access public
 
       - run: npm publish -w @sqldex/lsp --access public
 
