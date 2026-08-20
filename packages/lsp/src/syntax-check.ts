@@ -64,8 +64,18 @@ export class SyntaxChecker {
     this.latestSeq.delete(uri);
   }
 
-  dispose(): void {
-    void this.worker?.terminate();
+  /**
+   * Awaited, not fired-and-forgotten: `terminate()` resolves only once the thread has actually
+   * stopped, and a caller that does not wait for that — `connection.onShutdown` responding to the
+   * client before the worker is really gone — races the shutdown response against the worker's own
+   * teardown. `unref()` above keeps that race from ever hanging the process, but it does not make it
+   * safe to ignore: on a slower thread teardown the response can still go out first, and a caller
+   * relying on shutdown meaning "everything this server owns is gone" would see otherwise. Measured
+   * as a real flake, not a hypothetical: `node --test` under a specific Node minor reported an
+   * in-flight test's own promise as still pending after the test file itself had already moved on.
+   */
+  async dispose(): Promise<void> {
+    await this.worker?.terminate();
     this.worker = undefined;
     this.latestSeq.clear();
   }
