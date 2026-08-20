@@ -145,11 +145,20 @@ async function start(root: string, options: { watches?: boolean } = {}): Promise
     nextDiagnostics(uri) {
       return new Promise((resolve, reject) => {
         const waiters = waiting.get(uri) ?? [];
-        waiters.push(resolve);
+        const timer = setTimeout(() => reject(new Error(`nothing was published for ${uri}`)), 5000);
+        // Referenced, not unref'd. This transport is an in-memory Pipe() (a Duplex, no real libuv
+        // handle of its own), and the one case here that genuinely waits on a slow, real handle —
+        // the syntax checker's worker thread, which the server itself deliberately `unref()`s so a
+        // stuck worker never blocks shutdown — had nothing else left holding the loop open while its
+        // response was still in flight. An unref'd timer here raced that wait against node:test's own
+        // "the loop looks empty" check instead of against the response this test actually cares
+        // about, and lost often enough on a slower Node to fail outright rather than time out
+        // cleanly. Cleared the moment either side settles, so it never lingers past its own test.
+        waiters.push((diagnostics) => {
+          clearTimeout(timer);
+          resolve(diagnostics);
+        });
         waiting.set(uri, waiters);
-        // Unreferenced: a test that deliberately expects silence finishes early, and a timer still
-        // on the loop would hold the runner open after it.
-        setTimeout(() => reject(new Error(`nothing was published for ${uri}`)), 5000).unref();
       });
     },
     open(relative, text) {

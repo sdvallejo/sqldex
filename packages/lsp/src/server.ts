@@ -447,10 +447,10 @@ export function createServer(connection: Connection): void {
     if (changed) publishAll();
   });
 
-  connection.onShutdown(() => {
+  connection.onShutdown(async () => {
     for (const timer of pending.values()) clearTimeout(timer);
     pending.clear();
-    syntaxChecker.dispose();
+    await syntaxChecker.dispose();
   });
 
   documents.listen(connection);
