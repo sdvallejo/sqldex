@@ -66,6 +66,14 @@
         }
       }
     },
+    "syntax_check": {
+      "description": "Whether a real MySQL grammar also checks the file, for a class of defect the fast backend's own permissive parser never detects on its own: a CREATE TABLE missing a comma, a mismatched BEGIN/END, a file that is not SQL at all. Inert if @sqldex/syntax-antlr is not installed.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true, "description": "On by default: silently skipping a correctness check most people would not think to go looking for a flag to enable is the wrong default." }
+      }
+    },
     "dialect": {
       "description": "Which engine the SQL is written for.",
       "type": "string",

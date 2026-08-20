@@ -155,11 +155,22 @@ test("finding nothing at all still answers with the installed name", () => {
 test("the bundle retargets the one bare specifier, per file and not per prefix", () => {
   // `@sqldex/core` is what a node_modules would have answered, and the bundle deliberately is not
   // one — Node refuses to strip types under `node_modules`. So the import is rewritten, and how far
-  // up it has to reach depends on how deep the file sits.
-  const repo = tree("packages/core/src", "packages/lsp/src/features", "editors/vscode");
+  // up it has to reach depends on how deep the file sits. `syntax-antlr` gets the same treatment,
+  // and is checked here too: its own source imports `@sqldex/core` the same way `lsp`'s does.
+  const repo = tree(
+    "packages/core/src",
+    "packages/syntax-antlr/src",
+    "packages/lsp/src/features",
+    "editors/vscode",
+  );
   writeFileSync(join(repo, "packages/core/package.json"), "{}");
+  writeFileSync(join(repo, "packages/syntax-antlr/package.json"), "{}");
   writeFileSync(join(repo, "packages/lsp/package.json"), "{}");
   writeFileSync(join(repo, "packages/core/src/index.ts"), "export const marker = 1;\n");
+  writeFileSync(
+    join(repo, "packages/syntax-antlr/src/index.ts"),
+    'import { marker } from "@sqldex/core";\n',
+  );
   writeFileSync(join(repo, "packages/lsp/src/main.ts"), 'import { marker } from "@sqldex/core";\n');
   writeFileSync(
     join(repo, "packages/lsp/src/features/hover.ts"),
@@ -173,16 +184,22 @@ test("the bundle retargets the one bare specifier, per file and not per prefix",
     readFileSync(join(repo, "editors/vscode/server/lsp/src/features/hover.ts"), "utf8"),
     /from "\.\.\/\.\.\/\.\.\/core\/src\/index\.ts"/,
   );
+  assert.match(
+    readFileSync(join(repo, "editors/vscode/server/syntax-antlr/src/index.ts"), "utf8"),
+    /from "\.\.\/\.\.\/core\/src\/index\.ts"/,
+  );
 
   // Nothing under a directory called node_modules, which is the whole point of the layout.
   assert.equal(existsSync(join(repo, "editors/vscode/server/node_modules")), false);
 });
 
 test("bundling twice leaves no trace of the first time", () => {
-  const repo = tree("packages/core/src", "packages/lsp/src", "editors/vscode");
+  const repo = tree("packages/core/src", "packages/syntax-antlr/src", "packages/lsp/src", "editors/vscode");
   writeFileSync(join(repo, "packages/core/package.json"), "{}");
+  writeFileSync(join(repo, "packages/syntax-antlr/package.json"), "{}");
   writeFileSync(join(repo, "packages/lsp/package.json"), "{}");
   writeFileSync(join(repo, "packages/core/src/index.ts"), "");
+  writeFileSync(join(repo, "packages/syntax-antlr/src/index.ts"), "");
   writeFileSync(join(repo, "packages/lsp/src/main.ts"), "");
 
   bundle(join(repo, "editors", "vscode"));

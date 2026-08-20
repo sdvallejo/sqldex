@@ -116,6 +116,18 @@ test("a directory with no recognised layout works when it is named", () => {
   assert.match(out, /no findings in 1 file/);
 });
 
+test("a file that does not parse reports a syntax error, independent of the rule registry", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sqldex-broken-"));
+  cpSync(join(FIXTURES, "broken"), dir, { recursive: true });
+  const { code, out } = cli(["check", ".", "--format", "json"], dir);
+  assert.equal(code, 1);
+  const report = JSON.parse(out) as { findings: { code: string; severity: string; message: string }[] };
+  const syntaxErrors = report.findings.filter((f) => f.code === "sqldex:syntax-error");
+  assert.equal(syntaxErrors.length, 1);
+  assert.equal(syntaxErrors[0]?.severity, "error");
+  assert.match(syntaxErrors[0]?.message ?? "", /syntax error:/);
+});
+
 // ----------------------------------------------------------------- rules, explain
 
 test("rules lists every rule, sorted by id", () => {

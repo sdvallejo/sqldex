@@ -62,6 +62,20 @@ export interface InlayHintsConfig {
   call_parameters: boolean;
 }
 
+/**
+ * Whether a real MySQL grammar also checks the file, for a class of defect the fast backend's own
+ * permissive parser never detects on its own: a `CREATE TABLE` missing a comma, a mismatched
+ * `BEGIN`/`END`, a file that is not SQL at all. Its own key, not folded into `DiagnosticsConfig`'s
+ * `groups`/`rules`, because a syntax error is not a registry rule — there is nothing to supersede it
+ * with and nothing to raise or lower its severity to, the way a rule's can be.
+ *
+ * Inert if `@sqldex/syntax-antlr` is not installed: this key describes intent, not capability, the
+ * same way `diagnostics.enabled` still exists in a project that has turned every rule off.
+ */
+export interface SyntaxCheckConfig {
+  enabled: boolean;
+}
+
 export interface Config {
   /** `undefined` = autodetect from the repo layout. */
   sources?: Source[];
@@ -87,6 +101,7 @@ export interface Config {
   exclude: string[];
   diagnostics: DiagnosticsConfig;
   inlay_hints: InlayHintsConfig;
+  syntax_check: SyntaxCheckConfig;
   /** Which engine the SQL is written for. One value is implemented. */
   dialect: DialectId;
   /**
@@ -122,6 +137,9 @@ export const defaults: Config = {
     // already say it: an argument written with the parameter's own name needs no label.
     call_parameters: true,
   },
+  // On by default, same reasoning as `diagnostics.enabled`: silently skipping a correctness check
+  // most people would not think to go looking for a flag to enable is the wrong default.
+  syntax_check: { enabled: true },
   dialect: "mysql",
   root_markers: [".sqldex.json", "tablas", "tables", ".git"],
 };
@@ -225,9 +243,10 @@ function readProjectFile(root: string, onWarning?: (message: string) => void): R
  * saying so is more useful than accepting it and ignoring it.
  */
 const KNOWN: ReadonlyMap<string, readonly string[]> = new Map([
-  ["", ["sources", "targets", "schemas", "exclude", "diagnostics", "inlay_hints", "dialect"]],
+  ["", ["sources", "targets", "schemas", "exclude", "diagnostics", "inlay_hints", "syntax_check", "dialect"]],
   ["diagnostics", ["enabled", "groups", "rules"]],
   ["inlay_hints", ["column_types", "alias_tables", "call_parameters"]],
+  ["syntax_check", ["enabled"]],
 ]);
 
 /**
