@@ -119,13 +119,51 @@ jobs:
       # Core first, then syntax-antlr (which depends on core), then lsp and cli (which depend on
       # both) — a registry that has a dependent before its dependency is a few minutes of a broken
       # install for anyone quick enough to hit it.
-      - run: npm publish -w @sqldex/core --access public
+      #
+      # Each checks the registry before publishing, and skips rather than errors when the version is
+      # already there. Not defensive dead code: the workflow's own "re-run for a tag whose publish
+      # failed halfway" case means a partial run can leave some of these four already live when the
+      # tag is retried — first proven true for @sqldex/syntax-antlr's actual first version, which
+      # cannot go out through Trusted Publishing at all (npm/cli#8544) and has to be published by
+      # hand before this workflow can publish anything that depends on it. `npm publish` on a version
+      # that already exists is a hard error, not a no-op, so without this check a package published
+      # by hand — or by an earlier, partially-successful run of this same job — would permanently
+      # block every publish listed after it on every retry.
+      - name: Publish @sqldex/core
+        run: |
+          version=$(node -p "require('./packages/core/package.json').version")
+          if npm view @sqldex/core@$version version >/dev/null 2>&1; then
+            echo "::notice::@sqldex/core@$version is already published, skipping"
+          else
+            npm publish -w @sqldex/core --access public
+          fi
 
-      - run: npm publish -w @sqldex/syntax-antlr --access public
+      - name: Publish @sqldex/syntax-antlr
+        run: |
+          version=$(node -p "require('./packages/syntax-antlr/package.json').version")
+          if npm view @sqldex/syntax-antlr@$version version >/dev/null 2>&1; then
+            echo "::notice::@sqldex/syntax-antlr@$version is already published, skipping"
+          else
+            npm publish -w @sqldex/syntax-antlr --access public
+          fi
 
-      - run: npm publish -w @sqldex/lsp --access public
+      - name: Publish @sqldex/lsp
+        run: |
+          version=$(node -p "require('./packages/lsp/package.json').version")
+          if npm view @sqldex/lsp@$version version >/dev/null 2>&1; then
+            echo "::notice::@sqldex/lsp@$version is already published, skipping"
+          else
+            npm publish -w @sqldex/lsp --access public
+          fi
 
-      - run: npm publish -w sqldex --access public
+      - name: Publish sqldex
+        run: |
+          version=$(node -p "require('./packages/cli/package.json').version")
+          if npm view sqldex@$version version >/dev/null 2>&1; then
+            echo "::notice::sqldex@$version is already published, skipping"
+          else
+            npm publish -w sqldex --access public
+          fi
 
       # The extension has its own manifest, its own lockfile and its own dependencies, because it is
       # not a workspace: `vsce` reads `node_modules` to decide what goes inside the `.vsix`, so this
