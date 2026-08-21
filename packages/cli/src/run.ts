@@ -27,7 +27,9 @@ import {
   type Registry,
   type Severity,
 } from "@sqldex/core";
-import { checkSyntax, toDiagnostics } from "@sqldex/syntax-antlr";
+import { toDiagnostics } from "@sqldex/syntax-antlr";
+
+import { checkSyntaxBatch, type SyntaxJob } from "./syntax-pool.ts";
 
 /** A diagnostic, placed: which file, and where in it in the terms a person and a CI service use. */
 export interface Finding {
@@ -134,6 +136,12 @@ function chosen(root: string, paths: readonly string[], cwd: string): FileRef[] 
   return out;
 }
 
+interface Pending {
+  file: FileRef;
+  src: string;
+  diagnostics: Diagnostic[];
+}
+
 /** Runs the registry over a project and collects every finding, in file order. */
 export function run(options: RunOptions): Report {
   const started = performance.now();
@@ -141,16 +149,19 @@ export function run(options: RunOptions): Report {
   const catalog = Catalog.build(mysql, root);
   const config = get(root, undefined, options.onWarning);
   const schemas = configuredSchemas(root);
+  const wantSyntaxCheck = options.syntaxCheck ?? config.syntax_check.enabled;
 
-  const findings: Finding[] = [];
-  const counts: Record<Severity, number> = { error: 0, warn: 0, hint: 0 };
-  let linted = 0;
+  // Two passes, not one: the real MySQL grammar's per-file cost dwarfs everything above it, and
+  // running it inline here would mean paying that cost file by file, serially. Collecting every
+  // file's source first, and only then handing the whole batch to `checkSyntaxBatch`, is what lets
+  // that pass run across a pool of worker threads instead.
+  const pending: Pending[] = [];
+  const jobs: SyntaxJob[] = [];
 
   for (const file of chosen(root, options.paths, options.cwd)) {
     if (options.only && !options.only.has(file.path)) continue;
     const src = catalog.read(file.path);
     if (src === undefined) continue;
-    linted++;
 
     const lexed = tokenize(src);
     // The file sees its own `CREATE TABLE`s. A migration script both declares a table and writes
@@ -158,10 +169,21 @@ export function run(options: RunOptions): Report {
     // one of those writes is reported as a table that does not exist.
     const seen = withOwnDefinitions(catalog, mysql, src, lexed);
     const diagnostics = check(options.registry, { dialect: mysql, catalog: seen, schemas, config }, src);
+    pending.push({ file, src, diagnostics });
+    if (wantSyntaxCheck) jobs.push({ path: file.path, src });
+  }
+
+  const syntaxErrors = wantSyntaxCheck ? checkSyntaxBatch(jobs, options.onWarning) : undefined;
+
+  const findings: Finding[] = [];
+  const counts: Record<Severity, number> = { error: 0, warn: 0, hint: 0 };
+
+  for (const { file, src, diagnostics } of pending) {
     // Independent of the rule registry: a file that fails to parse is still linted by the rules
     // above, which degrade against malformed input rather than refuse it — this is what tells the
     // reader those findings might be standing on a misparse, not what replaces them.
-    if (options.syntaxCheck ?? config.syntax_check.enabled) diagnostics.push(...toDiagnostics(checkSyntax(src)));
+    const errors = syntaxErrors?.get(file.path);
+    if (errors) diagnostics.push(...toDiagnostics(errors));
     if (diagnostics.length === 0) continue;
 
     const starts = lineIndex(src);
@@ -185,7 +207,7 @@ export function run(options: RunOptions): Report {
   return {
     root,
     findings,
-    linted,
+    linted: pending.length,
     indexed: catalog.stats.files,
     ms: performance.now() - started,
     counts,
