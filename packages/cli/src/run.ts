@@ -65,6 +65,13 @@ export interface RunOptions {
    * make it a line in a list nobody counts. It belongs where the invocation's own problems go.
    */
   onWarning?: (message: string) => void;
+  /**
+   * Overrides `.sqldex.json`'s `syntax_check.enabled` for this one invocation — `--no-syntax-check`,
+   * for a project too large to pay the real MySQL grammar's per-file cost on every run without the
+   * worker-pool parallelism the language server gets for free from being long-lived. `undefined`
+   * defers to the project's own config, same as every other setting here.
+   */
+  syntaxCheck?: boolean;
 }
 
 /** POSIX-separated and root-relative, so a report reads the same on either platform. */
@@ -154,7 +161,7 @@ export function run(options: RunOptions): Report {
     // Independent of the rule registry: a file that fails to parse is still linted by the rules
     // above, which degrade against malformed input rather than refuse it — this is what tells the
     // reader those findings might be standing on a misparse, not what replaces them.
-    diagnostics.push(...toDiagnostics(checkSyntax(src)));
+    if (options.syntaxCheck ?? config.syntax_check.enabled) diagnostics.push(...toDiagnostics(checkSyntax(src)));
     if (diagnostics.length === 0) continue;
 
     const starts = lineIndex(src);
