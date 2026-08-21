@@ -11,7 +11,7 @@
  */
 
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync } from "node:fs";
+import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -126,6 +126,28 @@ test("a file that does not parse reports a syntax error, independent of the rule
   assert.equal(syntaxErrors.length, 1);
   assert.equal(syntaxErrors[0]?.severity, "error");
   assert.match(syntaxErrors[0]?.message ?? "", /syntax error:/);
+});
+
+test("--no-syntax-check drops the syntax-error finding, and only that one", () => {
+  // Real MySQL grammar parsing costs real time per file — measured against a private corpus of
+  // 1,500+ real files, tens of seconds where the rest of the sweep takes a few. This is the escape
+  // hatch for a project too large to pay that cost on every run, not a way to make a broken file
+  // look clean: everything the rule registry finds on its own is unaffected.
+  const dir = mkdtempSync(join(tmpdir(), "sqldex-broken-"));
+  cpSync(join(FIXTURES, "broken"), dir, { recursive: true });
+  const { code, out } = cli(["check", ".", "--format", "json", "--no-syntax-check"], dir);
+  const report = JSON.parse(out) as { findings: { code: string }[] };
+  assert.equal(report.findings.some((f) => f.code === "sqldex:syntax-error"), false);
+  assert.ok(code === 0 || report.findings.length > 0, "the rest of the registry still ran");
+});
+
+test("syntax_check.enabled: false in .sqldex.json does the same, without a flag", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sqldex-broken-"));
+  cpSync(join(FIXTURES, "broken"), dir, { recursive: true });
+  writeFileSync(join(dir, ".sqldex.json"), JSON.stringify({ syntax_check: { enabled: false } }));
+  const { out } = cli(["check", ".", "--format", "json"], dir);
+  const report = JSON.parse(out) as { findings: { code: string }[] };
+  assert.equal(report.findings.some((f) => f.code === "sqldex:syntax-error"), false);
 });
 
 // ----------------------------------------------------------------- rules, explain

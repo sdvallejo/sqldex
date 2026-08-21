@@ -53,6 +53,7 @@ Options for check:
   --quiet               drop hints, keeping warnings and errors
   --max-warnings <n>    exit 1 once there are more warnings than n
   --no-color            never colour the output (NO_COLOR does the same)
+  --no-syntax-check     skip the real MySQL grammar's parse-error check; the rules above still run
 
 Options for rules:
   --format <name>       pretty (default) or json
@@ -70,6 +71,7 @@ const CONFIG: ParseArgsConfig = {
     quiet: { type: "boolean" },
     "max-warnings": { type: "string" },
     "no-color": { type: "boolean" },
+    "no-syntax-check": { type: "boolean" },
     help: { type: "boolean", short: "h" },
     version: { type: "boolean" },
   },
@@ -85,6 +87,7 @@ interface Flags {
   quiet?: boolean;
   "max-warnings"?: string;
   "no-color"?: boolean;
+  "no-syntax-check"?: boolean;
   help?: boolean;
   version?: boolean;
 }
@@ -165,7 +168,14 @@ function doCheck(positionals: readonly string[], flags: Flags, streams: Streams)
     }
   }
 
-  const report = run({ paths: positionals, only, registry, cwd: streams.cwd, onWarning: streams.err });
+  const report = run({
+    paths: positionals,
+    only,
+    registry,
+    cwd: streams.cwd,
+    onWarning: streams.err,
+    syntaxCheck: flags["no-syntax-check"] ? false : undefined,
+  });
   if (flags.quiet) {
     // Dropped from the report entirely, counts included, rather than merely hidden: a summary
     // counting hints under output that shows none is a report about a different run.
