@@ -53,6 +53,7 @@ import { declareAfterStatement } from "./routine/declare-after-statement.ts";
 import { exclusiveBranchAnd } from "./routine/exclusive-branch-and.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
 import { nullableVariableInPredicate } from "./routine/nullable-variable-in-predicate.ts";
+import { shadowedParameter } from "./routine/shadowed-parameter.ts";
 import { unusedVariable } from "./routine/unused-variable.ts";
 import { variableNeverAssigned } from "./routine/variable-never-assigned.ts";
 import { divergentType } from "./schema/divergent-type.ts";
@@ -82,6 +83,7 @@ export const documentRules = [ambiguousColumn] as const;
  */
 export const routineRules = [
   declareAfterStatement,
+  shadowedParameter,
   unusedVariable,
   variableNeverAssigned,
   exclusiveBranchAnd,
@@ -181,6 +183,7 @@ export {
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
+  shadowedParameter,
   unfilteredWrite,
   unknownAlias,
   unknownColumn,

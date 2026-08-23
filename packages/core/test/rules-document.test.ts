@@ -30,6 +30,7 @@ import {
   exclusiveBranchAnd,
   nullableIntoArithmetic,
   nullableVariableInPredicate,
+  shadowedParameter,
   unusedVariable,
   variableNeverAssigned,
 } from "../src/rules/index.ts";
@@ -161,6 +162,73 @@ test("the hint is tagged unnecessary, which is what greys the name out", () => {
   );
   assert.deepEqual(found[0]?.tags, ["unnecessary"]);
   assert.equal(found[0]?.severity, "hint");
+});
+
+// ------------------------------------------------------------ shadowed parameters
+
+test("a DECLARE reusing an IN parameter's name, read again, is reported", () => {
+  const src = [
+    "CREATE PROCEDURE sp_case(IN p_order int)",
+    "BEGIN",
+    "  DECLARE p_order int DEFAULT 0;",
+    "  SELECT p_order;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(shadowedParameter, src), [
+    "p_order shadows the parameter p_order: this DECLARE creates a new variable, so the parameter's value is unreachable under this name for the rest of the block",
+  ]);
+});
+
+test("a DECLARE reusing an OUT parameter's name, then SET, is reported: the SET never reaches the caller", () => {
+  const src = [
+    "CREATE PROCEDURE sp_case(IN p_x int, OUT p_result int)",
+    "BEGIN",
+    "  DECLARE p_result int DEFAULT 0;",
+    "  SET p_result = p_x * 2;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(shadowedParameter, src), [
+    "p_result shadows the parameter p_result: this DECLARE creates a new variable, so the parameter's value is unreachable under this name for the rest of the block",
+  ]);
+});
+
+test("a shadowing DECLARE nobody mentions again is unused-variable's to report, not this rule's", () => {
+  const src = body("  DECLARE p_order int DEFAULT 0;", "  SELECT 1;");
+  assert.deepEqual(run(shadowedParameter, src), []);
+  assert.deepEqual(run(unusedVariable, src), ["unused variable: p_order"]);
+});
+
+test("a DECLARE with its own name, not a parameter's, is not this rule's business", () => {
+  const src = body("  DECLARE v_total int DEFAULT 0;", "  SELECT v_total;");
+  assert.deepEqual(run(shadowedParameter, src), []);
+});
+
+test("the match is case-insensitive, the way MySQL folds identifiers", () => {
+  const src = [
+    "CREATE PROCEDURE sp_case(IN p_order int)",
+    "BEGIN",
+    "  DECLARE P_ORDER int DEFAULT 0;",
+    "  SELECT P_ORDER;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(shadowedParameter, src), [
+    "P_ORDER shadows the parameter p_order: this DECLARE creates a new variable, so the parameter's value is unreachable under this name for the rest of the block",
+  ]);
+});
+
+test("a variable read in the next routine is not reported against this one's parameter", () => {
+  const src = [
+    "CREATE PROCEDURE sp_first(IN p_order int)",
+    "BEGIN",
+    "  SELECT p_order;",
+    "END;",
+    "CREATE PROCEDURE sp_second()",
+    "BEGIN",
+    "  DECLARE p_order int DEFAULT 0;",
+    "  SELECT p_order;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(shadowedParameter, src), [], "sp_second has no parameter named p_order");
 });
 
 // -------------------------------------------------------- never-assigned reads
