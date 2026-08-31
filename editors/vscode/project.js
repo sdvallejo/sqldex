@@ -59,18 +59,25 @@ function projectRoot(from) {
 /**
  * The documents one project's server is asked about, as a glob the language client can carry.
  *
+ * **`.sql` only, and by extension rather than by language id.** VS Code has one language mode per
+ * file extension, decided by whichever installed extension's id sorts first alphabetically when two
+ * disagree — MySQL Shell for VS Code's own `.sql` language beats the editor's built-in one this way.
+ * Matching the document selector on `language: "sql"` would then miss every file in the project
+ * without a word about why, so the glob does the filtering instead: it only cares what is on disk,
+ * which is the same thing `projectRoot` already does.
+ *
  * **A string, and not a `RelativePattern`.** The obvious choice is the editor's own
  * `RelativePattern`, which knows about Windows paths — but the client converts every filter through
  * the protocol on its way in, and the protocol's relative pattern is a different shape (a `baseUri`
  * that is a *string*). A `RelativePattern` from the editor fails that test, and the conversion
- * answers `undefined` rather than raising: the filter survives with no pattern at all, matching
- * every SQL file in the window. Nothing breaks loudly; each server in a multi-root window quietly
- * starts answering about the other projects' files.
+ * answers `undefined` rather than raising: the filter survives with no pattern at all, matching every
+ * file in the window. Nothing breaks loudly; each server in a multi-root window quietly starts
+ * answering about the other projects' files.
  *
  * So: forward slashes, which every glob wants and which a Windows path does not have.
  */
 function documentGlob(root) {
-  return `${root.replaceAll("\\", "/")}/**/*`;
+  return `${root.replaceAll("\\", "/")}/**/*.sql`;
 }
 
 module.exports = { CONFIG_FILES, DECLARES, declares, documentGlob, projectRoot };

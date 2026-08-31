@@ -127,17 +127,20 @@ test("one server per project, and none for a folder that is not one", () => {
   assert.ok(started[0].server.run.command);
 });
 
-test("the document selector carries a string pattern scoped to the project", () => {
+test("the document selector carries a string pattern scoped to the project, not a language id", () => {
+  // No `language` filter: VS Code's file-association tie-break can hand `.sql` files to a different
+  // extension's language mode (MySQL Shell for VS Code is one), and this selector has to keep
+  // matching those files regardless of which mode won.
   const root = project();
   const { started } = activate([folderAt(root, "db")]);
   const filter = started[0].options.documentSelector[0];
 
-  assert.equal(filter.language, "sql");
+  assert.equal(filter.language, undefined);
   assert.equal(filter.scheme, "file");
   // A string, because that is the only pattern shape the client can carry through the protocol —
   // an editor `RelativePattern` is dropped on the way, leaving a filter that matches everything.
   assert.equal(typeof filter.pattern, "string");
-  assert.equal(filter.pattern, `${root}/**/*`);
+  assert.equal(filter.pattern, `${root}/**/*.sql`);
 });
 
 test("the server is told which folder it serves, since it only ever reads one", () => {
@@ -157,5 +160,7 @@ test("rename is offered as a command of its own, and the manifest binds it", () 
   assert.ok(manifest.contributes.commands.some((c) => c.command === "sqldex.rename"));
   const binding = manifest.contributes.keybindings.find((k) => k.command === "sqldex.rename");
   assert.equal(binding.key, "f2");
-  assert.match(binding.when, /editorLangId == sql/);
+  // `resourceExtname`, not `editorLangId`: the same file-association tie-break that can move a
+  // `.sql` file to another extension's language mode would silently take this binding with it.
+  assert.match(binding.when, /resourceExtname == \.sql/);
 });

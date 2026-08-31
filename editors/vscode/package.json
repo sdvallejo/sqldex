@@ -47,6 +47,7 @@
   "main": "./extension.js",
   "activationEvents": [
     "onLanguage:sql",
+    "workspaceContains:**/*.sql",
     "workspaceContains:**/.sqldex.json"
   ],
   "contributes": {
@@ -93,7 +94,7 @@
       {
         "command": "sqldex.rename",
         "key": "f2",
-        "when": "editorTextFocus && !editorReadonly && editorLangId == sql"
+        "when": "editorTextFocus && !editorReadonly && resourceExtname == .sql"
       }
     ]
   },

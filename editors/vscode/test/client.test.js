@@ -63,8 +63,8 @@ test("the document glob is a string, and a Windows path is turned into one", () 
   // filter survives with no pattern at all and the server starts answering about every project in
   // the window. A string is carried through untouched.
   assert.equal(typeof documentGlob("/repo/db"), "string");
-  assert.equal(documentGlob("/repo/db"), "/repo/db/**/*");
-  assert.equal(documentGlob("C:\\Users\\me\\db"), "C:/Users/me/db/**/*");
+  assert.equal(documentGlob("/repo/db"), "/repo/db/**/*.sql");
+  assert.equal(documentGlob("C:\\Users\\me\\db"), "C:/Users/me/db/**/*.sql");
 });
 
 // -------------------------------------------------------------- what to start

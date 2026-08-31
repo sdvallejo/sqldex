@@ -204,6 +204,13 @@ empty `.sqldex.json` at the root is enough to declare one.
 If nothing was started at all, the extension never woke: it activates on a `.sql` file being opened
 or a `.sqldex.json` in the tree, and a window with neither gives it no reason to.
 
+**A `.sql` file can end up in another extension's language mode**, not the editor's built-in `sql` —
+MySQL Shell for VS Code is one that ships its own, and VS Code hands `.sql` to whichever installed
+extension's id sorts first alphabetically when two disagree. Nothing here depends on winning that
+tie-break: the client selects documents by file extension, not by language id, precisely because that
+tie-break is not this extension's to win. The status bar may still say something other than **SQL** —
+that is cosmetic only.
+
 **sqldex: Restart the language server** in the command palette picks up a project that came into
 existence after the window was opened — a `.sqldex.json` you just wrote, a `tables/` you just made.
 

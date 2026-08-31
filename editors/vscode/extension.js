@@ -70,7 +70,13 @@ function start(folder, context) {
     {
       // Scoped to the project, not to the folder: a folder opened *inside* a repo still wants every
       // answer the repo's catalog can give.
-      documentSelector: [{ scheme: "file", language: "sql", pattern: documentGlob(root) }],
+      //
+      // No `language` filter: VS Code assigns exactly one language mode per file extension, decided
+      // by an alphabetical tie-break between every installed extension that claims `.sql` — the
+      // editor's own built-in `sql` mode is not guaranteed to win it (MySQL Shell for VS Code's own
+      // `.sql` language beats it). Filtering on the file itself instead of the mode VS Code happened
+      // to pick is what keeps this working regardless of which other extensions are installed.
+      documentSelector: [{ scheme: "file", pattern: documentGlob(root) }],
       workspaceFolder: folder,
       outputChannel: output,
       // The server registers `**/*.sql` and the config file once it is up, and this client creates
