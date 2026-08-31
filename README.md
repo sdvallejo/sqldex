@@ -104,6 +104,11 @@ adopted at the bottom of the engine so no layer has to translate positions on th
 Node 22.18 or newer. **Working on this repository needs no build**: the `.ts` files run directly
 under Node's native type stripping, so the tests, the command and the language server all run from
 source in a checkout. 22.18 rather than 22.6 because that is where stripping stopped needing a flag.
+Below that floor, `sqldex` and `sqldex-lsp` say so themselves rather than failing at some unrelated
+later step. **On Windows**, the official installer at
+[nodejs.org](https://nodejs.org) or `winget upgrade OpenJS.NodeJS.LTS` replaces an older install in
+place; [nvm-windows](https://github.com/coreybutler/nvm-windows) is the equivalent of `nvm`/`n` for
+keeping more than one version around.
 
 **What is published is JavaScript**, and it has to be. Node refuses to strip types from any file
 under `node_modules`, by design and with no flag to allow it, so a package shipping `.ts` sources

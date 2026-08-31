@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { main, type Streams } from "../src/main.ts";
+import { main, type Streams } from "../src/cli.ts";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const SHOP = join(FIXTURES, "shop");
@@ -219,3 +219,4 @@ test("--diff with no base and no CI environment says which variables it looked a
   assert.match(err, /CI_MERGE_REQUEST_DIFF_BASE_SHA/);
   assert.match(err, /GITHUB_BASE_REF/);
 });
+

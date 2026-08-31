@@ -110,7 +110,7 @@ function sourced(main, why, version) {
   const found = version();
   const problem = isRecentEnough(found)
     ? undefined
-    : `node ${NEEDS_NODE.major}.${NEEDS_NODE.minor} or newer is what runs the server from source; ` +
+    : `needs node ${NEEDS_NODE.major}.${NEEDS_NODE.minor} or newer to run the server from source — ` +
       `${found ?? "no node"} was found on the PATH.`;
   // `--conditions=development` is what makes `@sqldex/core` resolve to the checkout's **source**.
   // Without it the package's `exports` answer with the built `dist/`, which a checkout is not

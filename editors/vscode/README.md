@@ -66,7 +66,9 @@ code --install-extension sqldex.sqldex
 **It carries the server with it**, which is what makes it worth installing on a machine that has
 never seen this repository — see below. What it does not carry is Node: the machine installing it
 needs **Node 22.18 or newer** on its `PATH`, and the extension says so in a notification rather than
-failing quietly if it finds an older one.
+failing quietly if it finds an older one. On Windows, the installer at
+[nodejs.org](https://nodejs.org) or `winget upgrade OpenJS.NodeJS.LTS` replaces an older install in
+place.
 
 That is also what decides how a **new rule** reaches you. The engine is inside the extension, so a
 version of the engine is a version of the extension: rules arrive when VS Code updates it, which it
