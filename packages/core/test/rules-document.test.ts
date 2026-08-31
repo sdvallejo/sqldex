@@ -26,6 +26,7 @@ import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
 import {
   ambiguousColumn,
   cursorNeverOpened,
+  deadCoalesceDefault,
   declareAfterStatement,
   exclusiveBranchAnd,
   nullableIntoArithmetic,
@@ -301,6 +302,65 @@ test("passing it to an IN parameter is not a write", () => {
   assert.deepEqual(run(variableNeverAssigned, src), [
     "v_got is never assigned, so this reads NULL",
   ]);
+});
+
+// ------------------------------------------------- dead COALESCE/IFNULL defaults
+
+test("a never-assigned variable as a bare COALESCE argument is a dead default", () => {
+  // The guard pair with the case above: variableNeverAssigned stays quiet here on purpose, and this
+  // is the rule that speaks instead, because the wrap does not make the read safe — it makes the
+  // whole call collapse to the other argument, always.
+  const src = body(
+    "  DECLARE v_group int;",
+    "  SELECT order_id FROM orders WHERE customer_id = COALESCE(v_group, 0);",
+  );
+  assert.deepEqual(run(variableNeverAssigned, src), [], "the COALESCE-wrap exemption, unchanged");
+  assert.deepEqual(run(deadCoalesceDefault, src), [
+    "v_group is never assigned, so it is always NULL; COALESCE(…) always evaluates to its other argument here",
+  ]);
+});
+
+test("the variable can sit in either position of a two-argument IFNULL", () => {
+  const src = body(
+    "  DECLARE v_group int;",
+    "  SELECT order_id FROM orders WHERE customer_id = IFNULL(0, v_group);",
+  );
+  assert.deepEqual(run(deadCoalesceDefault, src), [
+    "v_group is never assigned, so it is always NULL; IFNULL(…) always evaluates to its other argument here",
+  ]);
+});
+
+test("a three-argument COALESCE is out of scope: the result is no longer a single fixed value", () => {
+  const src = body(
+    "  DECLARE v_group int;",
+    "  SELECT order_id FROM orders WHERE customer_id = COALESCE(v_group, discount, 0);",
+  );
+  assert.deepEqual(run(deadCoalesceDefault, src), []);
+});
+
+test("a variable buried in an expression is left to variable-never-assigned, not guessed at here", () => {
+  const src = body(
+    "  DECLARE v_group int;",
+    "  SELECT order_id FROM orders WHERE customer_id = COALESCE(v_group + 1, 0);",
+  );
+  assert.deepEqual(run(deadCoalesceDefault, src), []);
+});
+
+test("an assignment anywhere in the body clears it, same as its sibling rule", () => {
+  const src = body(
+    "  DECLARE v_group int;",
+    "  SELECT order_id FROM orders WHERE customer_id = COALESCE(v_group, 0);",
+    "  SET v_group = 1;",
+  );
+  assert.deepEqual(run(deadCoalesceDefault, src), []);
+});
+
+test("a DEFAULT makes it initialised, whatever the value", () => {
+  const src = body(
+    "  DECLARE v_group int DEFAULT 0;",
+    "  SELECT order_id FROM orders WHERE customer_id = COALESCE(v_group, 1);",
+  );
+  assert.deepEqual(run(deadCoalesceDefault, src), []);
 });
 
 // ------------------------------------------------- exclusive-branch AND

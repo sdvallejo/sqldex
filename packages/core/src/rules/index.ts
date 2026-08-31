@@ -49,6 +49,7 @@ import { selectIntoArity } from "./routine/select-into-arity.ts";
 import { selectIntoManyRows } from "./routine/select-into-many-rows.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
+import { deadCoalesceDefault } from "./routine/dead-coalesce-default.ts";
 import { declareAfterStatement } from "./routine/declare-after-statement.ts";
 import { exclusiveBranchAnd } from "./routine/exclusive-branch-and.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
@@ -86,6 +87,7 @@ export const routineRules = [
   shadowedParameter,
   unusedVariable,
   variableNeverAssigned,
+  deadCoalesceDefault,
   exclusiveBranchAnd,
   nullableIntoArithmetic,
   nullableVariableInPredicate,
@@ -155,6 +157,7 @@ export {
   callArity,
   collationMismatch,
   cursorNeverOpened,
+  deadCoalesceDefault,
   declareAfterStatement,
   divergentType,
   duplicateConstraintName,
