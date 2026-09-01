@@ -12,14 +12,16 @@
  * the CLI's worker pool and the LSP's checker named their worker by its `.ts` source filename,
  * which no install has. The suite was green throughout.
  *
- * So this is the one check that refuses to look at `src/`. It spawns the built CLI and the built
- * language server as an installed copy would, over the fixture the suite already uses for a real
- * MySQL syntax error, and asks each for the finding only a working worker can produce.
+ * So this is the one check that runs only what ships. It starts each shipping form as the thing
+ * that installs it would, over the fixture the suite already keeps for a real MySQL syntax error,
+ * and asks each for the finding only a working worker thread can produce.
  *
- * **Both halves, not one.** The two packages carry separate copies of the same worker-spawning
- * decision, and they fail differently: the CLI hung forever, while the language server simply went
- * quiet — the harder of the two to notice, and the one an editor user actually meets. A check that
- * covered only the CLI would leave the quieter failure uncovered.
+ * **All three forms, because they are three.** `sqldex` and `@sqldex/lsp` run the `dist/` that
+ * `tsc` emitted; the `.vsix` runs neither, carrying the server as TypeScript with its
+ * `@sqldex/core` imports rewritten to relative paths. They also fail differently — the CLI hung
+ * forever, while both servers simply go quiet, which is the harder failure to notice and the one an
+ * editor user actually meets. Covering one would leave the others exactly as uncovered as they were
+ * when this became necessary.
  *
  * Every wait here is bounded, because the regression this exists to catch is a hang: a check that
  * hangs while proving something does not hang is no check at all.
@@ -36,6 +38,8 @@ const ROOT = join(import.meta.dirname, "..");
 const CLI = join(ROOT, "packages/cli/dist/main.js");
 const SERVER = join(ROOT, "packages/lsp/dist/main.js");
 const BROKEN = join(ROOT, "packages/cli/test/fixtures/broken");
+/** What `npm run bundle` leaves for the `.vsix` to carry: the server as source, imports rewritten. */
+const BUNDLED = join(ROOT, "editors/vscode/server/lsp/src/main.ts");
 
 /** Generous: this is not a performance budget, it is the line between "slow" and "never". */
 const TIMEOUT_MS = 60_000;
@@ -100,8 +104,8 @@ class Server {
   readonly child: ChildProcessWithoutNullStreams;
   stderr = "";
 
-  constructor(root: string) {
-    this.child = spawn(process.execPath, [SERVER, "--stdio"], { cwd: root });
+  constructor(root: string, entry: string) {
+    this.child = spawn(process.execPath, [entry, "--stdio"], { cwd: root });
     this.child.stderr.on("data", (chunk: Buffer) => (this.stderr += chunk));
     this.child.stdout.on("data", (chunk: Buffer) => {
       this.buffer = Buffer.concat([this.buffer, chunk]);
@@ -139,9 +143,9 @@ class Server {
 }
 
 /** The built language server, over stdio, exactly as an editor client starts it. */
-async function checkServer(): Promise<void> {
+async function checkServer(entry: string, label: string): Promise<void> {
   const root = fixture(true);
-  const server = new Server(root);
+  const server = new Server(root, entry);
   const rootUri = pathToFileURL(root).href;
 
   server.send({
@@ -174,21 +178,26 @@ async function checkServer(): Promise<void> {
     "a syntax error for a file that does not parse",
   );
   const syntax = push.params.diagnostics.find((d) => d.code === "sqldex:syntax-error");
-  console.log(`  lsp    ${syntax?.message}`);
+  console.log(`  ${label.padEnd(6)} ${syntax?.message}`);
   server.child.kill();
 }
 
-for (const [what, path] of [
-  ["the CLI", CLI],
-  ["the language server", SERVER],
+for (const [what, path, how] of [
+  ["the CLI", CLI, "npm run build"],
+  ["the language server", SERVER, "npm run build"],
+  ["the VS Code bundle", BUNDLED, "npm run bundle --prefix editors/vscode"],
 ] as const) {
   if (!existsSync(path)) {
-    console.error(`${what} has not been built — run \`npm run build\` first (looked for ${path})`);
+    console.error(`${what} is not built — run \`${how}\` first (looked for ${path})`);
     process.exit(2);
   }
 }
 
 console.log("checking what a published package actually runs:");
 await checkCli();
-await checkServer();
-console.log("both answer from their built form.");
+await checkServer(SERVER, "lsp");
+// The third shipping form, and the odd one out: the `.vsix` carries the server as TypeScript with
+// its `@sqldex/core` imports rewritten to relative paths, so it is neither `dist/` nor a checkout.
+// The suite asserts the rewritten text and the layout; only running it proves the text resolves.
+await checkServer(BUNDLED, "vsix");
+console.log("all three answer from the form they ship in.");

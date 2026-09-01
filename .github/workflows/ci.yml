@@ -49,9 +49,9 @@ jobs:
     # The suite above proves the sources work. It cannot prove an install does, and that gap is not
     # hypothetical: every test calls into the code in process, under `--conditions=development`, so
     # a package that resolves nothing once built is still green. Two releases shipped a syntax check
-    # that could not start for exactly that reason. This job runs the built CLI and the built server
-    # as separate processes, the way an install does, and asks each for a finding only a working
-    # worker thread can produce.
+    # that could not start for exactly that reason. This job assembles all three forms sqldex ships
+    # in — the two `dist/` packages and the VS Code bundle, which is source with its imports
+    # rewritten — and starts each one the way the thing that installs it does.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +60,12 @@ jobs:
           node-version: "22.18"
       - run: npm ci
       - run: npm run build
+      # The bundle is a third artefact with its own way of going wrong, and `vscode:prepublish`
+      # builds it at publish time — by which point nothing is watching.
+      - run: npm ci
+        working-directory: editors/vscode
+      - run: npm run bundle
+        working-directory: editors/vscode
       - run: npm run check:packaged
   zed:
     # The Zed client is the one part of this repository that is not TypeScript, and the only one
