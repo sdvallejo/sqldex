@@ -44,3 +44,20 @@ jobs:
       - run: npm run typecheck
       # The build is what publishing ships, and it broke once without anything noticing.
       - run: npm run build
+
+  packaged:
+    # The suite above proves the sources work. It cannot prove an install does, and that gap is not
+    # hypothetical: every test calls into the code in process, under `--conditions=development`, so
+    # a package that resolves nothing once built is still green. Two releases shipped a syntax check
+    # that could not start for exactly that reason. This job runs the built CLI and the built server
+    # as separate processes, the way an install does, and asks each for a finding only a working
+    # worker thread can produce.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check:packaged
