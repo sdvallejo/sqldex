@@ -26,7 +26,7 @@ Neovim maps most of it to keys you already have:
 | **The column under the cursor**, in full — its type, whether it is nullable, whether it is a primary or unique key, and the table its foreign key points at. Plus its `DEFAULT`, its `COMMENT`, and the values it is allowed to hold: the set the comment documents, or, where nobody wrote one down, the codes the procedures are seen comparing it against | `K` |
 | **The table under the cursor** — its `CREATE TABLE`, exactly as the repository has it | `K` |
 | **What a two-letter alias stands for**, and what a temporary table holds and which file created it | `K` |
-| **Findings as you type** — 39 rules over names, schema, queries and routines: a column that does not exist, an `INSERT` whose value count does not match, an `UPDATE` with no filter, a variable never read, a foreign key with no index | `]d`, `[d`, `:lua vim.diagnostic.open_float()` |
+| **Findings as you type** — 45 rules over names, schema, queries and routines: a column that does not exist, an `INSERT` whose value count does not match, an `UPDATE` with no filter, a variable never read, a foreign key with no index | `]d`, `[d`, `:lua vim.diagnostic.open_float()` |
 | **Where a name is defined**, and where its foreign key leads | `grt` for the definition, `gri` for the foreign key's target |
 | **Everywhere a table or column is used** — whole identifiers, so searching `orders` does not also hand you `aud_orders` | `grr` |
 | **Rename it across the project**, definition and uses together | `grn` |
