@@ -45,6 +45,7 @@ import {
   unknownRoutine,
   unknownTable,
   unqualifiedColumn,
+  writeTargetInSubquery,
 } from "../src/rules/index.ts";
 import { parseDDL } from "../src/syntax/fast/ddl.ts";
 import { tokenize } from "../src/syntax/fast/lexer.ts";
@@ -602,6 +603,108 @@ test("the WHERE of a subquery narrows the subquery, not this statement", () => {
   const nested = "UPDATE orders SET total = (SELECT amount FROM refunds WHERE refund_id = 1);";
   assert.deepEqual(run(unfilteredWrite, nested), [
     "this UPDATE has no filter: it rewrites the whole of orders",
+  ]);
+});
+
+// ------------------------------------------- the written table, read again
+
+const REJECTED = "MySQL rejects the statement with error 1093";
+
+test("an UPDATE whose subquery reads the table it writes never runs", () => {
+  const src = "UPDATE orders SET status = 'A' WHERE order_id IN (SELECT order_id FROM orders WHERE status = 'B');";
+  assert.deepEqual(run(writeTargetInSubquery, src), [`this UPDATE writes orders, and this subquery reads it: ${REJECTED}`]);
+});
+
+test("the same read behind a derived table is how it is written instead", () => {
+  const src =
+    "UPDATE orders SET status = 'A' WHERE order_id IN (SELECT id FROM (SELECT order_id AS id FROM orders WHERE status = 'B') x);";
+  assert.deepEqual(run(writeTargetInSubquery, src), [], "MySQL evaluates that one on its own");
+});
+
+test("a DELETE is refused on the same terms, and a read of another table is not", () => {
+  assert.deepEqual(run(writeTargetInSubquery, "DELETE FROM orders WHERE order_id = (SELECT MAX(order_id) FROM orders);"), [
+    `this DELETE writes orders, and this subquery reads it: ${REJECTED}`,
+  ]);
+  assert.deepEqual(
+    run(writeTargetInSubquery, "DELETE FROM orders WHERE order_id IN (SELECT order_id FROM refunds WHERE amount > 0);"),
+    [],
+  );
+});
+
+test("a join inside the subquery reaches the target just as a FROM does", () => {
+  const src =
+    "UPDATE orders SET status = 'A' WHERE EXISTS (SELECT 1 FROM customers c JOIN orders o2 ON o2.customer_id = c.customer_id);";
+  assert.deepEqual(run(writeTargetInSubquery, src), [`this UPDATE writes orders, and this subquery reads it: ${REJECTED}`]);
+});
+
+test("a multi-table UPDATE writes what its SET assigns to, and no more", () => {
+  const joined =
+    "UPDATE orders o JOIN customers c ON c.customer_id = o.customer_id SET o.status = 'A' " +
+    "WHERE EXISTS (SELECT 1 FROM customers c2 WHERE c2.customer_id = o.customer_id);";
+  assert.deepEqual(run(writeTargetInSubquery, joined), [], "customers is read by the write, not written by it");
+
+  const target =
+    "UPDATE orders o JOIN customers c ON c.customer_id = o.customer_id SET o.status = 'A' " +
+    "WHERE NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.customer_id = o.customer_id AND o2.status = 'A');";
+  assert.deepEqual(run(writeTargetInSubquery, target), [
+    `this UPDATE writes orders, and this subquery reads it: ${REJECTED}`,
+  ]);
+});
+
+test("a bare column in a joined UPDATE's SET does not say which table is written", () => {
+  const src =
+    "UPDATE orders o JOIN customers c ON c.customer_id = o.customer_id SET status = 'A' " +
+    "WHERE EXISTS (SELECT 1 FROM orders o2);";
+  assert.deepEqual(run(writeTargetInSubquery, src), [], "the engine rejects this one, and the statement does not say why");
+});
+
+test("a multi-table DELETE names its targets before the FROM", () => {
+  const target =
+    "DELETE o FROM orders o JOIN customers c ON c.customer_id = o.customer_id " +
+    "WHERE EXISTS (SELECT 1 FROM orders o2 WHERE o2.status = 'A');";
+  assert.deepEqual(run(writeTargetInSubquery, target), [
+    `this DELETE writes orders, and this subquery reads it: ${REJECTED}`,
+  ]);
+
+  const joined =
+    "DELETE o FROM orders o JOIN customers c ON c.customer_id = o.customer_id " +
+    "WHERE EXISTS (SELECT 1 FROM customers c2 WHERE c2.customer_id = o.customer_id);";
+  assert.deepEqual(run(writeTargetInSubquery, joined), [], "customers is joined, not deleted from");
+});
+
+test("a common table expression is a query of its own, and so is a self-join", () => {
+  const cte =
+    "WITH recent AS (SELECT order_id FROM orders WHERE status = 'B') " +
+    "UPDATE orders SET status = 'A' WHERE order_id IN (SELECT order_id FROM recent);";
+  assert.deepEqual(run(writeTargetInSubquery, cte), []);
+
+  const selfJoin =
+    "UPDATE orders o LEFT JOIN orders open ON open.customer_id = o.customer_id AND open.status = 'A' " +
+    "SET o.status = 'A' WHERE open.order_id IS NULL;";
+  assert.deepEqual(run(writeTargetInSubquery, selfJoin), [], "reading it in the write's own FROM is allowed");
+});
+
+test("a correlated reference to the row being written names no relation", () => {
+  const src =
+    "UPDATE orders SET total = (SELECT SUM(l.amount) FROM order_lines l WHERE l.order_id = orders.order_id);";
+  assert.deepEqual(run(writeTargetInSubquery, src), [], "the target is a qualifier there, not a table of the subquery");
+});
+
+test("an INSERT reading its own target is a different question", () => {
+  const src = "INSERT INTO orders (customer_id, status) SELECT customer_id, 'B' FROM orders WHERE status = 'A';";
+  assert.deepEqual(run(writeTargetInSubquery, src), [], "MySQL allows this one");
+});
+
+test("one side qualified and the other not is not known to be the same table", () => {
+  const src = "UPDATE orders SET status = 'A' WHERE order_id IN (SELECT order_id FROM archive.orders);";
+  assert.deepEqual(run(writeTargetInSubquery, src), []);
+});
+
+test("a temporary table is the same defect under another number", () => {
+  const src = "UPDATE tmp_from_other_sp SET total = 0 WHERE batch_id IN (SELECT batch_id FROM tmp_from_other_sp);";
+  assert.deepEqual(run(writeTargetInSubquery, src), [
+    "this UPDATE writes tmp_from_other_sp, and this subquery reads it: " +
+      "MySQL cannot open a temporary table twice in one statement (error 1137)",
   ]);
 });
 

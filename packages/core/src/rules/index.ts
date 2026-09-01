@@ -43,6 +43,7 @@ import { nullableScalarSubquery } from "./query/nullable-scalar-subquery.ts";
 import { onlyFullGroupBy } from "./query/only-full-group-by.ts";
 import { scalarSubqueryManyRows } from "./query/scalar-subquery-many-rows.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
+import { writeTargetInSubquery } from "./query/write-target-in-subquery.ts";
 import { callArity } from "./routine/call-arity.ts";
 import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
 import { selectIntoArity } from "./routine/select-into-arity.ts";
@@ -121,6 +122,7 @@ export const statementRules = [
   enumValueNotDefined,
   collationMismatch,
   unfilteredWrite,
+  writeTargetInSubquery,
   joinWithoutCondition,
 ] as const;
 
@@ -195,4 +197,5 @@ export {
   unqualifiedColumn,
   unusedVariable,
   variableNeverAssigned,
+  writeTargetInSubquery,
 };

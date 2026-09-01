@@ -23,7 +23,7 @@ Zed maps all of it to keys it already has:
 | **The column under the cursor**, in full — its type, whether it is nullable, whether it is a primary or unique key, and the table its foreign key points at. Plus its `DEFAULT`, its `COMMENT`, and the values it is allowed to hold: the set the comment documents, or, where nobody wrote one down, the codes the procedures are seen comparing it against | `ctrl-k ctrl-i`, or the mouse |
 | **The table under the cursor** — its `CREATE TABLE`, exactly as the repository has it | `ctrl-k ctrl-i` |
 | **What a two-letter alias stands for**, and what a temporary table holds and which file created it | `ctrl-k ctrl-i` |
-| **Findings as you type** — 45 rules over names, schema, queries and routines: a column that does not exist, an `INSERT` whose value count does not match, an `UPDATE` with no filter, a variable never read, a foreign key with no index | the squiggles and the diagnostics panel; `f8` walks them |
+| **Findings as you type** — 46 rules over names, schema, queries and routines: a column that does not exist, an `INSERT` whose value count does not match, an `UPDATE` with no filter, a variable never read, a foreign key with no index | the squiggles and the diagnostics panel; `f8` walks them |
 | **Where a name is defined** | `f12` |
 | **Where its foreign key leads** | `ctrl-f12`, which is Zed's go-to-type-definition |
 | **Everywhere a table or column is used** — whole identifiers, so searching `orders` does not also hand you `aud_orders` | `alt-shift-f12` |
