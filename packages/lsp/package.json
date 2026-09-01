@@ -1,6 +1,6 @@
 {
   "name": "@sqldex/lsp",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "description": "Language server for MySQL schema repositories: findings as you type, hover, completion, navigation and rename, with no database running.",
   "license": "MIT",
   "author": "Sergio Vallejo",
@@ -46,8 +46,8 @@
     "provenance": true
   },
   "dependencies": {
-    "@sqldex/core": "^0.9.3",
-    "@sqldex/syntax-antlr": "^0.9.3",
+    "@sqldex/core": "^0.10.0",
+    "@sqldex/syntax-antlr": "^0.10.0",
     "vscode-languageserver": "^10.1.0",
     "vscode-languageserver-textdocument": "^1.0.12"
   },
