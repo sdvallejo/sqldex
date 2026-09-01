@@ -42,6 +42,14 @@ export interface WorkerData {
   resultPort: MessagePort;
 }
 
+/**
+ * How long one shard may take before the run gives up on it and keeps its own files' findings out
+ * of the report. Generous, because it is not a performance budget: it exists so that a worker which
+ * never starts at all cannot hang the whole command, and a worker that does start signals in
+ * milliseconds. See the wait itself for why the `error` handler alone cannot serve that purpose.
+ */
+const WORKER_TIMEOUT_MS = 30_000;
+
 /** Running from source, as a checkout does, rather than from a package's own compiled `dist/`. */
 function isDevelopment(): boolean {
   return import.meta.url.endsWith(".ts");
@@ -73,19 +81,22 @@ export function checkSyntaxBatch(
   const shards = shard(jobs, poolSize);
   const doneFlags = new Int32Array(new SharedArrayBuffer(poolSize * Int32Array.BYTES_PER_ELEMENT));
   const execArgv = isDevelopment() ? ["--conditions=development"] : [];
+  // The compiled `dist/` this ships as has no `.ts` files, only the `.js` `tsc` emitted from them.
+  const workerFile = isDevelopment() ? "./syntax-worker.ts" : "./syntax-worker.js";
 
   const workers = shards.map((shardJobs, index) => {
     const { port1, port2 } = new MessageChannel();
     const workerData: WorkerData = { jobs: shardJobs, index, doneFlags, resultPort: port2 };
-    const worker = new Worker(new URL("./syntax-worker.ts", import.meta.url), {
+    const worker = new Worker(new URL(workerFile, import.meta.url), {
       execArgv,
       workerData,
       transferList: [port2],
     });
     worker.unref();
     // A worker that fails to even start (as opposed to `checkSyntax` throwing, caught inside it)
-    // never reaches the `finally` that flips its flag — without this, that shard hangs the run
-    // forever instead of losing just its own files' syntax findings.
+    // never reaches the `finally` that flips its flag. Flipping it here covers a failure this
+    // thread is awake to hear about — one arriving while an earlier shard's wait has already been
+    // woken. It cannot cover the first shard's own wait, which is what the timeout below is for.
     worker.on("error", (error: Error) => {
       onWarning?.(`syntax check worker failed: ${error.message}`);
       Atomics.store(doneFlags, index, 1);
@@ -94,16 +105,26 @@ export function checkSyntaxBatch(
     return { worker, port1, index };
   });
 
+  // Bounded, not indefinite. The `error` handler above cannot rescue a worker that never started:
+  // that event is delivered through this thread's own event loop, and a thread parked in
+  // `Atomics.wait` is precisely one that is not running it — so an unbounded wait here hangs the
+  // whole command, forever and silently, on any worker that fails to load. A timed-out shard loses
+  // its own files' syntax findings, exactly as the `message === undefined` case below does; every
+  // other shard is unaffected.
   for (const { worker, port1, index } of workers) {
-    Atomics.wait(doneFlags, index, 0);
-    const received = receiveMessageOnPort(port1);
-    const message = received?.message as ShardMessage | undefined;
-    if (message === undefined) {
-      // The worker's own `error` handler above flipped the flag with nothing posted to the port.
-    } else if (message.ok) {
-      for (const result of message.results) out.set(result.path, result.errors);
+    const wait = Atomics.wait(doneFlags, index, 0, WORKER_TIMEOUT_MS);
+    if (wait === "timed-out") {
+      onWarning?.("syntax check worker timed out");
     } else {
-      onWarning?.(`syntax check worker failed: ${message.error}`);
+      const received = receiveMessageOnPort(port1);
+      const message = received?.message as ShardMessage | undefined;
+      if (message === undefined) {
+        // The worker's own `error` handler above flipped the flag with nothing posted to the port.
+      } else if (message.ok) {
+        for (const result of message.results) out.set(result.path, result.errors);
+      } else {
+        onWarning?.(`syntax check worker failed: ${message.error}`);
+      }
     }
     port1.close();
     void worker.terminate();

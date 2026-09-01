@@ -36,7 +36,9 @@ export class SyntaxChecker {
     // it carries internal flags (`--stack-trace-limit`, TLS cipher lists, V8 snapshot flags…) that
     // are not valid to hand to a fresh `Worker`. Only the one condition this actually depends on.
     const execArgv = isDevelopment() ? ["--conditions=development"] : [];
-    const worker = new Worker(new URL("./syntax-worker.ts", import.meta.url), { execArgv });
+    // The compiled `dist/` this ships as has no `.ts` files, only the `.js` `tsc` emitted from them.
+    const workerFile = isDevelopment() ? "./syntax-worker.ts" : "./syntax-worker.js";
+    const worker = new Worker(new URL(workerFile, import.meta.url), { execArgv });
     worker.on("message", (response: SyntaxResponse) => {
       if (this.latestSeq.get(response.uri) !== response.seq) return;
       this.onResult(response);
