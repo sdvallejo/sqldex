@@ -1,0 +1,4 @@
+target/
+
+# What `zed: install dev extension` compiles here. A build output, and a megabyte of one.
+extension.wasm

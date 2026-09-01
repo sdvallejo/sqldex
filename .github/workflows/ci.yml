@@ -61,3 +61,16 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run check:packaged
+  zed:
+    # The Zed client is the one part of this repository that is not TypeScript, and the only one
+    # with a compile step that the other jobs would never reach. Zed builds an extension to
+    # `wasm32-wasip2`; a crate that does not survive that target is one nobody can install.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/zed
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add wasm32-wasip2
+      - run: cargo fmt --check
+      - run: cargo build --target wasm32-wasip2

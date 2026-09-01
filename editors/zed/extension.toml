@@ -1,0 +1,16 @@
+id = "sqldex-lsp"
+name = "sqldex"
+version = "0.1.0"
+schema_version = 1
+authors = ["Sergio Vallejo"]
+description = "Static analysis for MySQL schemas that live as .sql files — sqldex-lsp client."
+repository = "https://github.com/sdvallejo/sqldex"
+
+[language_servers.sqldex-lsp]
+name = "sqldex"
+languages = ["SQL"]
+
+# What the fetch-it-yourself path needs, for a machine with no `sqldex-lsp` of its own to find.
+[[capabilities]]
+kind = "npm:install"
+package = "@sqldex/lsp"
