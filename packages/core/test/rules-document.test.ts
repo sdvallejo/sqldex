@@ -288,6 +288,54 @@ test("but an unwrapped read next to a wrapped one is still reported", () => {
   ]);
 });
 
+test("GET DIAGNOSTICS fills its targets, which is what a HANDLER block is written around", () => {
+  const src = body(
+    "  DECLARE v_state CHAR(5);",
+    "  DECLARE v_errno int;",
+    "  DECLARE v_msg varchar(512);",
+    "  DECLARE EXIT HANDLER FOR SQLEXCEPTION",
+    "  BEGIN",
+    "    GET DIAGNOSTICS CONDITION 1 v_state = RETURNED_SQLSTATE, v_errno = MYSQL_ERRNO, v_msg = MESSAGE_TEXT;",
+    "    IF v_state <> '45000' THEN",
+    "      SELECT v_errno, v_msg;",
+    "    END IF;",
+    "    RESIGNAL;",
+    "  END;",
+    "  SELECT 1;",
+  );
+  assert.deepEqual(run(variableNeverAssigned, src), [], "the handler assigns all three");
+});
+
+test("the statement-information form of GET DIAGNOSTICS writes its target too", () => {
+  const src = body(
+    "  DECLARE v_n int;",
+    "  GET DIAGNOSTICS v_n = NUMBER;",
+    "  SELECT order_id FROM orders WHERE customer_id = v_n;",
+  );
+  assert.deepEqual(run(variableNeverAssigned, src), []);
+});
+
+test("GET CURRENT DIAGNOSTICS and GET STACKED DIAGNOSTICS are the same statement", () => {
+  const current = body("  DECLARE v_n int;", "  GET CURRENT DIAGNOSTICS v_n = NUMBER;", "  SELECT v_n;");
+  const stacked = body("  DECLARE v_n int;", "  GET STACKED DIAGNOSTICS v_n = NUMBER;", "  SELECT v_n;");
+  assert.deepEqual(run(variableNeverAssigned, current), []);
+  assert.deepEqual(run(variableNeverAssigned, stacked), []);
+});
+
+test("the condition number of a GET DIAGNOSTICS is read, not written", () => {
+  // The guard pair with the three above: a variable naming *which* condition to read is a read, and
+  // a rule that counted it as a write would stop reporting a condition number nothing ever set.
+  const src = body(
+    "  DECLARE v_which int;",
+    "  DECLARE v_state CHAR(5);",
+    "  GET DIAGNOSTICS CONDITION v_which v_state = RETURNED_SQLSTATE;",
+    "  SELECT v_state;",
+  );
+  assert.deepEqual(run(variableNeverAssigned, src), [
+    "v_which is never assigned, so this reads NULL",
+  ]);
+});
+
 test("an OUT argument counts as a write, because the callee fills it in", () => {
   const src = body(
     "  DECLARE v_got int;",

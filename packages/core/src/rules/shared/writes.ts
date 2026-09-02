@@ -1,25 +1,60 @@
 /** Which mentions of a name write it rather than read it. */
 
 import type { Routine } from "../../model/routine.ts";
+import type { Token } from "../../syntax/types.ts";
 import { kw, matchingParen, punct, qualifiedName, splitCommas } from "../../syntax/fast/tok.ts";
 import type { BaseContext } from "../rule.ts";
 
 export interface AssignmentTargets {
-  /** Token indexes that are the destination of a `SET` or an `INTO`. */
+  /** Token indexes that are the destination of a `SET`, a `GET DIAGNOSTICS` or an `INTO`. */
   written: ReadonlySet<number>;
   /** Token indexes sitting in an `OUT`/`INOUT` argument of a `CALL`, which the callee fills in. */
   callOuts: ReadonlySet<number>;
 }
 
 /**
+ * Walks a comma-separated `target = value` list starting at `from`, marking each target, and
+ * returns the index it stopped at.
+ *
+ * Shared by the two statements written this way — `SET v = …` and `GET DIAGNOSTICS … v = …` — which
+ * differ only in what precedes the list.
+ */
+function assignmentList(tokens: readonly Token[], from: number, written: Set<number>): number {
+  let j = from;
+  while (tokens[j]?.t === "id" && punct(tokens[j + 1], "=")) {
+    written.add(j);
+
+    // Skip the right-hand side, up to the comma that opens the next assignment. Reads in there
+    // — the `v` of `SET v = v + 1` — stay reads, which is correct: the variable is used.
+    let depth = 0;
+    let k = j + 2;
+    while (k < tokens.length) {
+      const t = tokens[k]!;
+      if (t.t === "punct") {
+        if (t.v === "(") depth++;
+        else if (t.v === ")") depth--;
+        else if (depth === 0 && (t.v === ";" || t.v === ",")) break;
+      }
+      k++;
+    }
+
+    if (punct(tokens[k], ",")) j = k + 1;
+    else break;
+  }
+  return j;
+}
+
+/**
  * Token indexes that **write** a local rather than read it.
  *
- * Two forms write one in the statement itself: `SET v = …`, with its comma-separated list, and the
- * `INTO v1, v2` of a `SELECT … INTO` or a `FETCH … INTO`. Telling a write from a read is the whole
- * basis of the variable rules — a variable that only ever appears as a destination is a variable
- * nobody uses.
+ * Three forms write one in the statement itself: `SET v = …`, with its comma-separated list, the
+ * `INTO v1, v2` of a `SELECT … INTO` or a `FETCH … INTO`, and the `v = ITEM` list of a
+ * `GET DIAGNOSTICS` — the last of which is how a `DECLARE … HANDLER` block gets at the error it just
+ * caught, and reading it as anything but a write makes every such handler look like it is testing
+ * variables nothing ever filled in. Telling a write from a read is the whole basis of the variable
+ * rules — a variable that only ever appears as a destination is a variable nobody uses.
  *
- * A third form, an argument in an `OUT`/`INOUT` position of a `CALL`, comes back **separately**,
+ * A fourth form, an argument in an `OUT`/`INOUT` position of a `CALL`, comes back **separately**,
  * because the two rules that need this disagree about it and both are right:
  *
  *   - To "never assigned, so this reads NULL" it is a write. `DECLARE v INT; CALL sp(x, v); … v …`
@@ -40,28 +75,22 @@ export function assignmentTargets(ctx: BaseContext): AssignmentTargets {
   let i = 0;
   while (i < tokens.length) {
     if (kw(tokens[i], "SET")) {
+      i = assignmentList(tokens, i + 1, written) + 1;
+    } else if (kw(tokens[i], "GET")) {
+      // `GET [CURRENT | STACKED] DIAGNOSTICS [CONDITION n] v = ITEM, …` — the fourth form, and the
+      // one a `DECLARE … HANDLER` block is written around. `GET_LOCK` is its own token, so testing
+      // the bare word here does not catch it.
       let j = i + 1;
-      while (tokens[j]?.t === "id" && punct(tokens[j + 1], "=")) {
-        written.add(j);
-
-        // Skip the right-hand side, up to the comma that opens the next assignment. Reads in there
-        // — the `v` of `SET v = v + 1` — stay reads, which is correct: the variable is used.
-        let depth = 0;
-        let k = j + 2;
-        while (k < tokens.length) {
-          const t = tokens[k]!;
-          if (t.t === "punct") {
-            if (t.v === "(") depth++;
-            else if (t.v === ")") depth--;
-            else if (depth === 0 && (t.v === ";" || t.v === ",")) break;
-          }
-          k++;
-        }
-
-        if (punct(tokens[k], ",")) j = k + 1;
-        else break;
+      if (kw(tokens[j], "CURRENT") || kw(tokens[j], "STACKED")) j++;
+      if (kw(tokens[j], "DIAGNOSTICS")) {
+        j++;
+        // The condition number is **read**, never written: `GET DIAGNOSTICS CONDITION v_n v = …`
+        // takes the number out of `v_n`, and marking it a write would make it look unused.
+        if (kw(tokens[j], "CONDITION")) j += 2;
+        i = assignmentList(tokens, j, written) + 1;
+      } else {
+        i = j;
       }
-      i = j + 1;
     } else if (kw(tokens[i], "INTO")) {
       // `INSERT INTO orders` comes through here and marks `orders`, which is harmless: only names
       // that are also declared locals are ever looked up in the result.
