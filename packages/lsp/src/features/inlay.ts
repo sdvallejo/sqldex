@@ -89,13 +89,13 @@ function standingsIn(
 /**
  * The parameter names of a `CALL`, drawn in front of the arguments.
  *
- * `CALL ssp_anular_operacion(1, 4, @e)` says nothing about what those numbers are, and the signature
+ * `CALL sp_void_payment(1, 4, @e)` says nothing about what those numbers are, and the signature
  * that would say it is in another file. This is the one hint whose kind really is `Parameter`.
  *
  * Three decisions, each one about not saying what the line already says:
  *
- *   - **An argument written with the parameter's own name gets none.** `CALL sp(pIdOrden)` needs no
- *     label reading `pIdOrden:`, the same way `FROM customers` needs no note that `customers` is
+ *   - **An argument written with the parameter's own name gets none.** `CALL sp(p_order_id)` needs no
+ *     label reading `p_order_id:`, the same way `FROM customers` needs no note that `customers` is
  *     `customers`. This is what keeps a procedure that forwards its parameters — the common shape in
  *     a repo of procedures calling procedures — from being covered in hints that repeat the code.
  *   - **`OUT` and `INOUT` are named as such**, because that is the fact a reader cannot see and most

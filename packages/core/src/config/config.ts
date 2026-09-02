@@ -133,7 +133,7 @@ export const defaults: Config = {
     column_types: true,
     // `o` gains `shipments`, but only the **first** time it appears in a statement.
     alias_tables: true,
-    // `CALL sp_settle(1, @t)` gains `pIdOrden:` and `OUT pTotal:`. Only where the argument does not
+    // `CALL sp_settle(1, @t)` gains `p_order_id:` and `OUT p_total:`. Only where the argument does not
     // already say it: an argument written with the parameter's own name needs no label.
     call_parameters: true,
   },
