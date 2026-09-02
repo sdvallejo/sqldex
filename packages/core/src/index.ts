@@ -67,6 +67,7 @@ export type {
   KeyKind,
   Table,
   Trigger,
+  TriggerAudit,
   TriggerEvent,
   TriggerTiming,
 } from "./model/table.ts";
