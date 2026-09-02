@@ -498,6 +498,13 @@ test("a reserved word is not a column, unless it was written delimited", () => {
   assert.deepEqual(run(unqualifiedColumn, "SELECT order_id FROM orders WHERE status IS NOT NULL;"), []);
 });
 
+test("RETURNING is a JSON_VALUE clause, not a column of the table being read", () => {
+  // Written bare inside the call, it reads exactly like a column name nothing declares — which is
+  // what every typed read of a JSON argument in a routine was being reported as.
+  const src = "SELECT order_id FROM orders WHERE order_id = JSON_VALUE(@doc, '$.order.id' RETURNING UNSIGNED);";
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
 test("a parameter of the routine the statement is in is not a column", () => {
   assert.deepEqual(run(unqualifiedColumn, body("  SELECT order_id FROM orders WHERE order_id = p_id;")), []);
 });

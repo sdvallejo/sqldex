@@ -6,6 +6,10 @@
  * decision has to be made about a **bare** identifier. Everywhere else the context already says
  * what is being looked at. It does not try to be MySQL's full list — that is around 700 words —
  * but to cover what shows up in hand-written SQL, which is what gets checked.
+ *
+ * The paragraphs after the main run are words that are only syntax **inside one statement or one
+ * function** — a `GET DIAGNOSTICS` item, a `JSON_VALUE` clause. They are here for the same reason
+ * as the rest: written bare, each of them otherwise reads as a column no table has.
  */
 
 const WORDS = `
@@ -49,6 +53,8 @@ WORK WRITE XOR YEAR YEARWEEK ZEROFILL
 
 DIAGNOSTICS NUMBER MESSAGE_TEXT MYSQL_ERRNO CLASS_ORIGIN SUBCLASS_ORIGIN CONSTRAINT_CATALOG
 CONSTRAINT_SCHEMA CONSTRAINT_NAME CATALOG_NAME SCHEMA_NAME TABLE_NAME COLUMN_NAME CURSOR_NAME
+
+RETURNING
 `;
 
 /** Reserved words, types and functions. Members are UPPER CASE. */
