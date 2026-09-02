@@ -187,7 +187,7 @@ test("nothing is invented for a column the table does not have", () => {
 test("inside a trigger, NEW and OLD are the row of its table", () => {
   const source = readFileSync(join(AUDITED, "tables/movements.sql"), "utf8");
   const labels = hints(source, "tables/movements.sql", audited, AUDITED).filter((hint) => !hint.startsWith(":"));
-  assert.deepEqual(labels, ["movements@11:87", "movements@16:87"]);
+  assert.deepEqual(labels, ["movements@12:87", "movements@17:87"]);
 });
 
 test("a range is honoured, so a long file costs only what is on screen", () => {

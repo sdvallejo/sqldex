@@ -40,6 +40,7 @@ function projectCatalog(schema: string): RuleCatalog {
     trigger: () => undefined,
     tempTable: () => undefined,
     tables,
+    triggers: new Map(),
     index: (_key, build) => build(tables),
   };
 }

@@ -148,6 +148,7 @@ function catalogOf(): RuleCatalog {
     trigger: () => undefined,
     tempTable: (name) => (name?.toLowerCase() === TEMP.name ? TEMP : undefined),
     tables,
+    triggers: new Map(),
     index: (_key, build) => build(tables),
   };
 }

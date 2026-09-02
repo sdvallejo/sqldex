@@ -107,6 +107,14 @@ export interface Table {
   file?: string;
 }
 
+/** What a trigger's body says about auditing, when the `aud_` convention is in use. */
+export interface TriggerAudit {
+  /** Columns the body reads as `NEW.col` / `OLD.col`, folded. */
+  columns: ReadonlySet<string>;
+  /** Whether the body inserts into the `aud_` twin of the table it is on. */
+  writesAudit: boolean;
+}
+
 export type TriggerTiming = "BEFORE" | "AFTER";
 export type TriggerEvent = "INSERT" | "UPDATE" | "DELETE";
 
@@ -120,6 +128,12 @@ export interface Trigger {
   nameSpan: Span;
   /** Token range of the body, for the diagnostics. */
   body: { from: number; to: number };
+  /**
+   * What the body audits, when the `aud_` convention is in use. Read from the same token stream the
+   * body range came from and set by the catalog, not by the parser — the audit rules need it from a
+   * table, where no trigger's tokens are in reach.
+   */
+  audit?: TriggerAudit;
   /** Which file defines it. Set by the catalog, not by the parser. */
   file?: string;
 }

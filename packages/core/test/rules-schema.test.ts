@@ -21,7 +21,7 @@ import { test } from "node:test";
 
 import { defaults } from "../src/config/config.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
-import type { Table } from "../src/model/table.ts";
+import type { Table, Trigger } from "../src/model/table.ts";
 import { check, Registry } from "../src/rules/registry.ts";
 import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
 import {
@@ -37,6 +37,7 @@ import {
   noPrimaryKey,
   redundantIndex,
 } from "../src/rules/index.ts";
+import { triggerAudit } from "../src/analysis/audit.ts";
 import { parseDDL } from "../src/syntax/fast/ddl.ts";
 import { tokenize } from "../src/syntax/fast/lexer.ts";
 
@@ -45,16 +46,26 @@ import { tokenize } from "../src/syntax/fast/lexer.ts";
  * since a table usually needs to be in the catalog to be talked about.
  */
 function run(rule: Rule, src: string, schema = src): string[] {
+  const lexed = tokenize(schema);
+  const parsed = parseDDL(mysql, schema, lexed);
   const tables = new Map<string, Table>();
-  for (const table of parseDDL(mysql, schema, tokenize(schema)).tables) {
+  for (const table of parsed.tables) {
     if (!table.temporary) tables.set(table.name.toLowerCase(), table);
+  }
+  // The catalog is what fills this in from the same token stream the body range came from, and the
+  // audit rules read it rather than a trigger's tokens — so a hand-built catalog has to do it too.
+  const triggers = new Map<string, Trigger>();
+  for (const trigger of parsed.triggers) {
+    trigger.audit = triggerAudit(mysql, lexed.tokens, trigger);
+    triggers.set(trigger.name.toLowerCase(), trigger);
   }
   const catalog: RuleCatalog = {
     table: (name) => (name === undefined ? undefined : tables.get(name.toLowerCase())),
     routine: () => undefined,
-    trigger: () => undefined,
+    trigger: (name) => (name === undefined ? undefined : triggers.get(name.toLowerCase())),
     tempTable: () => undefined,
     tables,
+    triggers,
     index: (_key, build) => build(tables),
   };
 
@@ -411,6 +422,18 @@ const AUDITED = [
   ");",
 ].join("\n");
 
+/** The twin as the convention wants it: the audit prefix, then every column of `members`. */
+const TWIN = [
+  "CREATE TABLE aud_members (",
+  "  aud_id int NOT NULL,",
+  "  changed_at datetime NOT NULL,",
+  "  member_id int NOT NULL,",
+  "  status char(1) NOT NULL,",
+  "  joined_at datetime NOT NULL,",
+  "  PRIMARY KEY (aud_id)",
+  ");",
+].join("\n");
+
 test("a column the aud_ twin does not have is reported, on the column", () => {
   const twin = [
     "CREATE TABLE aud_members (",
@@ -450,7 +473,7 @@ test("an audit trigger that skips a column says which, once, on the trigger", ()
     "  INSERT INTO aud_members VALUES (0, NOW(), NEW.member_id, NEW.status);",
     "END;",
   ].join("\n");
-  assert.deepEqual(run(auditTriggerMissingColumn, trigger, `${AUDITED}\n${trigger}`), [
+  assert.deepEqual(run(auditTriggerMissingColumn, trigger, `${AUDITED}\n${TWIN}\n${trigger}`), [
     "members_ai does not audit joined_at",
   ]);
 });
@@ -462,7 +485,7 @@ test("NEW and OLD both count as auditing a column", () => {
     "  INSERT INTO aud_members VALUES (0, NOW(), NEW.member_id, NEW.status, NEW.joined_at);",
     "END;",
   ].join("\n");
-  assert.deepEqual(run(auditTriggerMissingColumn, trigger, `${AUDITED}\n${trigger}`), []);
+  assert.deepEqual(run(auditTriggerMissingColumn, trigger, `${AUDITED}\n${TWIN}\n${trigger}`), []);
 });
 
 test("a trigger that does not write to the aud_ table is not an audit trigger", () => {
@@ -473,7 +496,87 @@ test("a trigger that does not write to the aud_ table is not an audit trigger", 
     "  IF NEW.status = 'X' THEN SET NEW.status = 'A'; END IF;",
     "END;",
   ].join("\n");
-  assert.deepEqual(run(auditTriggerMissingColumn, trigger, `${AUDITED}\n${trigger}`), []);
+  assert.deepEqual(run(auditTriggerMissingColumn, trigger, `${AUDITED}\n${TWIN}\n${trigger}`), []);
+});
+
+test("a column the twin has no room for is not asked of the trigger", () => {
+  // The twin has nowhere to put it, so a trigger copying it would have nowhere to write. Whether
+  // that is drift is `audit/table-out-of-sync`'s question, and it can see all three sides.
+  const twin = [
+    "CREATE TABLE aud_members (",
+    "  aud_id int NOT NULL,",
+    "  changed_at datetime NOT NULL,",
+    "  member_id int NOT NULL,",
+    "  status char(1) NOT NULL,",
+    "  PRIMARY KEY (aud_id)",
+    ");",
+  ].join("\n");
+  const trigger = [
+    "CREATE TRIGGER members_ai AFTER INSERT ON members FOR EACH ROW BEGIN",
+    "  INSERT INTO aud_members VALUES (0, NOW(), NEW.member_id, NEW.status);",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(auditTriggerMissingColumn, trigger, `${AUDITED}\n${twin}\n${trigger}`), []);
+});
+
+test("a column the twin lacks and no audit trigger copies is a decision, not drift", () => {
+  const twin = [
+    "CREATE TABLE aud_members (",
+    "  aud_id int NOT NULL,",
+    "  changed_at datetime NOT NULL,",
+    "  member_id int NOT NULL,",
+    "  status char(1) NOT NULL,",
+    "  PRIMARY KEY (aud_id)",
+    ");",
+  ].join("\n");
+  const trigger = [
+    "CREATE TRIGGER members_ai AFTER INSERT ON members FOR EACH ROW BEGIN",
+    "  INSERT INTO aud_members VALUES (0, NOW(), NEW.member_id, NEW.status);",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(auditTableOutOfSync, AUDITED, `${AUDITED}\n${twin}\n${trigger}`), []);
+});
+
+test("but a column a trigger is still writing, with no twin column to hold it, is drift", () => {
+  // The guard pair: the three sides disagree, and this is the shape where the value really is being
+  // dropped. Standing down here would make deleting the column from the twin a way to silence it.
+  const twin = [
+    "CREATE TABLE aud_members (",
+    "  aud_id int NOT NULL,",
+    "  changed_at datetime NOT NULL,",
+    "  member_id int NOT NULL,",
+    "  status char(1) NOT NULL,",
+    "  PRIMARY KEY (aud_id)",
+    ");",
+  ].join("\n");
+  const trigger = [
+    "CREATE TRIGGER members_ai AFTER INSERT ON members FOR EACH ROW BEGIN",
+    "  INSERT INTO aud_members VALUES (0, NOW(), NEW.member_id, NEW.status, NEW.joined_at);",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(auditTableOutOfSync, AUDITED, `${AUDITED}\n${twin}\n${trigger}`), [
+    "audit table aud_members has no column joined_at",
+  ]);
+});
+
+test("a trigger that is not an audit trigger does not get a say either way", () => {
+  const twin = [
+    "CREATE TABLE aud_members (",
+    "  aud_id int NOT NULL,",
+    "  changed_at datetime NOT NULL,",
+    "  member_id int NOT NULL,",
+    "  status char(1) NOT NULL,",
+    "  PRIMARY KEY (aud_id)",
+    ");",
+  ].join("\n");
+  const trigger = [
+    "CREATE TRIGGER members_bi BEFORE INSERT ON members FOR EACH ROW BEGIN",
+    "  IF NEW.status = 'X' THEN SET NEW.status = 'A'; END IF;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(auditTableOutOfSync, AUDITED, `${AUDITED}\n${twin}\n${trigger}`), [
+    "audit table aud_members has no column joined_at",
+  ]);
 });
 
 test("a trigger on a table the catalog does not have is not judged", () => {

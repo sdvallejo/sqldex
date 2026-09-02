@@ -25,7 +25,7 @@
  */
 
 import type { Dialect } from "../dialects/dialect.ts";
-import type { Column, Table } from "../model/table.ts";
+import type { Column, Table, Trigger, TriggerAudit } from "../model/table.ts";
 import { kw, matchingParen, punct, splitCommas } from "../syntax/fast/tok.ts";
 import type { Span, Token, TokenRange } from "../syntax/types.ts";
 
@@ -45,6 +45,47 @@ export function auditTableName(table: string): string {
  */
 export function auditDefinition(definition: string): string {
   return definition.replace(/\s+auto_increment/gi, "");
+}
+
+/**
+ * Reads a trigger body for the two facts the audit rules need.
+ *
+ * The triggers insert positionally, so a column is audited exactly when it appears as `NEW.col` or
+ * `OLD.col` somewhere in the body. `NEW` and `OLD` are collected together on purpose: an
+ * `AFTER UPDATE` trigger writes two rows, the before state with `OLD.` and the after with `NEW.`,
+ * and either mention proves the column is carried.
+ *
+ * `writesAudit` is the guard that makes any of it mean something. Without it the question reads as
+ * "does this trigger mention every column", which is nonsense for a trigger that exists to enforce a
+ * business rule.
+ *
+ * It lives here, and is stored on the `Trigger` by the catalog, because the two rules that need it
+ * stand in different places: one is handed the trigger's own tokens, and the other is looking at a
+ * table and cannot see any trigger's body at all. Two implementations of the same question would
+ * eventually disagree, and the pair of rules only works while they agree.
+ */
+export function triggerAudit(dialect: Dialect, tokens: readonly Token[], trigger: Trigger): TriggerAudit {
+  const target = dialect.foldIdentifier(auditTableName(trigger.table), false);
+  const columns = new Set<string>();
+  let writesAudit = false;
+
+  for (let i = trigger.body.from; i <= trigger.body.to; i++) {
+    const t = tokens[i];
+    if (!t) break;
+    if (t.t === "punct" && t.v === ".") {
+      const qualifier = tokens[i - 1];
+      const name = tokens[i + 1];
+      if (qualifier && name?.t === "id") {
+        const which = qualifier.v.toUpperCase();
+        if (which === "NEW" || which === "OLD") columns.add(dialect.foldIdentifier(name.v, name.q ?? false));
+      }
+    } else if (kw(t, "INTO")) {
+      const into = tokens[i + 1];
+      if (into && dialect.foldIdentifier(into.v, into.q ?? false) === target) writesAudit = true;
+    }
+  }
+
+  return { columns, writesAudit };
 }
 
 /** Columns of `X` that `aud_X` does not carry, in `X`'s own order. */

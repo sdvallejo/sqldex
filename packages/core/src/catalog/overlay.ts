@@ -83,6 +83,7 @@ export function withOwnDefinitions(
     // has, so a census of every table's columns or of who claims a constraint name is the same
     // answer either way — and recomputing it per keystroke would cost the whole schema.
     tables: base.tables,
+    triggers: base.triggers,
     index: (key, build) => base.index(key, build),
   };
 }

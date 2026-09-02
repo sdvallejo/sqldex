@@ -78,6 +78,7 @@ function catalogOf(schema: string, routineSrc = ROUTINES): RuleCatalog {
     trigger: () => undefined,
     tempTable: () => undefined,
     tables,
+    triggers: new Map(),
     index: (_key, build) => build(tables),
   };
 }

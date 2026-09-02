@@ -6,5 +6,6 @@ CREATE TABLE `aud_movements` (
   `movement_id` int NOT NULL,
   `account_id` int NOT NULL,
   `amount` decimal(10,2) NOT NULL,
+  `channel` char(3) NOT NULL,
   PRIMARY KEY (`aud_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -197,6 +197,7 @@ test("the missing column lands in the twin where the table has it", () => {
   \`movement_id\` int NOT NULL,
   \`account_id\` int NOT NULL,
   \`amount\` decimal(10,2) NOT NULL,
+  \`channel\` char(3) NOT NULL,
   \`note\` varchar(200) DEFAULT NULL,
   PRIMARY KEY (\`aud_id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -207,8 +208,8 @@ test("the missing column lands in the twin where the table has it", () => {
 test("both triggers come out carrying every column, each with its own qualifier", () => {
   const action = pick(codeActions(inMovements()), "Rewrite the 2 audit triggers of movements");
   const out = applied(action, MOVEMENTS, readFileSync(MOVEMENTS, "utf8"));
-  assert.match(out, /'I', NEW\.movement_id, NEW\.account_id, NEW\.amount, NEW\.note\)/);
-  assert.match(out, /'D', OLD\.movement_id, OLD\.account_id, OLD\.amount, OLD\.note\)/);
+  assert.match(out, /'I', NEW\.movement_id, NEW\.account_id, NEW\.amount, NEW\.channel, NEW\.note\)/);
+  assert.match(out, /'D', OLD\.movement_id, OLD\.account_id, OLD\.amount, OLD\.channel, OLD\.note\)/);
   // The bookkeeping slots are none of the rewrite's business and are still there.
   assert.equal(out.match(/SUBSTRING_INDEX\(USER\(\), '@', 1\)/g)?.length, 2);
 });

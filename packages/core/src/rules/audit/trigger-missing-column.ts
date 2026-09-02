@@ -1,5 +1,4 @@
-import { auditTableName } from "../../analysis/audit.ts";
-import { kw } from "../../syntax/fast/tok.ts";
+import { auditTableName, triggerAudit } from "../../analysis/audit.ts";
 import type { Rule } from "../rule.ts";
 
 export const auditTriggerMissingColumn: Rule = {
@@ -18,9 +17,13 @@ carried.
 Unlike \`audit/table-out-of-sync\`, this one can say data is being lost: the column exists on both
 sides and the trigger simply never reads it.
 
-**The guard is what makes the rule mean anything:** only triggers that actually insert into
-\`aud_<table>\` are checked. Without it the rule reads as "every trigger must mention every column",
-which is nonsense for a trigger that exists to enforce a business rule.
+**Two guards, and each is what makes the rule mean anything.** Only triggers that actually insert
+into \`aud_<table>\` are checked — without that the rule reads as "every trigger must mention every
+column", which is nonsense for a trigger that exists to enforce a business rule. And only columns the
+twin actually has are asked for: where the twin has no column to put a value in, a trigger copying it
+would have nowhere to write, so reporting it asks for something that cannot be done. That case is
+\`audit/table-out-of-sync\`'s to judge, and it has its own reason to stay quiet about a column all
+three sides agree is not audited.
 
 One diagnostic per trigger, listing the columns it misses, reported on the trigger's name — because
 the thing you go and fix is the trigger, once, not each column in turn.`,
@@ -28,33 +31,17 @@ the thing you go and fix is the trigger, once, not each column in turn.`,
   check(ctx) {
     const table = ctx.catalog.table(ctx.trigger.table);
     if (!table) return;
+    const twin = ctx.catalog.table(auditTableName(ctx.trigger.table));
+    if (!twin) return;
 
-    const target = ctx.dialect.foldIdentifier(auditTableName(ctx.trigger.table), false);
-    const audited = new Set<string>();
-    let writesAudit = false;
-
-    for (let i = ctx.trigger.body.from; i <= ctx.trigger.body.to; i++) {
-      const t = ctx.tokens[i];
-      if (!t) break;
-      if (t.t === "punct" && t.v === ".") {
-        const qualifier = ctx.tokens[i - 1];
-        const name = ctx.tokens[i + 1];
-        if (qualifier && name?.t === "id") {
-          const which = qualifier.v.toUpperCase();
-          if (which === "NEW" || which === "OLD") {
-            audited.add(ctx.dialect.foldIdentifier(name.v, name.q ?? false));
-          }
-        }
-      } else if (kw(t, "INTO")) {
-        const into = ctx.tokens[i + 1];
-        if (into && ctx.dialect.foldIdentifier(into.v, into.q ?? false) === target) writesAudit = true;
-      }
-    }
-
+    const { columns: audited, writesAudit } = triggerAudit(ctx.dialect, ctx.tokens, ctx.trigger);
     if (!writesAudit) return;
 
     const missing = table.columns
-      .filter((c) => !audited.has(ctx.dialect.foldIdentifier(c.name, c.quoted)))
+      .filter((c) => {
+        const key = ctx.dialect.foldIdentifier(c.name, c.quoted);
+        return twin.byName.has(key) && !audited.has(key);
+      })
       .map((c) => c.name);
     if (missing.length === 0) return;
 

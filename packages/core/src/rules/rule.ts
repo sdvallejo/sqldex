@@ -95,6 +95,15 @@ export interface RuleCatalog extends CatalogLookup {
   /** Every table the project defines, by folded name. */
   readonly tables: ReadonlyMap<string, Table>;
   /**
+   * Every trigger the project defines, by folded name.
+   *
+   * Here for the one question a table cannot answer about itself: what its triggers do. A
+   * `table`-scope rule is handed the table's model and the file it is in, never another file's
+   * tokens, so anything a rule needs to know about a trigger's body has to have been read when the
+   * trigger was parsed — which is what `Trigger.audit` carries.
+   */
+  readonly triggers: ReadonlyMap<string, Trigger>;
+  /**
    * A derivation over **all** the tables at once, computed on first ask and kept.
    *
    * The questions that need this are the ones no single table can answer — how a column name is

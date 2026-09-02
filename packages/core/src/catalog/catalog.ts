@@ -14,13 +14,14 @@
 
 import { readFileSync, statSync } from "node:fs";
 
+import { triggerAudit } from "../analysis/audit.ts";
 import { collect as collectValues, finish as finishValues, type ColumnValue } from "../analysis/values.ts";
 import type { Dialect } from "../dialects/dialect.ts";
 import type { Config, SourceKind } from "../config/config.ts";
 import type { Routine } from "../model/routine.ts";
 import type { ColumnType, ForeignKey, Table, Trigger } from "../model/table.ts";
 import type { Span } from "../syntax/types.ts";
-import { parseDDL } from "../syntax/fast/ddl.ts";
+import { parseDDL, type ParsedDDL } from "../syntax/fast/ddl.ts";
 import { tokenize } from "../syntax/fast/lexer.ts";
 import { parseHeader, parseRoutines } from "../syntax/fast/routine.ts";
 import { collect as collectLocals } from "../analysis/locals.ts";
@@ -142,7 +143,7 @@ function parseFile(dialect: Dialect, src: string, kind: SourceKind): Parsed {
   if (kind === "routines") return { tables: [], routines: parseHeader(src), triggers: [] };
 
   if (kind === "tables") {
-    const parsed = parseDDL(dialect, src, tokenize(src));
+    const parsed = parseDDLWithAudit(dialect, src);
     return { tables: parsed.tables, routines: [], triggers: parsed.triggers };
   }
 
@@ -150,11 +151,26 @@ function parseFile(dialect: Dialect, src: string, kind: SourceKind): Parsed {
   let tables: Table[] = [];
   let triggers: Trigger[] = [];
   if (mightHoldTable(src)) {
-    const parsed = parseDDL(dialect, src, tokenize(src));
+    const parsed = parseDDLWithAudit(dialect, src);
     tables = parsed.tables;
     triggers = parsed.triggers;
   }
   return { tables, routines: parseHeader(src), triggers };
+}
+
+/**
+ * `parseDDL`, plus what each trigger's body audits.
+ *
+ * Read here rather than in the parser because it is a convention rather than syntax, and stored on
+ * the trigger because the rule that needs it is looking at a **table** — from there no trigger's
+ * tokens are in reach, and re-reading the file to get at them would be the one thing the catalog is
+ * built not to do. It costs one more walk of a range this pass already delimited.
+ */
+function parseDDLWithAudit(dialect: Dialect, src: string): ParsedDDL {
+  const lexed = tokenize(src);
+  const parsed = parseDDL(dialect, src, lexed);
+  for (const trigger of parsed.triggers) trigger.audit = triggerAudit(dialect, lexed.tokens, trigger);
+  return parsed;
 }
 
 /** Integer types, whose display width MySQL 8 ignores: `int(11)` and `int` are one type. */
