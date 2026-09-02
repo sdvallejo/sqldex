@@ -1036,6 +1036,37 @@ test("the operators built for many rows are not misread as asking for one", () =
   assert.deepEqual(run(scalarSubqueryManyRows, exists), []);
 });
 
+test("IN over a subquery that yields one value finishes the key, and over one that may not does not", () => {
+  // The last line of an order, written the way it usually is. The inner `MAX` has no `GROUP BY`, so
+  // it is one value, `line_no` is pinned, and `(order_id, line_no)` is covered whole.
+  const latest =
+    "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 " +
+    "AND l.line_no IN (SELECT MAX(line_no) FROM order_lines WHERE order_id = 7));";
+  assert.deepEqual(run(scalarSubqueryManyRows, latest), []);
+
+  // `LIMIT 1` is the other way of yielding exactly one.
+  const limited =
+    "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 " +
+    "AND l.line_no IN (SELECT line_no FROM order_lines WHERE order_id = 7 LIMIT 1));";
+  assert.deepEqual(run(scalarSubqueryManyRows, limited), []);
+
+  // A `GROUP BY` hands the aggregate back once per group, so the `IN` is free to match several lines.
+  const grouped =
+    "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 " +
+    "AND l.line_no IN (SELECT MAX(line_no) FROM order_lines GROUP BY order_id));";
+  assert.equal(run(scalarSubqueryManyRows, grouped).length, 1);
+
+  // No aggregate and no limit: an ordinary many-row subquery, which is what `IN` is normally for.
+  const many =
+    "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 " +
+    "AND l.line_no IN (SELECT line_no FROM order_lines WHERE order_id = 7));";
+  assert.equal(run(scalarSubqueryManyRows, many).length, 1);
+
+  // A list of literals says the author expects more than one.
+  const list = "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 AND l.line_no IN (1, 2));";
+  assert.equal(run(scalarSubqueryManyRows, list).length, 1);
+});
+
 test("a derived table is a query, not a value", () => {
   assert.deepEqual(
     run(scalarSubqueryManyRows, "SELECT x.amount FROM (SELECT l.amount FROM order_lines l WHERE l.order_id = 7) x;"),

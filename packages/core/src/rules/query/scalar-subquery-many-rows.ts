@@ -61,7 +61,10 @@ the same \`WHERE\` finishes a key against one table and starts one against anoth
 
 Three shapes make one row certain, and any of them is enough for silence:
 
-  - **The whole key.** Every column of a primary key or unique index fixed to a value.
+  - **The whole key.** Every column of a primary key or unique index fixed to a value. \`IN\` counts as
+    fixing one when what it reads is a single value — \`line_no IN (SELECT MAX(line_no) …)\`, which is
+    how the last row of a group gets written — because a subquery that folds to one row is an \`=\`
+    spelled differently. A list of literals is not: there, several is what \`IN\` is for.
   - **An aggregate**, which folds a group into one row — but not with a \`GROUP BY\`, which hands back
     one row *per group* and is as free to return several as no aggregate at all.
   - **\`LIMIT 1\`**, which is the author saying *any one of them will do*.

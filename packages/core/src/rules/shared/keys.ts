@@ -7,9 +7,10 @@
  */
 
 import type { Table } from "../../model/table.ts";
-import { kw, kwAny, punct } from "../../syntax/fast/tok.ts";
+import { kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
 import type { StatementContext } from "../rule.ts";
+import { foldsToOneRow, limitsToOne } from "./rows.ts";
 
 /**
  * Is `wanted` the leftmost prefix of `columns`, position by position?
@@ -40,6 +41,12 @@ const WHERE_BOUNDARY: ReadonlySet<string> = new Set(["GROUP", "ORDER", "HAVING",
  * not do. What is on the other side of the `=` is not examined, because it does not matter — a
  * parameter, a literal or another relation's column all hold still while the table is scanned.
  *
+ * `col IN (SELECT MAX(col) …)` counts too, and has to. A subquery that folds to one row or takes
+ * `LIMIT 1` yields one value, so `IN` over it is the `=` written another way — and it is how the
+ * latest row per group is spelled. Reading only `=` would let the same predicate pin a key or not
+ * depending on which spelling the author reached for. A list of literals, or a subquery free to
+ * return several, is left alone: there, more than one value is what `IN` is for.
+ *
  * References qualified by `label` always count. Bare names count only when `bare` says so — a caller
  * reading one relation's `WHERE` out of a join cannot tell whose column an unqualified name is,
  * while a caller looking at a query over a single table has nothing else it could belong to.
@@ -64,6 +71,22 @@ export function pinnedByWhere(
   if (where === -1) return [];
 
   const columns: string[] = [];
+
+  /**
+   * Records the column an operand names, given where a qualified `t.col` would start and where a
+   * bare `col` would sit — the two spellings land at different offsets from the operator.
+   */
+  const operand = (qualified: number, plain: number): void => {
+    if (tokens[qualified]?.t === "id" && punct(tokens[qualified + 1], ".") && tokens[qualified + 2]?.t === "id") {
+      if (fold(tokens[qualified]!.v) === label) columns.push(tokens[qualified + 2]!.v);
+      return;
+    }
+    if (!bare) return;
+    const name = tokens[plain];
+    if (name?.t !== "id" || punct(tokens[plain - 1], ".") || punct(tokens[plain + 1], ".")) return;
+    columns.push(name.v);
+  };
+
   depth = 0;
   for (let i = where + 1; i <= scope.to; i++) {
     const t = tokens[i]!;
@@ -76,16 +99,13 @@ export function pinnedByWhere(
     } else if (depth === 0 && (kwAny(t, WHERE_BOUNDARY) !== undefined || punct(t, ";"))) {
       break;
     } else if (depth === 0 && punct(t, "=")) {
-      for (const side of [i - 3, i + 1] as const) {
-        if (tokens[side]?.t !== "id" || !punct(tokens[side + 1], ".") || tokens[side + 2]?.t !== "id") continue;
-        if (fold(tokens[side]!.v) === label) columns.push(tokens[side + 2]!.v);
-      }
-      if (!bare) continue;
-      for (const side of [i - 1, i + 1] as const) {
-        const name = tokens[side];
-        if (name?.t !== "id" || punct(tokens[side - 1], ".") || punct(tokens[side + 1], ".")) continue;
-        columns.push(name.v);
-      }
+      operand(i - 3, i - 1);
+      operand(i + 1, i + 1);
+    } else if (depth === 0 && kw(t, "IN") && punct(tokens[i + 1], "(") && kw(tokens[i + 2], "SELECT")) {
+      const close = matchingParen(tokens, i + 1);
+      if (close === -1) break;
+      // One value on the right is an `=` however it is spelled; several is what `IN` is normally for.
+      if (foldsToOneRow(tokens, i + 3, close - 1) || limitsToOne(tokens, i + 3, close - 1)) operand(i - 3, i - 1);
     }
   }
   return columns;
@@ -112,7 +132,7 @@ export function coversUniqueKey(
 /** One query over one table, with what its `WHERE` fixes — the shape a row can be looked up in. */
 export interface SingleTableQuery {
   table: Table;
-  /** The columns an equality in the `WHERE` fixes to one value. */
+  /** The columns the `WHERE` fixes to one value. */
   pinned: string[];
 }
 
