@@ -121,6 +121,48 @@ test("REPLACE(...) or IF(...) with a charset-introduced literal argument now par
   assert.deepEqual(checkSyntax("SELECT if(a = 'A', b, NULL);"), []);
 });
 
+test("JSON_VALUE with a RETURNING clause and no ON clause after it parses clean", () => {
+  // The vendored grammar writes the call as
+  // `JSON_VALUE_SYMBOL '(' simpleExpr ',' textLiteral returningType? onEmptyOrError ')'` — no `?` on
+  // `onEmptyOrError`, still the case on upstream's `master`, against MySQL's own
+  // `JSON_VALUE(json_doc, path [RETURNING type] [on_empty] [on_error])` where all three are optional.
+  // `check.ts` blanks the clause to spaces before parsing rather than suppressing the error, which
+  // keeps every span pointing at the caller's own text.
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING UNSIGNED);"), []);
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING CHAR(64));"), []);
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING DECIMAL(10,2));"), []);
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING UNSIGNED INTEGER);"), []);
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING DOUBLE PRECISION);"), []);
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING CHAR(8) CHARACTER SET utf8mb4);"), []);
+  // Wrapped in another call, which is where the same root failure showed up as a cascading
+  // "no viable alternative" over the whole enclosing expression rather than as a mismatched `)`.
+  assert.deepEqual(checkSyntax("SELECT COALESCE(JSON_VALUE(doc, '$.a.b' RETURNING CHAR(32)), 'x');"), []);
+  // Without the clause it always parsed, through the generic function-call alternative.
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b');"), []);
+});
+
+test("blanking the RETURNING clause leaves the ON EMPTY / ON ERROR half still being checked", () => {
+  // The point of blanking rather than suppressing: with the clause gone the call still matches the
+  // grammar's own JSON_VALUE rule whenever an `ON` clause is present, so that part of the syntax is
+  // parsed rather than waved through.
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING CHAR(5) NULL ON ERROR);"), []);
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING SIGNED ERROR ON ERROR);"), []);
+  assert.ok(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' RETURNING SIGNED NULL ON NOTHING);").length >= 1);
+  // A separate, unrelated gap in the same grammar rule, left alone deliberately: a numeric
+  // `DEFAULT` in an `ON` clause fails whether or not a RETURNING clause precedes it, where a string
+  // one parses. Nothing here fixes or hides it.
+  assert.ok(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' DEFAULT 0 ON EMPTY);").length >= 1);
+  assert.deepEqual(checkSyntax("SELECT JSON_VALUE(doc, '$.a.b' DEFAULT 'x' ON EMPTY);"), []);
+});
+
+test("RETURNING outside a JSON path argument is left alone, and still reported", () => {
+  // The blanking is anchored on the quoted path that precedes the clause. MariaDB's
+  // `INSERT … RETURNING col` is not MySQL syntax and goes on being a syntax error here; a
+  // `RETURNING` inside a string literal is not touched at all.
+  assert.ok(checkSyntax("INSERT INTO orders (id) VALUES (1) RETURNING id;").length >= 1);
+  assert.deepEqual(checkSyntax("SELECT 'RETURNING UNSIGNED' FROM orders;"), []);
+});
+
 test("URL as a bare column name is a confirmed upstream grammar gap, suppressed rather than shown as noise", () => {
   // A plain omission, not a genuine ambiguity, checked against MySQL's own docs rather than left as
   // a guess. dev.mysql.com/doc/refman/8.0/en/keywords.html lists `URL` as added in 8.0.32,

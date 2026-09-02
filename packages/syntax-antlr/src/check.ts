@@ -192,8 +192,42 @@ function normaliseJsonPathQuotes(src: string): string {
   return src.replace(/(->>?)(\s*)"([^"'\\]*)"/g, (_match, arrow: string, ws: string, path: string) => `${arrow}${ws}'${path}'`);
 }
 
+/**
+ * `JSON_VALUE(doc, '$.path' RETURNING <type>)` with no `ON EMPTY`/`ON ERROR` after it — the ordinary
+ * way to pull a typed scalar out of a JSON argument, and the shape a routine taking a JSON parameter
+ * is written in from end to end.
+ *
+ * The vendored grammar declares it as
+ * `JSON_VALUE_SYMBOL '(' simpleExpr ',' textLiteral returningType? onEmptyOrError ')'` — with
+ * **no `?` on `onEmptyOrError`**, still the case on upstream's `master`, so bumping
+ * `VENDORED_GRAMMAR_COMMIT` does not fix it. MySQL's own definition is
+ * `JSON_VALUE(json_doc, path [RETURNING type] [on_empty] [on_error])`, all three optional. Written
+ * without `RETURNING` the call parses anyway, through the generic function-call alternative; adding
+ * the clause is what forces the parse down the rule that then demands a trailing `ON` clause the
+ * language does not require.
+ *
+ * So the clause is **blanked to spaces** before parsing, the same length-preserving substitution
+ * `stripDelimiterDirectives` and `normaliseJsonPathQuotes` already use — every span downstream keeps
+ * pointing at the caller's own text. Both shapes then parse: without an `ON` clause the call goes
+ * through the generic function call, and with one it still matches the specific rule, so the
+ * `ON EMPTY`/`ON ERROR` half of the syntax goes on being checked rather than being waved through.
+ *
+ * The lookbehind is what keeps the guess narrow: the clause is only blanked where it follows the
+ * quoted path argument. A `RETURNING` anywhere else — MariaDB's `INSERT … RETURNING col`, which
+ * follows a `)` or an identifier — is left alone and still reported, which is right for a MySQL
+ * grammar. The type itself is matched the way `castType` is actually written: one word, an optional
+ * length or precision in parentheses, and the only three continuations that exist
+ * (`SIGNED`/`UNSIGNED INTEGER`, `DOUBLE PRECISION`, a `CHARACTER SET` on a `CHAR`).
+ */
+const JSON_VALUE_RETURNING =
+  /(?<='[^'\n]*'[ \t]*)RETURNING[ \t]+[A-Za-z][A-Za-z0-9_]*(?:[ \t]*\([^()\n]*\))?(?:[ \t]+(?:INTEGER|INT|PRECISION))?(?:[ \t]+(?:CHARACTER[ \t]+SET|CHARSET)[ \t]+[A-Za-z0-9_]+)?(?:[ \t]+BINARY)?/gi;
+
+function blankJsonValueReturning(src: string): string {
+  return src.replace(JSON_VALUE_RETURNING, (match) => " ".repeat(match.length));
+}
+
 function normalise(src: string): string {
-  return normaliseTerminator(normaliseJsonPathQuotes(stripDelimiterDirectives(src)));
+  return normaliseTerminator(blankJsonValueReturning(normaliseJsonPathQuotes(stripDelimiterDirectives(src))));
 }
 
 /**
