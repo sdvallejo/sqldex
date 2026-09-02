@@ -498,6 +498,48 @@ test("a reserved word is not a column, unless it was written delimited", () => {
   assert.deepEqual(run(unqualifiedColumn, "SELECT order_id FROM orders WHERE status IS NOT NULL;"), []);
 });
 
+test("the row alias of an INSERT ... ON DUPLICATE KEY UPDATE is a name the statement declares", () => {
+  const src = [
+    "INSERT INTO orders (order_id, customer_id, status, total)",
+    "  VALUES (1, 2, 'A', 3.00) AS new_order",
+    "  ON DUPLICATE KEY UPDATE total = new_order.total;",
+  ].join("\n");
+  assert.deepEqual(run(unknownAlias, src), []);
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
+test("and its columns are the target's, so a name the table lacks is still reported through it", () => {
+  // The guard pair: recognising the alias must not turn into waving everything qualified by it
+  // through. It names the row being inserted into `orders`, and `orders` has no `totl`.
+  const src = [
+    "INSERT INTO orders (order_id, customer_id, status, total)",
+    "  VALUES (1, 2, 'A', 3.00) AS new_order",
+    "  ON DUPLICATE KEY UPDATE total = new_order.totl;",
+  ].join("\n");
+  assert.deepEqual(run(unknownColumn, src), ["orders has no column totl"]);
+});
+
+test("a column alias list on the row alias makes the statement undecidable, and the rule stands down", () => {
+  // `AS new(m, n)` renames the insert's own column list positionally. Claiming those names are the
+  // table's would be a guess, so the relation comes back nameless and every bare name in the
+  // statement stops being checkable — which is the truth about it.
+  const src = [
+    "INSERT INTO orders (order_id, total)",
+    "  VALUES (1, 3.00) AS new_order(m, n)",
+    "  ON DUPLICATE KEY UPDATE total = n;",
+  ].join("\n");
+  assert.deepEqual(run(unknownAlias, src), []);
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
+test("a select-list alias in an INSERT ... SELECT is not a row alias", () => {
+  // The two are written with the same two tokens. Only an `ON DUPLICATE` immediately after makes it
+  // the row alias, which is what keeps `SELECT a AS b FROM …` from declaring a relation.
+  const src = "INSERT INTO orders (order_id) SELECT customer_id AS order_id FROM customers;";
+  assert.deepEqual(run(unknownAlias, src), []);
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
 test("RETURNING is a JSON_VALUE clause, not a column of the table being read", () => {
   // Written bare inside the call, it reads exactly like a column name nothing declares — which is
   // what every typed read of a JSON argument in a routine was being reported as.

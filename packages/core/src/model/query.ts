@@ -14,6 +14,12 @@ export interface Relation {
   derived?: TokenRange;
   /** The name is a `WITH` of this same statement, not a catalog table. */
   cte?: boolean;
+  /**
+   * The `AS new` of an `INSERT … ON DUPLICATE KEY UPDATE`: an alias for the row being inserted,
+   * whose columns are the target's own. It is a name to resolve, never a second table — an
+   * unqualified column beside it is the target's and cannot be ambiguous between the two.
+   */
+  rowAlias?: boolean;
   /** Offset of the name — of the opening `(` for a derived table, which has none. */
   offset: number;
   /** Span of the name, for goto-definition. Absent exactly when `name` is. */

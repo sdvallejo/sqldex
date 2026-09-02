@@ -26,6 +26,10 @@ function describe(ctx: DocumentContext, scope: ScopeInfo): Described {
 
   const holders = new Map<string, string[]>();
   for (const relation of scope.relations) {
+    // The row alias of an `INSERT … ON DUPLICATE KEY UPDATE` names the same columns as the target it
+    // sits beside, so counting both would make every assignment in the clause look ambiguous. MySQL
+    // reads the bare name there as the table's, always.
+    if (relation.rowAlias) continue;
     const label = relation.alias ?? relation.name;
     if (!label) continue;
     const resolved = resolveRelation({ dialect, catalog: ctx.catalog, schemas: ctx.schemas }, ctx.locals, relation);
@@ -95,7 +99,7 @@ relations and then manufactures findings by the thousand out of names that were 
 query. Query scopes cut per query instead, and a name resolves in the **innermost** scope that has it
 — which is what MySQL does, and what makes a correlated subquery reading an outer column work.
 
-Four things are not ambiguity, and each removes a class of false positive:
+Five things are not ambiguity, and each removes a class of false positive:
 
   - **A local, a table or a routine of that name.** Then it is not a column reference at all.
   - **A name the \`SELECT\` list defines.** \`DATE_FORMAT(t.started_at, '%d/%m/%Y') started_at\` writes
@@ -103,6 +107,9 @@ Four things are not ambiguity, and each removes a class of false positive:
     position — never by name.
   - **\`USING (col)\`, and \`NATURAL JOIN\`.** Those merge the column into one, which is precisely the
     thing that stops it being ambiguous.
+  - **The row alias of an \`INSERT … ON DUPLICATE KEY UPDATE\`.** \`AS new\` names the row being
+    inserted, whose columns are the target's own, so \`col = new.col\` mentions one column twice
+    rather than two columns once.
   - **\`GROUP BY\` / \`ORDER BY\` / \`HAVING\`.** Those three clauses see the query's **output** names, and
     nothing else does: \`SELECT a.f … ORDER BY f\` is accepted where \`WHERE f\` is not.
 

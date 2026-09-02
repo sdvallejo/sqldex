@@ -196,6 +196,59 @@ export function cteNames(
 }
 
 /**
+ * The row alias of an `INSERT … AS new ON DUPLICATE KEY UPDATE col = new.col`.
+ *
+ * MySQL 8.0.19 introduced it to replace the deprecated `VALUES()` function, and it is the only place
+ * an `INSERT` declares a name of its own. Its columns **are** the target's — that is what the alias
+ * means — so it comes back naming the same table, and `new.col` then gets checked against the real
+ * definition rather than waved through as something unresolvable.
+ *
+ * `rowAlias` marks it because one consumer must not treat it as a second relation: the unqualified
+ * `col` on the left of `ON DUPLICATE KEY UPDATE col = new.col` is the target's column and nothing
+ * else, so pairing the two would manufacture an ambiguity MySQL does not have.
+ *
+ * **The alias is only read where `ON DUPLICATE` immediately follows it**, which is what separates it
+ * from a select-list alias: `INSERT INTO t SELECT a AS b FROM u` writes the same two tokens, and
+ * there the next word is `FROM` or a comma. Narrow on purpose — the shape this recognises is the one
+ * the alias exists for.
+ *
+ * The column-alias form, `AS new(m, n)`, comes back **without** a name: those columns are positional
+ * renames of the insert's own column list, and claiming they are the table's would be a guess. A
+ * relation with no name is what the rest of the engine already reads as "columns nobody here can
+ * assert", which is exactly the truth about it.
+ */
+function rowAlias(tokens: readonly Token[], from: number, to: number, table: string | undefined): Relation | undefined {
+  let depth = 0;
+  for (let i = from; i <= to; i++) {
+    const t = tokens[i]!;
+    if (punct(t, "(")) depth++;
+    else if (punct(t, ")")) depth--;
+    else if (punct(t, ";")) return undefined;
+    else if (depth === 0 && kw(t, "AS")) {
+      const aliasToken = tokens[i + 1];
+      if (!aliasToken || aliasToken.t !== "id" || kwAny(aliasToken, NOT_AN_ALIAS)) continue;
+      let after = i + 2;
+      let columnList = false;
+      if (punct(tokens[after], "(")) {
+        const close = matchingParen(tokens, after);
+        if (close === -1) return undefined;
+        after = close + 1;
+        columnList = true;
+      }
+      if (!kw(tokens[after], "ON") || !kw(tokens[after + 1], "DUPLICATE")) continue;
+      return {
+        name: columnList ? undefined : table,
+        alias: aliasToken.v,
+        aliasQuoted: aliasToken.q === true,
+        rowAlias: true,
+        offset: aliasToken.s,
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
  * Gathers the tables and aliases declared in a token range.
  *
  * The whole statement is collected, including the part after the cursor: somebody completing in
@@ -254,7 +307,7 @@ export function relations(
       // writes to came out as unknown.
       while (kwAny(tokens[i], INSERT_MODIFIERS)) i++;
       if (kw(tokens[i], "INTO")) i++;
-      // `INSERT INTO t (cols) VALUES` — the reference is just the name, never an alias.
+      // `INSERT INTO t (cols) VALUES` — the target is just the name, never an alias of its own.
       const target = tokens[i];
       if (target && target.t === "id" && !kwAny(target, NOT_AN_ALIAS)) {
         const named = qualifiedName(tokens, i);
@@ -266,6 +319,8 @@ export function relations(
           offset: nameToken.s,
           nameSpan: { s: nameToken.s, e: nameToken.e },
         });
+        const row = rowAlias(tokens, named.nextIdx, to, named.name);
+        if (row) found.push(row);
         i = named.nextIdx;
       }
     } else {

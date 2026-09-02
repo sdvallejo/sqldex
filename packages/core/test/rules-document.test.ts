@@ -836,6 +836,17 @@ test("a local of that name is not a column reference either", () => {
   assert.deepEqual(run(ambiguousColumn, src), []);
 });
 
+test("the row alias of an INSERT does not make the target's own columns ambiguous", () => {
+  // `AS new_order` names the row being inserted, whose columns are `orders`' own. Counting it as a
+  // second relation would report every assignment in the clause as ambiguous, which MySQL does not.
+  const src = [
+    "INSERT INTO orders (order_id, customer_id, total)",
+    "  VALUES (1, 2, 3.00) AS new_order",
+    "  ON DUPLICATE KEY UPDATE total = new_order.total;",
+  ].join("\n");
+  assert.deepEqual(run(ambiguousColumn, src), []);
+});
+
 test("a name resolves in the innermost scope that has it, and stops there", () => {
   // The subquery has one relation, so `customer_id` is unambiguous there — MySQL never looks
   // further out once a scope has the name.
