@@ -9,31 +9,32 @@
 ---
 ---     vim.lsp.config("sqldex", { cmd = { "/path/to/sqldex-lsp", "--stdio" } })
 
---- Directories that declare a schema project, in the same terms the engine uses.
+--- Names that mark the root of a schema project.
 ---
---- `tablas/` and `sp/` are enough on their own: nothing else is called that. `tables/`, on the other
---- hand, is a plausible directory in a repo that has nothing to do with a database, so the English
---- layout is only recognised when a routines directory is there too.
+--- The engine decides whether a directory really is one — it reads the files, and it refuses to
+--- build a catalog for one that is not. This runs *first*, before anything has been started, which
+--- is why it cannot do the same reading and has to settle for names.
 ---
---- The engine applies the same test on its side and will refuse to build a catalog for a directory
---- that fails it, so a disagreement here costs a line in the log rather than a wrong answer. The
---- reason to have it anyway is that this one runs *first*: a repo that merely happens to contain a
---- `.sql` file never starts a server at all.
-local DECLARES = {
-  { ".sqldex.json" },
-  { "tablas" },
-  { "sp" },
-  { "tables", "sps" },
-  { "tables", "functions" },
+--- The two only stay safe while this one errs towards **yes**. Saying yes where the engine says no
+--- costs a server that starts, finds nothing, and writes one line in its log saying so. Saying no
+--- where the engine says yes costs a schema project that never produces a diagnostic and never
+--- explains why — which is exactly what a list of layout names did to every repo whose routines
+--- lived under a name nobody had listed.
+---
+--- `.git` comes last and is the loosest of them: it is what catches the project the layout names
+--- miss. Presence is all that is asked of a marker, not that it be a directory, because `.git` is a
+--- *file* in a worktree and in a submodule.
+local MARKERS = {
+  ".sqldex.json",
+  "tablas",
+  "sp",
+  "tables",
+  "sps",
+  "functions",
+  "procedures",
+  "triggers",
+  ".git",
 }
-
---- Does this directory hold every one of these markers?
-local function holds(dir, markers)
-  for _, marker in ipairs(markers) do
-    if not vim.uv.fs_stat(vim.fs.joinpath(dir, marker)) then return false end
-  end
-  return true
-end
 
 --- The checkout this file belongs to, so a clone can run the server it ships with.
 local function checkout()
@@ -73,20 +74,19 @@ return {
   cmd = command(),
   filetypes = { "sql", "mysql" },
 
-  --- Each declaration is tried all the way up the tree before the next one, so a distant
-  --- `.sqldex.json` beats a nearby `tablas/`: if somebody took the trouble to write one, that is the
-  --- root they meant.
+  --- Each marker is tried all the way up the tree before the next one, so a distant `.sqldex.json`
+  --- beats a nearby `tablas/`: if somebody took the trouble to write one, that is the root they
+  --- meant. By the same order a layout name, however far up, beats the nearest `.git`.
   ---
-  --- Not calling `on_dir` is how a client says "not here". It is deliberate and it is the whole
-  --- reason this is a function rather than a list of markers, which can only express *any of* and
-  --- not *all of*.
+  --- Not calling `on_dir` is how a client says "not here", and it is the whole reason this is a
+  --- function: `vim.lsp.config`'s own `root_markers` cannot say *last resort*.
   root_dir = function(bufnr, on_dir)
     local file = vim.api.nvim_buf_get_name(bufnr)
     if file == "" then return end
 
-    for _, markers in ipairs(DECLARES) do
+    for _, marker in ipairs(MARKERS) do
       for dir in vim.fs.parents(file) do
-        if holds(dir, markers) then return on_dir(dir) end
+        if vim.uv.fs_stat(vim.fs.joinpath(dir, marker)) then return on_dir(dir) end
       end
     end
   end,

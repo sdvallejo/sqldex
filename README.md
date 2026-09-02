@@ -62,9 +62,11 @@ code --install-extension sqldex.sqldex   # VS Code, server included — nothing 
 ## What the engine does
 
 **Finds the project.** Two directory conventions are recognised without configuration —
-`tablas/` + `sp/` + `carga-valores/` and `tables/` + `sps/` + `functions/` + `triggers/` — and any
-other layout, including everything in one directory, works by sweeping `**/*.sql`. A source's kind
-is a work budget and never a filter: a flat sweep finds everything a declared layout finds.
+`tablas/` + `sp/` + `carga-valores/` and `tables/` + `sps/`, `functions/` or `procedures/` +
+`triggers/` + `seeds/` — and whatever those names do not claim is swept as `**/*.sql` anyway, so any
+other layout, including everything in one directory, works too. A source's kind is a work budget and
+never a filter: a swept file gives up everything a declared one would. Recognising a name only buys
+the cheaper parse.
 
 **Builds a catalog** that stores offsets and paths rather than the files' text, so a large repo
 costs a few hundred KB and a hover reads its one file on demand. On top of the plain declarations

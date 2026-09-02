@@ -10,7 +10,15 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { after, test } from "node:test";
 
-import { detectSources, detectTargets, isDdlProject, resolveProject } from "../src/catalog/project.ts";
+import {
+  DECLARES_PROJECT,
+  detectSources,
+  detectTargets,
+  isDdlProject,
+  resolveProject,
+  sourceFiles,
+  targetFiles,
+} from "../src/catalog/project.ts";
 import { CONFIG_FILES, defaults, get, invalidate, schemas } from "../src/config/config.ts";
 
 after(() => invalidate());
@@ -32,26 +40,52 @@ const globs = (root: string): string[] => detectSources(root).map((source) => so
 
 test("recognises a Spanish-named layout", () => {
   const root = makeRepo(["tablas", "sp", "carga-valores"]);
-  assert.deepEqual(globs(root), ["tablas/*.sql", "sp/*.sql", "carga-valores/*.sql"]);
+  assert.deepEqual(globs(root), ["tablas/*.sql", "sp/*.sql", "carga-valores/*.sql", "**/*.sql"]);
   assert.equal(isDdlProject(root), true);
 });
 
 test("recognises an English-named one", () => {
-  const root = makeRepo(["tables", "sps", "functions", "triggers"]);
-  assert.deepEqual(globs(root), ["tables/*.sql", "triggers/*.sql", "sps/*.sql", "functions/*.sql"]);
+  const root = makeRepo(["tables", "sps", "functions", "triggers", "seeds"]);
+  assert.deepEqual(globs(root), [
+    "tables/*.sql",
+    "triggers/*.sql",
+    "sps/*.sql",
+    "functions/*.sql",
+    "seeds/*.sql",
+    "**/*.sql",
+  ]);
+  assert.equal(isDdlProject(root), true);
+});
+
+test("takes `procedures` as the routines directory it plainly is", () => {
+  const root = makeRepo(["tables", "procedures", "triggers", "seeds"]);
+  assert.deepEqual(globs(root), [
+    "tables/*.sql",
+    "triggers/*.sql",
+    "procedures/*.sql",
+    "seeds/*.sql",
+    "**/*.sql",
+  ]);
+  // …and does it without reading a file, which is the only reason the name is listed at all.
   assert.equal(isDdlProject(root), true);
 });
 
 test("leaves the deploy scripts out of the catalog and into the lint targets", () => {
   const root = makeRepo(["tables", "sps", "deploy_folder"]);
-  // They are half a duplicated schema, so they define nothing…
-  assert.deepEqual(globs(root), ["tables/*.sql", "sps/*.sql"]);
-  // …but they are code that runs, so they are checked against what the others define.
+  assert.deepEqual(globs(root), ["tables/*.sql", "sps/*.sql", "**/*.sql"]);
   assert.deepEqual(detectTargets(root, detectSources(root)).map((s) => s.glob), [
     "tables/*.sql",
     "sps/*.sql",
+    "**/*.sql",
     "deploy_folder/**/*.sql",
   ]);
+});
+
+test("and the sweep does not smuggle the deploy scripts back into the catalog", () => {
+  // The globs above both end in `**\/*.sql`, so only the files answer this one.
+  const root = makeRepo(["tables", "sps"], ["tables/orders.sql", "deploy_folder/prod/001.sql"]);
+  assert.deepEqual(sourceFiles(root).map((f) => basename(f.path)), ["orders.sql"]);
+  assert.deepEqual(targetFiles(root).map((f) => basename(f.path)).sort(), ["001.sql", "orders.sql"]);
 });
 
 test("sweeps the whole tree when it recognises nothing", () => {
@@ -76,7 +110,53 @@ test("takes a config file as the declaration it is", () => {
 });
 
 test("says no to a repo that merely contains a .sql", () => {
-  assert.equal(isDdlProject(makeRepo(["src"], ["src/seed.sql"])), false);
+  const root = makeRepo(["src"], ["src/report.sql"]);
+  writeFileSync(join(root, "src", "report.sql"), "SELECT id FROM orders;\n");
+  assert.equal(isDdlProject(root), false);
+});
+
+test("says yes to a repo whose .sql files create something, whatever the directories are called", () => {
+  // The case the marker list could not express: a layout nobody thought to name. Reading one file
+  // answers it, and the alternative — deciding no — is a schema project that never says a word.
+  const tables = makeRepo(["esquema"], ["esquema/orders.sql"]);
+  writeFileSync(join(tables, "esquema", "orders.sql"), "CREATE TABLE orders (id INT);\n");
+  assert.equal(isDdlProject(tables), true);
+
+  // A repo of nothing but routines is one too, which is why the test is wider than `mightHoldTable`.
+  const routines = makeRepo(["rutinas"], ["rutinas/settle.sql"]);
+  writeFileSync(
+    join(routines, "rutinas", "settle.sql"),
+    "CREATE DEFINER=`app`@`%` PROCEDURE sp_settle_orders() BEGIN SELECT 1; END\n",
+  );
+  assert.equal(isDdlProject(routines), true);
+});
+
+test("a repo of statements that change a schema without declaring one is not a project", () => {
+  // The distinction the guard is actually drawing: a catalog is built out of declarations, and a
+  // directory of migrations has none to give it.
+  const root = makeRepo(["migrations"], ["migrations/001.sql"]);
+  writeFileSync(
+    join(root, "migrations", "001.sql"),
+    "CREATE INDEX idx_orders_customer ON orders (customer_id);\nCREATE USER 'app'@'%';\n",
+  );
+  assert.equal(isDdlProject(root), false);
+});
+
+test("does not go looking for a schema inside node_modules", () => {
+  const root = makeRepo(["node_modules/pkg"], ["node_modules/pkg/orders.sql"]);
+  writeFileSync(join(root, "node_modules", "pkg", "orders.sql"), "CREATE TABLE orders (id INT);\n");
+  assert.equal(isDdlProject(root), false);
+});
+
+test("a half-recognised layout is catalogued in full", () => {
+  // The regression this sweep exists for. `tables/` and `triggers/` matched, the routines sat
+  // under a name not in the list, and the catalog came out silently missing every one of them —
+  // while a repo matching nothing at all fell through to the sweep and came out right.
+  const root = makeRepo(["tables", "triggers", "rutinas"], ["tables/orders.sql", "rutinas/settle.sql"]);
+  assert.deepEqual(sourceFiles(root).map((f) => basename(f.path)).sort(), ["orders.sql", "settle.sql"]);
+  // The typed source still wins the `kind`: the sweep only picks up what nobody claimed.
+  assert.equal(sourceFiles(root).find((f) => basename(f.path) === "orders.sql")!.kind, "tables");
+  assert.equal(sourceFiles(root).find((f) => basename(f.path) === "settle.sql")!.kind, "auto");
 });
 
 test("resolves the root from inside one of the project's own directories", () => {
@@ -146,30 +226,29 @@ test("invalid JSON is reported and treated as absent, rather than refusing to st
  * The list is read out of the client rather than duplicated a third time here, so this fails when
  * the copy moves rather than when it is wrong in some way this file happened to predict.
  */
-test("the editor client and the engine agree on what declares a project", () => {
+test("the editor client starts wherever the engine would build a catalog", () => {
   const client = join(import.meta.dirname, "..", "..", "..", "editors/nvim/lsp/sqldex.lua");
-  const source = readFileSync(client, "utf8");
+  const block = /local MARKERS = \{([\s\S]*?)\n\}/.exec(readFileSync(client, "utf8"))?.[1];
+  assert.ok(block, "the client's markers are no longer where this test looks for them");
+  const markers = [...block.matchAll(/"([^"]+)"/g)].map((quoted) => quoted[1]!);
 
-  const block = /local DECLARES = \{([\s\S]*?)\n\}/.exec(source)?.[1];
-  assert.ok(block, "the client's declarations are no longer where this test looks for them");
-
-  const declarations = [...block.matchAll(/\{([^}]*)\}/g)].map((group) =>
-    [...group[1]!.matchAll(/"([^"]+)"/g)].map((quoted) => quoted[1]!),
-  );
-  assert.ok(declarations.length >= 5, "the client declares fewer layouts than the engine recognises");
-
-  // Widened because `CONFIG_FILES` is a tuple of literals, and what is being asked here is whether
-  // an arbitrary string from the client happens to be one of them.
-  const configFiles: readonly string[] = CONFIG_FILES;
-  for (const markers of declarations) {
-    const files = markers.filter((marker) => configFiles.includes(marker));
-    const dirs = markers.filter((marker) => !configFiles.includes(marker));
-    assert.equal(
-      isDdlProject(makeRepo(dirs, files)),
-      true,
-      `the client would start a server for ${markers.join(" + ")}, which the engine does not call a project`,
+  // The direction is the whole assertion. A client looser than the engine costs a server that
+  // starts and writes one line in its log; a client stricter than it costs a schema project that
+  // never produces a diagnostic and never says why, which is the failure this pair used to have.
+  for (const name of CONFIG_FILES) {
+    assert.ok(markers.includes(name), `a repo declared by ${name} would not start a client`);
+  }
+  for (const combination of DECLARES_PROJECT) {
+    assert.ok(
+      combination.some((dir) => markers.includes(dir)),
+      `the engine calls ${combination.join(" + ")} a project and the client would not start there`,
     );
   }
+
+  // And the case no list of names can express: the engine reads the files, so the client has to
+  // fall back to the same last resort the engine's own root search does.
+  assert.ok(markers.includes(".git"), "nothing in the client catches a project the layout names miss");
+  assert.ok(defaults.root_markers.includes(".git"), "…and no root would be found for it anyway");
 });
 
 test("a key nothing reads is said out loud, and still ignored", () => {

@@ -36,17 +36,22 @@ test("a config file declares a project by itself", () => {
   assert.equal(projectRoot(root), root);
 });
 
-test("the Spanish layout declares one on its own, and the English one does not", () => {
-  // `tablas/` is called nothing else. `tables/` is a plausible directory in a repository that has
-  // nothing to do with a database, so it takes a routines directory beside it to count.
-  assert.notEqual(projectRoot(tree("tablas")), undefined);
-  assert.equal(projectRoot(tree("tables")), undefined);
-  assert.notEqual(projectRoot(tree("tables", "sps")), undefined);
+test("any name a schema layout goes by is enough to start", () => {
+  // Deliberately looser than the engine, which reads the files and refuses the ones that declare
+  // nothing. The cost of being wrong here is a server that starts and logs one line; the cost of
+  // being wrong the other way is a project that never produces a diagnostic and never says why.
+  for (const dir of ["tablas", "sp", "tables", "sps", "functions", "procedures", "triggers"]) {
+    assert.notEqual(projectRoot(tree(dir)), undefined, dir);
+  }
 });
 
-test("a repository that merely holds a .sql file starts nothing", () => {
-  // The whole point of the guard: an editor opens on its own, and indexing a few thousand files
-  // uninvited is what there would otherwise be no way to refuse.
+test("a repository is enough on its own, since the engine is the one that reads the files", () => {
+  const root = tree(".git", "esquema");
+  assert.equal(projectRoot(root), root);
+});
+
+test("a directory that marks nothing starts nothing", () => {
+  // Without a repository and without a name, there is no root to resolve and nothing to start.
   const root = tree("src");
   writeFileSync(join(root, "src", "migration.sql"), "SELECT 1;");
   assert.equal(projectRoot(root), undefined);

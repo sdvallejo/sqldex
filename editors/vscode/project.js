@@ -1,42 +1,44 @@
 /**
- * What counts as a schema project, in the same terms the engine uses.
+ * Where a schema project begins, as far as a client can tell.
  *
- * The engine applies this test on its own side and refuses to build a catalog for a directory that
- * fails it, so a disagreement here costs a line in the log rather than a wrong answer. The reason to
- * have it anyway is that this one runs *first*: a repo that merely happens to contain a `.sql` file
- * never starts a server at all, which is the whole point of the guard — indexing a few thousand
- * files uninvited is what it exists to prevent.
+ * The engine decides whether a directory really is one — it reads the files — and refuses to build
+ * a catalog for one that is not. This runs *first*, before anything has started, which is why it
+ * cannot do the same reading and has to settle for names.
+ *
+ * The two only stay safe while this one errs towards **yes**. Saying yes where the engine says no
+ * costs a server that starts, finds nothing, and writes a line in its log saying so. Saying no
+ * where the engine says yes costs a schema project that never produces a diagnostic and never
+ * explains why — which is exactly what a list of layout names did to every repo whose routines
+ * lived under a name nobody had listed.
  */
 
 "use strict";
 
-const { existsSync, statSync } = require("node:fs");
+const { existsSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 
-/** Config file names, in the order the engine tries them. */
-const CONFIG_FILES = [".sqldex.json"];
-
 /**
- * Directory layouts that declare a project on their own.
+ * Names that mark the root of a schema project.
  *
- * `tablas/` and `sp/` are each enough: nothing else is called that. `tables/`, on the other hand, is
- * a plausible directory in a repo that has nothing to do with a database, so the English layout is
- * only recognised when a routines directory is there too.
+ * `.git` comes last and is the loosest of them: it is what catches the project the layout names
+ * miss, and a nearer marker is a better root when there is one. Presence is all that is asked —
+ * not that it be a directory — because `.git` is a *file* in a worktree and in a submodule.
  */
-const DECLARES = [["tablas"], ["sp"], ["tables", "sps"], ["tables", "functions"]];
+const MARKERS = [
+  ".sqldex.json",
+  "tablas",
+  "sp",
+  "tables",
+  "sps",
+  "functions",
+  "procedures",
+  "triggers",
+  ".git",
+];
 
-function isDirectory(path) {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/** Does this directory declare a project by itself? */
+/** Does this directory mark the root of a project? */
 function declares(dir) {
-  if (CONFIG_FILES.some((name) => existsSync(join(dir, name)))) return true;
-  return DECLARES.some((markers) => markers.every((marker) => isDirectory(join(dir, marker))));
+  return MARKERS.some((marker) => existsSync(join(dir, marker)));
 }
 
 /**
@@ -80,4 +82,4 @@ function documentGlob(root) {
   return `${root.replaceAll("\\", "/")}/**/*.sql`;
 }
 
-module.exports = { CONFIG_FILES, DECLARES, declares, documentGlob, projectRoot };
+module.exports = { MARKERS, declares, documentGlob, projectRoot };

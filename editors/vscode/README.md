@@ -199,9 +199,14 @@ it built nothing, which is the answer worth reading when the extension started s
 answers still come back empty — and, if the server could not be started at all, the error, which
 also arrives as a notification.
 
-If the client says the folder is not a schema project, that is the guard above. A project is a
-directory holding `.sqldex.json`, `tablas/`, `sp/`, or `tables/` beside `sps/` or `functions/`. An
-empty `.sqldex.json` at the root is enough to declare one.
+If nothing attached to the folder, nothing in it marked a project root: `.sqldex.json`, one of the
+layout directories, or a `.git` of its own. An empty `.sqldex.json` settles it.
+
+The extension goes by those names; the server goes by what the files say, and it is the one that
+decides. It builds a catalog for a folder holding a `.sqldex.json`, a recognised layout, or simply
+any `.sql` file that creates a table, a routine or a trigger — and says so in its log when it
+declines, which is the line worth reading when the extension started something and the answers still
+come back empty.
 
 If nothing was started at all, the extension never woke: it activates on a `.sql` file being opened
 or a `.sqldex.json` in the tree, and a window with neither gives it no reason to.

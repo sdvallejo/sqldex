@@ -87,10 +87,10 @@ Severities, which rules run and which directories are sources all live in the pr
 
 ## What's different from the VS Code and Neovim clients
 
-Those two only start a server inside a directory they recognize as a schema project — one holding
-`.sqldex.json`, `tablas/`, `sp/`, or `tables/` beside `sps/` or `functions/`. Zed's extension API has
-no equivalent hook to gate on before starting a language server, so this extension starts one for
-any worktree with an active `.sql` document, project or not. `sqldex-lsp` itself is what has to
+Those two only start a server inside a directory that marks a project root — one holding
+`.sqldex.json`, one of the layout directories, or a `.git` of its own. Zed's extension API has no
+equivalent hook to gate on before starting a language server, so this extension starts one for any
+worktree with an active `.sql` document, project or not. `sqldex-lsp` itself is what has to
 degrade quietly there — building an empty catalog and reporting nothing rather than erroring — and
 that is worth checking if diagnostics show up somewhere unexpected.
 

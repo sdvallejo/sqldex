@@ -211,10 +211,14 @@ the catalog.
 `PATH`, a Node too old to run one from a checkout, a project the client did not recognise, and the
 watching above.
 
-`:checkhealth vim.lsp` shows whether a client attached and what it declared. If none did, the buffer
-is not in a directory the client recognises as a schema project: one holding `.sqldex.json`,
-`tablas/`, `sp/`, or `tables/` beside `sps/` or `functions/`. An empty `.sqldex.json` at the root is
-enough to declare one.
+`:checkhealth vim.lsp` shows whether a client attached and what it declared. If none did, nothing
+above the buffer marked a project root: `.sqldex.json`, one of the layout directories, or a `.git`
+of its own. An empty `.sqldex.json` at the root settles it.
+
+A client attaching is only half the answer — it goes by names, and the server goes by what the files
+say. The server builds a catalog for a repository holding a `.sqldex.json`, a recognised layout, or
+simply any `.sql` file that creates a table, a routine or a trigger; anything else it declines, in a
+line of its own log.
 
 `:LspLog` has the server's own side. It says on startup which project it built and how much is in it
 — or why it built nothing, which is the same test applied a second time and is the answer worth
