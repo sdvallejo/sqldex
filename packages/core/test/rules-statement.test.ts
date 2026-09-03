@@ -75,8 +75,25 @@ const SCHEMA = [
   "CREATE TABLE order_lines (",
   "  order_id int NOT NULL,",
   "  line_no int NOT NULL,",
+  "  product_id int NOT NULL,",
   "  amount decimal(10,2) NOT NULL,",
   "  PRIMARY KEY (order_id, line_no)",
+  ");",
+  // Many rows per line, so a query can reach two fan-outs deep: an expression written at the line's
+  // grain is still multiplied by this one.
+  "CREATE TABLE line_charges (",
+  "  order_id int NOT NULL,",
+  "  line_no int NOT NULL,",
+  "  charge_no int NOT NULL,",
+  "  amount decimal(10,2) NOT NULL,",
+  "  PRIMARY KEY (order_id, line_no, charge_no)",
+  ");",
+  // Hangs off `order_lines` by its own key, so a join to it never multiplies anything: what an
+  // aggregate at the line's grain reaches for beside the line's own columns.
+  "CREATE TABLE products (",
+  "  product_id int NOT NULL,",
+  "  label varchar(40) NOT NULL,",
+  "  PRIMARY KEY (product_id)",
   ");",
   // A pair on different collations, which is the only thing the collation rule looks at.
   "CREATE TABLE current_codes (code varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL);",
@@ -834,6 +851,60 @@ test("a join on a unique key brings back one row, so nothing is multiplied", () 
 
 test("the joined table's own columns are not repeated: they are what the join returned", () => {
   assert.deepEqual(run(joinMultipliesAggregate, "SELECT SUM(r.amount) FROM orders o JOIN refunds r USING(order_id);"), []);
+});
+
+test("an expression that reads the fanned table too is one value per row it returned", () => {
+  // The line's share of its order: one value per line, so the fan-out is the grain and not a
+  // mistake. Beside it the same join with nothing of the line in the addend, which is the order's
+  // total counted once per line.
+  const perLine = "SELECT SUM(l.amount / o.total) FROM orders o JOIN order_lines l USING(order_id);";
+  const perOrder = "SELECT SUM(o.total) FROM orders o JOIN order_lines l USING(order_id);";
+  assert.deepEqual(run(joinMultipliesAggregate, perLine), []);
+  assert.deepEqual(run(joinMultipliesAggregate, perOrder), [
+    "SUM over o.total is multiplied by the join to order_lines: order_id is not unique there",
+  ]);
+});
+
+test("a GROUP_CONCAT of the line and of what hangs off it is a list of lines", () => {
+  // `products` is joined on its own key, so it rides along with the line and the entry names both.
+  // Beside it the same three tables with an entry built only from the order, which is repeated.
+  const detail =
+    "SELECT GROUP_CONCAT(CONCAT(p.label, ':', l.amount)) FROM orders o JOIN order_lines l USING(order_id) " +
+    "JOIN products p ON p.product_id = l.product_id;";
+  const repeated =
+    "SELECT GROUP_CONCAT(o.status) FROM orders o JOIN order_lines l USING(order_id) " +
+    "JOIN products p ON p.product_id = l.product_id;";
+  assert.deepEqual(run(joinMultipliesAggregate, detail), []);
+  assert.deepEqual(run(joinMultipliesAggregate, repeated), [
+    "GROUP_CONCAT over o.status is multiplied by the join to order_lines: order_id is not unique there",
+  ]);
+});
+
+test("with two fan-outs the one reported is the join the expression is not written at the grain of", () => {
+  // The addend is per line, so the join that produced the lines is doing what it should and naming
+  // it would send somebody to read the wrong join. `line_charges` multiplies those lines in turn,
+  // and that is what repeats the order's total.
+  assert.deepEqual(
+    run(
+      joinMultipliesAggregate,
+      "SELECT SUM(o.total + l.amount) FROM orders o JOIN order_lines l USING(order_id) " +
+        "JOIN line_charges lc USING(order_id, line_no);",
+    ),
+    ["SUM over o.total is multiplied by the join to line_charges: order_id, line_no is not unique there"],
+  );
+});
+
+test("naming the fanned table only in a comparison does not put the expression at its grain", () => {
+  // `l.line_no` decides which bucket the row falls in; what is added up is still the order's total,
+  // once per line. The guard has to read the references the way the report does, or a comparison
+  // would silence the finding.
+  assert.deepEqual(
+    run(
+      joinMultipliesAggregate,
+      "SELECT SUM(IF(l.line_no = 1, o.total, 0)) FROM orders o JOIN order_lines l USING(order_id);",
+    ),
+    ["SUM over o.total is multiplied by the join to order_lines: order_id is not unique there"],
+  );
 });
 
 test("MIN and MAX cannot see a repeated row", () => {

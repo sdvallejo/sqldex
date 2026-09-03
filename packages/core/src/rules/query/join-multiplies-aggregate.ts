@@ -169,8 +169,12 @@ What it deliberately leaves alone:
 
   - **\`MIN\` and \`MAX\`.** Repeating a row cannot change the smallest or the largest value.
   - **\`COUNT(DISTINCT …)\`**, which is the usual way somebody who knew about the fan-out wrote around it.
-  - **An aggregate over the joined table's own columns.** Those rows are not repeated — they are what
-    the join returned, and summing them is normally the point.
+  - **An expression that reads the joined table's own columns.** Those rows are not repeated — they
+    are what the join returned — and an expression mentioning them is evaluated once per row that came
+    back: \`SUM(l.amount / o.total)\` is the line's share of its order, and a \`GROUP_CONCAT\` over the
+    line's own fields is a list of lines. Only an expression that cannot see a fan-out at all is
+    reported — and when a query holds two of them, the one reported is a join the expression is *not*
+    written at the grain of, so nobody is sent to read a join that is doing what it should.
   - **A reference that is only a test.** In \`SUM(IF(a.kind = 'T', b.amount, 0))\` the \`a.kind\` decides
     which bucket the row falls in; what is added up is \`b.amount\`, and only what is added up can be
     added up twice.
@@ -233,6 +237,31 @@ What it deliberately leaves alone:
       const here = fans.get(scope);
       if (!here) continue;
 
+      // The fans the expression is written at the grain of. What makes a fan-out spurious is that
+      // the expression cannot see it: `SUM(o.total)` mentions nothing from the many side, so the
+      // repeated rows only repeat the addend. An expression that does read a fanned table's columns
+      // is evaluated once per row that join returned — `SUM(l.amount / o.total)` is the line's share
+      // of its order, a `GROUP_CONCAT` over the line's fields is a list of lines — and whether that
+      // repetition was wanted is not something the schema can settle.
+      const atGrainOf = new Set<string>();
+      for (let j = i + 2; j < close; j++) {
+        if (!punct(tokens[j], ".") || tokens[j - 1]?.t !== "id" || tokens[j + 1]?.t !== "id") continue;
+        // The same two filters the report below applies, so both read the same set of references. A
+        // fan named only inside a comparison is a test, and a test does not put the expression at
+        // that fan's grain.
+        if (ctx.scopeAt(j) !== scope) continue;
+        if (isTested(tokens, j - 2, j + 2)) continue;
+        const label = fold(tokens[j - 1]!.v);
+        if (here.some((fan) => fan.label === label)) atGrainOf.add(label);
+      }
+
+      // The fan to blame is one the expression is *not* at the grain of. When a query holds two of
+      // them and the expression is written per line, the line's own join is not what repeats the
+      // other side — the join that multiplies those lines is, and naming the wrong one sends
+      // somebody to read a join that is doing what it should.
+      const blame = here.find((fan) => !atGrainOf.has(fan.label));
+      if (!blame) continue;
+
       for (let j = i + 2; j < close; j++) {
         if (!punct(tokens[j], ".") || tokens[j - 1]?.t !== "id" || tokens[j + 1]?.t !== "id") continue;
         // An aggregate's parentheses can hold a whole subquery — `SUM(a.x - (SELECT … WHERE b.y …))`
@@ -247,15 +276,17 @@ What it deliberately leaves alone:
         const alias = fold(tokens[j - 1]!.v);
         const relation = ctx.aliasesFor(j - 1, alias).get(alias);
         if (!relation?.name || relation.cte) continue;
-        // A column of the many side is not repeated: it is what the join returned.
+        // A column of a many side is not repeated: it is what that join returned. Whether a *second*
+        // fan repeats it in turn is a real question, and not one this can answer while it reads no
+        // `GROUP BY`: grouping by the first fan's own key puts each of its rows in a group of its
+        // own, and then it multiplies nothing. So a column of any fan is still left alone.
         if (here.some((fan) => fan.label === alias)) continue;
         if (!ctx.catalog.table(relation.name)) continue;
 
-        const fan = here[0]!;
         ctx.report(
           t,
           `${t.v.toUpperCase()} over ${tokens[j - 1]!.v}.${tokens[j + 1]!.v} is multiplied by the join to ` +
-            `${fan.table.name}: ${fan.on.join(", ")} is not unique there`,
+            `${blame.table.name}: ${blame.on.join(", ")} is not unique there`,
         );
         break;
       }
