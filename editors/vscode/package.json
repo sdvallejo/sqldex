@@ -2,7 +2,7 @@
   "name": "sqldex",
   "displayName": "sqldex",
   "description": "Static analysis for MySQL schemas that live as .sql files in a repository.",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "private": true,
   "license": "MIT",
   "publisher": "sqldex",
