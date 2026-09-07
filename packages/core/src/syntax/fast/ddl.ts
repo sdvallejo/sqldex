@@ -36,6 +36,21 @@ const TIMINGS: ReadonlySet<string> = new Set(["BEFORE", "AFTER"]);
 const EVENTS: ReadonlySet<string> = new Set(["INSERT", "UPDATE", "DELETE"]);
 
 /**
+ * Does this part of a table's body declare a constraint rather than a column?
+ *
+ * `PERIOD` is the one starter that is also an ordinary column name, and the word after it is what
+ * tells the two apart: MariaDB's temporal clause is always `PERIOD FOR …`, while a column called
+ * `period` is followed by its type. Reading the first word alone drops that column from the table
+ * without saying so — and a column the catalog does not have is one every rule reports about, from
+ * the index that names it to the query that reads it.
+ */
+function isConstraint(tokens: readonly Token[], from: number): boolean {
+  const starter = kwAny(tokens[from], CONSTRAINT_STARTERS);
+  if (starter === undefined) return false;
+  return starter !== "PERIOD" || kw(tokens[from + 1], "FOR");
+}
+
+/**
  * Reads the expression following a `DEFAULT`, which may be a single token (`NULL`, `0`, `'A'`),
  * a call (`CURRENT_TIMESTAMP(3)`), a parenthesis (`(json_object())`) or a literal with a charset
  * introducer (`_utf8mb4'A'`).
@@ -263,7 +278,7 @@ function parseCreateTable(
   const parts = splitCommas(tokens, named.nextIdx + 1, closeIdx - 1);
   const constraints: { from: number; to: number }[] = [];
   for (const part of parts) {
-    if (kwAny(tokens[part.from], CONSTRAINT_STARTERS)) {
+    if (isConstraint(tokens, part.from)) {
       constraints.push(part);
     } else {
       const column = parseColumn(src, tokens, part.from, part.to);

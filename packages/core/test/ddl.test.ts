@@ -95,3 +95,18 @@ test("only text columns inherit the table's default collation", () => {
   // Its own `COLLATE` wins over the table's.
   assert.equal(table.byName.get("c")!.collation, "utf8_bin");
 });
+
+test("a column named as a constraint keyword is a column, and the clause is still a clause", () => {
+  // `PERIOD` starts MariaDB's temporal clause and is also an ordinary column name. Read as a
+  // clause, the column leaves the table without a word — and then the index that names it, and
+  // every query that reads it, are reported against a table that appears not to have it.
+  const column = oneTable("CREATE TABLE t (a int NOT NULL, period date NOT NULL, UNIQUE (a, period));");
+  assert.deepEqual(column.columns.map((c) => c.name), ["a", "period"]);
+  assert.deepEqual(column.indexes.map((i) => i.columns), [["a", "period"]]);
+
+  const clause = oneTable(
+    "CREATE TABLE t (a int NOT NULL, valid_from datetime NOT NULL, valid_to datetime NOT NULL,\n" +
+      "  PERIOD FOR SYSTEM_TIME (valid_from, valid_to));",
+  );
+  assert.deepEqual(clause.columns.map((c) => c.name), ["a", "valid_from", "valid_to"]);
+});
