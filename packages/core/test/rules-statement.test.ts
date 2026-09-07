@@ -95,6 +95,21 @@ const SCHEMA = [
   "  label varchar(40) NOT NULL,",
   "  PRIMARY KEY (product_id)",
   ");",
+  // A surrogate primary key with the table's real identity in a composite unique index, and a
+  // column beside it that narrows a search without being part of either: the shape a diagnostic
+  // has to name precisely, because "the key" is three different keys here.
+  "CREATE TABLE statements (",
+  "  statement_id int NOT NULL AUTO_INCREMENT,",
+  "  account_id int NOT NULL,",
+  "  holder_id int NOT NULL,",
+  "  period_end date NOT NULL,",
+  "  balance decimal(10,2) NOT NULL,",
+  "  PRIMARY KEY (statement_id),",
+  "  UNIQUE KEY uk_account_period (account_id, period_end),",
+  "  KEY ix_holder (holder_id)",
+  ");",
+  // A unique key written without a name, which hand-written DDL does and a dump never does.
+  "CREATE TABLE ledger_entries (entry_no int NOT NULL, book_id int NOT NULL, seq int NOT NULL, UNIQUE (book_id, seq));",
   // A pair on different collations, which is the only thing the collation rule looks at.
   "CREATE TABLE current_codes (code varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL);",
   "CREATE TABLE legacy_codes (code varchar(10) COLLATE utf8_spanish_ci NOT NULL);",
@@ -1119,6 +1134,34 @@ test("a search that starts a key and abandons it can match twice", () => {
   );
 });
 
+test("the key a finding names is the one it read, and the column that narrowed nothing", () => {
+  // The primary key here is a surrogate the search never touches, so the claim rests on the unique
+  // index instead — and saying "statements is keyed on (account_id, period_end)" over a visible
+  // `PRIMARY KEY (statement_id)` reads as a misreading rather than as a finding. `holder_id` is
+  // named for the other half of the same reason: it is what made the search look pinned down.
+  assert.deepEqual(
+    run(
+      scalarSubqueryManyRows,
+      "SELECT 1 + (SELECT s.balance FROM statements s WHERE s.holder_id = 4 AND s.period_end = '2026-01-01');",
+    ),
+    [
+      "this subquery can return more than one row: statements has a unique key uk_account_period on " +
+        "(account_id, period_end), and this fixes period_end but leaves account_id free; no unique key mentions " +
+        "holder_id. MySQL answers error 1242 rather than a value",
+    ],
+  );
+});
+
+test("a unique key written without a name is still named as a unique key", () => {
+  assert.deepEqual(
+    run(scalarSubqueryManyRows, "SELECT 1 + (SELECT e.entry_no FROM ledger_entries e WHERE e.seq = 1);"),
+    [
+      "this subquery can return more than one row: ledger_entries has a unique key on (book_id, seq), " +
+        "and this fixes seq but leaves book_id free. MySQL answers error 1242 rather than a value",
+    ],
+  );
+});
+
 test("the whole key finishes the search, and half of it does not", () => {
   const whole = "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 AND l.line_no = 1);";
   const half = "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.line_no = 1);";
@@ -1280,6 +1323,15 @@ test("a SELECT INTO whose WHERE starts a key and abandons it", () => {
   assert.deepEqual(run(selectIntoManyRows, src), [
     "this SELECT can match more than one row: order_lines is keyed on (order_id, line_no), and this " +
       "fixes order_id but leaves line_no free. MySQL answers error 1172 rather than filling the variables",
+  ]);
+});
+
+test("the same sentence about which key it read, in the other place a routine reads one", () => {
+  const src = body("  SELECT s.balance INTO p_id FROM statements s WHERE s.holder_id = 4 AND s.period_end = '2026-01-01';");
+  assert.deepEqual(run(selectIntoManyRows, src), [
+    "this SELECT can match more than one row: statements has a unique key uk_account_period on " +
+      "(account_id, period_end), and this fixes period_end but leaves account_id free; no unique key mentions " +
+      "holder_id. MySQL answers error 1172 rather than filling the variables",
   ]);
 });
 

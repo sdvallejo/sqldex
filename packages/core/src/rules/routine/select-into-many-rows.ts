@@ -1,6 +1,5 @@
 import { singleTableQuery } from "../shared/keys.ts";
-import { joinNames } from "../shared/names.ts";
-import { foldsToOneRow, halfPinnedKey, limitsToOne } from "../shared/rows.ts";
+import { describeHalfKey, foldsToOneRow, halfPinnedKey, limitsToOne } from "../shared/rows.ts";
 import { intoAt } from "../shared/selects.ts";
 import { kw } from "../../syntax/fast/tok.ts";
 import type { Rule } from "../rule.ts";
@@ -54,8 +53,7 @@ What it deliberately leaves alone:
 
     ctx.report(
       tokens[ctx.statement.from]!,
-      `this SELECT can match more than one row: ${query.table.name} is keyed on (${half.key.join(", ")}), ` +
-        `and this fixes ${joinNames(half.held)} but leaves ${joinNames(half.free)} free. ` +
+      `this SELECT can match more than one row: ${describeHalfKey(query.table, half)}. ` +
         "MySQL answers error 1172 rather than filling the variables",
     );
   },

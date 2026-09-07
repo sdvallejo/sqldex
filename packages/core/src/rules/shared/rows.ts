@@ -11,6 +11,7 @@
 import type { Table } from "../../model/table.ts";
 import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
+import { joinNames } from "./names.ts";
 
 /** Aggregates fold a whole group into one row, which is the other way of having only one. */
 export const AGGREGATES: ReadonlySet<string> = new Set([
@@ -84,9 +85,49 @@ export function limitsToOne(tokens: readonly Token[], from: number, to: number):
 /** A unique key the `WHERE` starts and does not finish, with the columns it left free. */
 export interface HalfKey {
   key: readonly string[];
+  /** The primary key, or a unique index: a diagnostic that says only "the key" says nothing. */
+  primary: boolean;
+  /** The index's own name, when it was written with one — what a reader greps the DDL for. */
+  name?: string;
   /** The key's own columns the `WHERE` fixes, which is not every column it fixes. */
   held: string[];
   free: string[];
+  /** The other columns the `WHERE` fixes, which no unique key mentions, so they narrow nothing. */
+  unkeyed: string[];
+}
+
+/** Every key a table declares to be unique, in the order a diagnostic should prefer them. */
+function uniqueKeys(table: Table): { columns: readonly string[]; primary: boolean; name?: string }[] {
+  return [
+    { columns: table.primaryKey, primary: true },
+    ...table.indexes.filter((index) => index.unique).map((index) => ({
+      columns: index.columns,
+      primary: false,
+      name: index.name,
+    })),
+  ];
+}
+
+/**
+ * The columns this `WHERE` fixes that no unique key mentions, in the spelling they were written in.
+ *
+ * They are the ones that made the search *feel* pinned down — a lookup by holder is still a lookup
+ * by something — and naming them is how the finding answers the first objection it will get. A
+ * column in a non-unique index counts as unmentioned, because that is exactly what non-unique means.
+ */
+function unkeyedColumns(fold: (name: string) => string, table: Table, pinned: readonly string[]): string[] {
+  const keyed = new Set<string>();
+  for (const key of uniqueKeys(table)) for (const name of key.columns) keyed.add(fold(name));
+
+  const seen = new Set<string>();
+  const rest: string[] = [];
+  for (const name of pinned) {
+    const folded = fold(name);
+    if (keyed.has(folded) || seen.has(folded)) continue;
+    seen.add(folded);
+    rest.push(name);
+  }
+  return rest;
 }
 
 /**
@@ -107,18 +148,42 @@ export function halfPinnedKey(
   pinned: readonly string[],
 ): HalfKey | undefined {
   const fixed = new Set(pinned.map(fold));
-  const keys = [table.primaryKey, ...table.indexes.filter((index) => index.unique).map((index) => index.columns)];
 
-  let half: HalfKey | undefined;
-  for (const key of keys) {
-    if (key.length === 0) continue;
-    const free = key.filter((name) => !fixed.has(fold(name)));
+  let half: Omit<HalfKey, "unkeyed"> | undefined;
+  for (const key of uniqueKeys(table)) {
+    if (key.columns.length === 0) continue;
+    const free = key.columns.filter((name) => !fixed.has(fold(name)));
     // Any key covered whole is one row, whatever the other keys have left over: a query that fixes
     // `UNIQUE (account_id)` is pinned down even though the primary key `(account_id, holder_id)` has
     // a column to spare.
     if (free.length === 0) return undefined;
-    if (free.length < key.length) half ??= { key, held: key.filter((name) => fixed.has(fold(name))), free };
+    if (free.length < key.columns.length) {
+      half ??= {
+        key: key.columns,
+        primary: key.primary,
+        name: key.name,
+        held: key.columns.filter((name) => fixed.has(fold(name))),
+        free,
+      };
+    }
   }
-  return half;
+  return half && { ...half, unkeyed: unkeyedColumns(fold, table, pinned) };
 }
 
+/**
+ * How a diagnostic names the key it read and what the search did with it, shared so the two rules
+ * that report this say it identically.
+ *
+ * *Which* key is the part worth spelling out. A table whose `PRIMARY KEY` is a surrogate id keeps
+ * its real identity in a composite unique index, and "T is keyed on (a, b)" over a visible
+ * `PRIMARY KEY (t_id)` reads as the tool having misread the table rather than as a finding. The
+ * index's own name is there for the same reason: it is what the reader greps for.
+ */
+export function describeHalfKey(table: Table, half: HalfKey): string {
+  const named = half.name === undefined ? "" : `${half.name} `;
+  const key = half.primary
+    ? `${table.name} is keyed on (${half.key.join(", ")})`
+    : `${table.name} has a unique key ${named}on (${half.key.join(", ")})`;
+  const rest = half.unkeyed.length === 0 ? "" : `; no unique key mentions ${joinNames(half.unkeyed)}`;
+  return `${key}, and this fixes ${joinNames(half.held)} but leaves ${joinNames(half.free)} free${rest}`;
+}

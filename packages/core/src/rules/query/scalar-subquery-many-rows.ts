@@ -1,6 +1,5 @@
 import { singleTableQuery } from "../shared/keys.ts";
-import { joinNames } from "../shared/names.ts";
-import { foldsToOneRow, halfPinnedKey, limitsToOne } from "../shared/rows.ts";
+import { describeHalfKey, foldsToOneRow, halfPinnedKey, limitsToOne } from "../shared/rows.ts";
 import { kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Rule, ScopeInfo, StatementContext } from "../rule.ts";
 
@@ -104,9 +103,8 @@ What it deliberately leaves alone:
 
       ctx.report(
         tokens[i + 1]!,
-        `this subquery can return more than one row: ${query.table.name} is keyed on ` +
-          `(${half.key.join(", ")}), and this fixes ${joinNames(half.held)} but leaves ` +
-          `${joinNames(half.free)} free. MySQL answers error 1242 rather than a value`,
+        `this subquery can return more than one row: ${describeHalfKey(query.table, half)}. ` +
+          "MySQL answers error 1242 rather than a value",
       );
     }
   },
