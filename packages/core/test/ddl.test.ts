@@ -110,3 +110,31 @@ test("a column named as a constraint keyword is a column, and the clause is stil
   );
   assert.deepEqual(clause.columns.map((c) => c.name), ["a", "valid_from", "valid_to"]);
 });
+
+test("a key written on the column is the table's key, and reaches the model as one", () => {
+  // `mysqldump` writes every key at the bottom, so a parser tested only on dumps never meets this
+  // form — and hand-written DDL writes little else. Read as nothing, `id int AUTO_INCREMENT
+  // PRIMARY KEY` produces a table that appears to have no primary key at all.
+  const table = oneTable(
+    "CREATE TABLE t (id int NOT NULL AUTO_INCREMENT PRIMARY KEY, code varchar(8) UNIQUE, label varchar(20));",
+  );
+  assert.deepEqual(table.primaryKey, ["id"]);
+  assert.equal(table.byName.get("id")?.key, "PRI");
+  assert.deepEqual(
+    table.indexes.map((index) => ({ columns: index.columns, unique: index.unique })),
+    [{ columns: ["code"], unique: true }],
+  );
+  assert.equal(table.byName.get("code")?.key, "UNI");
+});
+
+test("a key written at the bottom still wins the rank it always did", () => {
+  const table = oneTable("CREATE TABLE t (id int NOT NULL, code varchar(8), PRIMARY KEY (id), KEY ix (code));");
+  assert.deepEqual(table.primaryKey, ["id"]);
+  assert.equal(table.byName.get("code")?.key, "MUL");
+});
+
+test("the storage engine is kept, because what the server accepts depends on it", () => {
+  assert.deepEqual(oneTable("CREATE TABLE t (a int) ENGINE=MyISAM;").extras, { engine: "MyISAM" });
+  assert.deepEqual(oneTable("CREATE TABLE t (a int) ENGINE InnoDB;").extras, { engine: "InnoDB" });
+  assert.equal(oneTable("CREATE TABLE t (a int);").extras, undefined);
+});

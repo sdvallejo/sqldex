@@ -131,6 +131,15 @@ function parseColumn(src: string, tokens: readonly Token[], from: number, to: nu
     } else if (kw(t, "COMMENT") && next && next.t === "str") {
       column.comment = unquote(next.v);
       i += 2;
+    } else if (kw(t, "PRIMARY") && kw(next, "KEY")) {
+      // A key written on the column is the same key as one written at the bottom of the table, and
+      // the caller turns it into one. `mysqldump` never writes this form, so nothing that reads a
+      // dump missed it — hand-written DDL writes little else.
+      column.key = "PRI";
+      i += 2;
+    } else if (kw(t, "UNIQUE")) {
+      if (column.key === undefined) column.key = "UNI";
+      i += kw(next, "KEY") ? 2 : 1;
     } else if (kw(t, "GENERATED") || (kw(t, "AS") && punct(next, "("))) {
       // `GENERATED ALWAYS AS (expr) VIRTUAL`, or the short `AS (expr) STORED`. The expression
       // carries nested parentheses and strings (`json_extract(x, _utf8mb4'$.a')`), which the
@@ -277,6 +286,8 @@ function parseCreateTable(
   // declared before its columns (legal in MySQL) would find nothing to mark.
   const parts = splitCommas(tokens, named.nextIdx + 1, closeIdx - 1);
   const constraints: { from: number; to: number }[] = [];
+  const inlinePrimary: Column[] = [];
+  const inlineUnique: Column[] = [];
   for (const part of parts) {
     if (isConstraint(tokens, part.from)) {
       constraints.push(part);
@@ -291,9 +302,26 @@ function parseCreateTable(
         column.definition = src.slice(column.definitionSpan.s, column.definitionSpan.e);
         table.columns.push(column);
         table.byName.set(dialect.foldIdentifier(column.name, column.quoted), column);
+        // Set by `parseColumn` only for a key written on the column itself; nothing else has run
+        // yet, so a mark here can only have come from there.
+        if (column.key === "PRI") inlinePrimary.push(column);
+        else if (column.key === "UNI") inlineUnique.push(column);
       }
     }
   }
+
+  // A column-level key is the table's key, so the model holds it the way it holds every other one —
+  // otherwise `id int AUTO_INCREMENT PRIMARY KEY` reads as a table with no primary key at all. No
+  // `span`: deleting such an index means editing the column definition, not cutting a clause, and
+  // the field says what a code action can remove cleanly rather than guessing.
+  if (inlinePrimary.length > 0) {
+    table.primaryKey = inlinePrimary.map((column) => column.name);
+    table.primaryKeySpans = inlinePrimary.map((column) => column.nameSpan);
+  }
+  for (const column of inlineUnique) {
+    table.indexes.push({ columns: [column.name], columnSpans: [column.nameSpan], unique: true });
+  }
+
   for (const part of constraints) applyConstraint(dialect, table, tokens, part.from, part.to);
 
   // The statement runs to the `;` following the table options (`ENGINE=...`).
@@ -304,6 +332,14 @@ function parseCreateTable(
       const at = punct(tokens[j + 1], "=") ? j + 2 : j + 1;
       const value = tokens[at];
       if (value && value.t === "id") table.collation = value.v;
+    }
+    if (kw(tokens[j], "ENGINE")) {
+      // Kept in `extras` because it is exactly what that field is for: which engine a table runs on
+      // is a MySQL fact, and it changes what the engine accepts — MyISAM takes an `AUTO_INCREMENT`
+      // column in the middle of a composite key, and nothing else does.
+      const at = punct(tokens[j + 1], "=") ? j + 2 : j + 1;
+      const value = tokens[at];
+      if (value && value.t === "id") table.extras = { ...table.extras, engine: value.v };
     }
     if (punct(tokens[j], ";")) {
       last = j;
