@@ -46,7 +46,7 @@ import type { Span, Token, TokenRange } from "../syntax/types.ts";
 /**
  * What the rule is *about*, which is what someone turning rules off is choosing between.
  *
- * Not a confidence tier and not an implementation detail: five subjects, each of which a given
+ * Not a confidence tier and not an implementation detail: six subjects, each of which a given
  * repo may legitimately not care about.
  */
 export type RuleGroup =
@@ -59,7 +59,9 @@ export type RuleGroup =
   /** The procedural side: arguments, variables, cursors. */
   | "routine"
   /** The `aud_X` mirror-table convention, which a repo either uses or does not. */
-  | "audit";
+  | "audit"
+  /** What the engine still accepts and has announced it will stop accepting. */
+  | "compat";
 
 /**
  * What the rule is handed, one at a time — and therefore what the engine has to compute before

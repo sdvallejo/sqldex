@@ -21,6 +21,21 @@
  * benefits from knowing that `JSON_EXTRACT` and `JSON_UNQUOTE` are the same kind of thing.
  */
 
+/**
+ * What the engine has already announced about a function it still accepts.
+ *
+ * Here rather than in the rule that reports it, for the reason `dialects/dialect.ts` gives: what one
+ * engine knows about itself is concentrated in one place. It also means a function the manual
+ * retires is a field on the entry that already exists, not a second table to keep in step with this
+ * one — and the version and the replacement are the two things the message has to name.
+ */
+export interface Deprecation {
+  /** The release that announced it, as the manual writes it: `8.0.3`. */
+  since: string;
+  /** What to write instead, where the manual names one. */
+  replacement?: string;
+}
+
 /** One built-in, with the name it is written under. */
 export interface BuiltinFunction {
   /** The catalog's spelling, always upper case. */
@@ -31,6 +46,8 @@ export interface BuiltinFunction {
   summary: string;
   /** The family, shown beside the name in a completion list. */
   category: string;
+  /** Present once the engine has said it will be removed. */
+  deprecated?: Deprecation;
 }
 
 const CATALOG: Record<string, Omit<BuiltinFunction, "name">> = {
@@ -590,8 +607,9 @@ const CATALOG: Record<string, Omit<BuiltinFunction, "name">> = {
   },
   JSON_MERGE: {
     signature: "JSON_MERGE(json, ...)",
-    summary: "Deprecated since MySQL 5.7.22. It is `JSON_MERGE_PRESERVE`.",
+    summary: "A synonym for `JSON_MERGE_PRESERVE`: it merges by accumulating.",
     category: "JSON",
+    deprecated: { since: "8.0.3", replacement: "JSON_MERGE_PRESERVE or JSON_MERGE_PATCH" },
   },
   JSON_MERGE_PATCH: {
     signature: "JSON_MERGE_PATCH(json, ...)",

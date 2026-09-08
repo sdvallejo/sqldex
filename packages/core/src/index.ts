@@ -87,7 +87,7 @@ export type {
 } from "./rules/rule.ts";
 export type { CheckOptions } from "./rules/registry.ts";
 export { check, Registry } from "./rules/registry.ts";
-export { allRules, documentRules, routineRules, schemaRules, statementRules } from "./rules/index.ts";
+export { allRules, compatRules, documentRules, routineRules, schemaRules, statementRules } from "./rules/index.ts";
 export { arity } from "./rules/routine/call-arity.ts";
 export type { InsertLookup, InsertTarget } from "./rules/shared/inserts.ts";
 export { insertTarget } from "./rules/shared/inserts.ts";

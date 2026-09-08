@@ -21,6 +21,8 @@
  */
 
 import { auditTableOutOfSync } from "./audit/table-out-of-sync.ts";
+import { deprecatedFunction } from "./compat/deprecated-function.ts";
+import { userVariableInExpression } from "./compat/user-variable-in-expression.ts";
 import { auditTriggerMissingColumn } from "./audit/trigger-missing-column.ts";
 import { aggregateWithoutGroupBy } from "./query/aggregate-without-group-by.ts";
 import { ambiguousColumn } from "./names/ambiguous-column.ts";
@@ -75,6 +77,15 @@ import { redundantIndex } from "./schema/redundant-index.ts";
  * name is ambiguous in its query, can only be answered having looked at everything.
  */
 export const documentRules = [ambiguousColumn] as const;
+
+/**
+ * The rules about what the engine has announced it will stop accepting.
+ *
+ * `document` for the same reason as each other: a deprecated call or assignment is written the same
+ * way in a `SELECT`, in the body of a procedure and in a trigger, and one pass over the file's
+ * tokens finds all three without needing a statement's relations resolved.
+ */
+export const compatRules = [deprecatedFunction, userVariableInExpression] as const;
 
 /**
  * The rules that read one routine, with that routine's own locals.
@@ -148,7 +159,7 @@ export const schemaRules = [
  * a rule of its own should not be editing everybody else's.
  */
 export function allRules(): Registry {
-  return new Registry().add(...documentRules, ...routineRules, ...schemaRules, ...statementRules);
+  return new Registry().add(...documentRules, ...compatRules, ...routineRules, ...schemaRules, ...statementRules);
 }
 
 export {
@@ -161,6 +172,7 @@ export {
   cursorNeverOpened,
   deadCoalesceDefault,
   declareAfterStatement,
+  deprecatedFunction,
   divergentType,
   duplicateConstraintName,
   enumValueNotDefined,
@@ -196,6 +208,7 @@ export {
   unknownTable,
   unqualifiedColumn,
   unusedVariable,
+  userVariableInExpression,
   variableNeverAssigned,
   writeTargetInSubquery,
 };
