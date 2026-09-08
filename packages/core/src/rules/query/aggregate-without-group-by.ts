@@ -1,3 +1,4 @@
+import { clauseAt } from "../shared/selects.ts";
 import { bareColumnCandidate } from "../shared/names.ts";
 import { AGGREGATES } from "../shared/rows.ts";
 import { kw, kwAny, matchingParen, punct, splitCommas } from "../../syntax/fast/tok.ts";
@@ -5,18 +6,6 @@ import type { Rule, StatementContext } from "../rule.ts";
 
 /** Clauses that end the select list, whichever comes first. */
 const AFTER_LIST: ReadonlySet<string> = new Set(["FROM", "INTO"]);
-
-/** The index of a keyword at the statement's own depth, or `-1`. */
-function clauseAt(ctx: StatementContext, word: string, second?: string): number {
-  const { tokens } = ctx;
-  let depth = 0;
-  for (let i = ctx.statement.from; i <= ctx.statement.to; i++) {
-    if (punct(tokens[i], "(")) depth++;
-    else if (punct(tokens[i], ")")) depth--;
-    else if (depth === 0 && kw(tokens[i], word) && (second === undefined || kw(tokens[i + 1], second))) return i;
-  }
-  return -1;
-}
 
 /** A column reference, or an aggregate call, at this level of the select list. */
 function scan(

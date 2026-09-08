@@ -24,6 +24,7 @@ import { auditTableOutOfSync } from "./audit/table-out-of-sync.ts";
 import { deprecatedFunction } from "./compat/deprecated-function.ts";
 import { userVariableInExpression } from "./compat/user-variable-in-expression.ts";
 import { auditTriggerMissingColumn } from "./audit/trigger-missing-column.ts";
+import { aggregateInWhere } from "./query/aggregate-in-where.ts";
 import { aggregateWithoutGroupBy } from "./query/aggregate-without-group-by.ts";
 import { ambiguousColumn } from "./names/ambiguous-column.ts";
 import { unknownAlias } from "./names/unknown-alias.ts";
@@ -31,6 +32,7 @@ import { unknownColumn } from "./names/unknown-column.ts";
 import { unknownRoutine } from "./names/unknown-routine.ts";
 import { unknownTable } from "./names/unknown-table.ts";
 import { unqualifiedColumn } from "./names/unqualified-column.ts";
+import { distinctOrderByHiddenColumn } from "./query/distinct-order-by-hidden-column.ts";
 import { collationMismatch } from "./query/collation-mismatch.ts";
 import { enumValueNotDefined } from "./query/enum-value-not-defined.ts";
 import { insertMissingRequiredColumn } from "./query/insert-missing-required-column.ts";
@@ -44,9 +46,12 @@ import { literalTypeMismatch } from "./query/literal-type-mismatch.ts";
 import { nullableScalarSubquery } from "./query/nullable-scalar-subquery.ts";
 import { onlyFullGroupBy } from "./query/only-full-group-by.ts";
 import { scalarSubqueryManyRows } from "./query/scalar-subquery-many-rows.ts";
+import { unionColumnCount } from "./query/union-column-count.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
+import { writeToGeneratedColumn } from "./query/write-to-generated-column.ts";
 import { writeTargetInSubquery } from "./query/write-target-in-subquery.ts";
 import { callArity } from "./routine/call-arity.ts";
+import { outParamNeverAssigned } from "./routine/out-param-never-assigned.ts";
 import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
 import { selectIntoArity } from "./routine/select-into-arity.ts";
 import { selectIntoManyRows } from "./routine/select-into-many-rows.ts";
@@ -58,6 +63,7 @@ import { exclusiveBranchAnd } from "./routine/exclusive-branch-and.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
 import { nullableVariableInPredicate } from "./routine/nullable-variable-in-predicate.ts";
 import { shadowedParameter } from "./routine/shadowed-parameter.ts";
+import { unknownLabel } from "./routine/unknown-label.ts";
 import { unusedVariable } from "./routine/unused-variable.ts";
 import { variableNeverAssigned } from "./routine/variable-never-assigned.ts";
 import { divergentType } from "./schema/divergent-type.ts";
@@ -67,6 +73,7 @@ import { fkTypeMismatch } from "./schema/fk-type-mismatch.ts";
 import { fkUnknownColumn } from "./schema/fk-unknown-column.ts";
 import { fkUnknownTable } from "./schema/fk-unknown-table.ts";
 import { indexUnknownColumn } from "./schema/index-unknown-column.ts";
+import { autoIncrementNotKey } from "./schema/auto-increment-not-key.ts";
 import { noPrimaryKey } from "./schema/no-primary-key.ts";
 import { redundantIndex } from "./schema/redundant-index.ts";
 
@@ -104,6 +111,8 @@ export const routineRules = [
   nullableIntoArithmetic,
   nullableVariableInPredicate,
   cursorNeverOpened,
+  outParamNeverAssigned,
+  unknownLabel,
 ] as const;
 
 /**
@@ -129,12 +138,16 @@ export const statementRules = [
   nullableScalarSubquery,
   onlyFullGroupBy,
   aggregateWithoutGroupBy,
+  aggregateInWhere,
   literalTypeMismatch,
   enumValueNotDefined,
   collationMismatch,
   unfilteredWrite,
   writeTargetInSubquery,
   joinWithoutCondition,
+  unionColumnCount,
+  writeToGeneratedColumn,
+  distinctOrderByHiddenColumn,
 ] as const;
 
 /** The rules that read a `CREATE TABLE` or a `CREATE TRIGGER`. */
@@ -150,6 +163,7 @@ export const schemaRules = [
   divergentType,
   noPrimaryKey,
   auditTriggerMissingColumn,
+  autoIncrementNotKey,
 ] as const;
 
 /**
@@ -164,9 +178,11 @@ export function allRules(): Registry {
 
 export {
   aggregateWithoutGroupBy,
+  aggregateInWhere,
   ambiguousColumn,
   auditTableOutOfSync,
   auditTriggerMissingColumn,
+  autoIncrementNotKey,
   callArity,
   collationMismatch,
   cursorNeverOpened,
@@ -174,6 +190,7 @@ export {
   declareAfterStatement,
   deprecatedFunction,
   divergentType,
+  distinctOrderByHiddenColumn,
   duplicateConstraintName,
   enumValueNotDefined,
   exclusiveBranchAnd,
@@ -196,7 +213,9 @@ export {
   nullableScalarSubquery,
   nullableVariableInPredicate,
   outArgumentNotVariable,
+  outParamNeverAssigned,
   redundantIndex,
+  unionColumnCount,
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
@@ -204,6 +223,7 @@ export {
   unfilteredWrite,
   unknownAlias,
   unknownColumn,
+  unknownLabel,
   unknownRoutine,
   unknownTable,
   unqualifiedColumn,
@@ -211,4 +231,5 @@ export {
   userVariableInExpression,
   variableNeverAssigned,
   writeTargetInSubquery,
+  writeToGeneratedColumn,
 };

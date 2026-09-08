@@ -61,6 +61,24 @@ const AFTER_LIST: ReadonlySet<string> = new Set([
 const NOT_VARIABLES: ReadonlySet<string> = new Set(["OUTFILE", "DUMPFILE"]);
 
 /**
+ * The index of a clause keyword at the statement's own depth, or `-1`.
+ *
+ * Own depth is the whole of it: a subquery has a `WHERE` and a `GROUP BY` of its own, and a rule
+ * that found those would be judging one query by another's clauses. Four rules ask this, and they
+ * had better agree about where a clause begins.
+ */
+export function clauseAt(ctx: StatementContext, word: string, second?: string): number {
+  const { tokens } = ctx;
+  let depth = 0;
+  for (let i = ctx.statement.from; i <= ctx.statement.to; i++) {
+    if (punct(tokens[i], "(")) depth++;
+    else if (punct(tokens[i], ")")) depth--;
+    else if (depth === 0 && kw(tokens[i], word) && (second === undefined || kw(tokens[i + 1], second))) return i;
+  }
+  return -1;
+}
+
+/**
  * The `INTO` of this range, at its own depth, or `-1`.
  *
  * Own depth so that a subquery's `INTO` is not mistaken for this one, and both spellings are found,

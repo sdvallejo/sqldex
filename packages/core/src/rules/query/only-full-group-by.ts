@@ -1,3 +1,4 @@
+import { clauseAt } from "../shared/selects.ts";
 import { coversUniqueKey } from "../shared/keys.ts";
 import { bareColumnCandidate } from "../shared/names.ts";
 import { AGGREGATES } from "../shared/rows.ts";
@@ -18,18 +19,6 @@ interface Reference {
   alias?: string;
   /** `o.total` or `total`, folded — how a `GROUP BY` item is compared against it. */
   text: string;
-}
-
-/** The index of a keyword at the statement's own depth, or `-1`. */
-function clauseAt(ctx: StatementContext, word: string, second?: string): number {
-  const { tokens } = ctx;
-  let depth = 0;
-  for (let i = ctx.statement.from; i <= ctx.statement.to; i++) {
-    if (punct(tokens[i], "(")) depth++;
-    else if (punct(tokens[i], ")")) depth--;
-    else if (depth === 0 && kw(tokens[i], word) && (second === undefined || kw(tokens[i + 1], second))) return i;
-  }
-  return -1;
 }
 
 /**

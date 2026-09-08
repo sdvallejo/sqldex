@@ -30,7 +30,9 @@ import {
   insertValueCount,
   joinMultipliesAggregate,
   joinWithoutCondition,
+  aggregateInWhere,
   aggregateWithoutGroupBy,
+  distinctOrderByHiddenColumn,
   leftJoinArithmetic,
   literalTypeMismatch,
   nullableScalarSubquery,
@@ -40,12 +42,14 @@ import {
   selectIntoArity,
   selectIntoManyRows,
   unfilteredWrite,
+  unionColumnCount,
   unknownAlias,
   unknownColumn,
   unknownRoutine,
   unknownTable,
   unqualifiedColumn,
   writeTargetInSubquery,
+  writeToGeneratedColumn,
 } from "../src/rules/index.ts";
 import { parseDDL } from "../src/syntax/fast/ddl.ts";
 import { tokenize } from "../src/syntax/fast/lexer.ts";
@@ -1519,4 +1523,162 @@ test("a bare column is read when this query has one owner for it", () => {
 test("a comparison against anything but a literal is not this rule's business", () => {
   const src = body("  SELECT o.total FROM orders o WHERE o.status = p_id;");
   assert.deepEqual(run(literalTypeMismatch, src), []);
+});
+
+// --------------------------------------------------------- union column count
+
+test("two UNION branches of different widths are reported", () => {
+  const src = "SELECT order_id FROM orders UNION SELECT order_id, total FROM orders;";
+  assert.deepEqual(run(unionColumnCount, src), [
+    "this branch returns 2 column(s) and the first returns 1: MySQL refuses a UNION whose branches are not the same width",
+  ]);
+});
+
+test("two branches of the same width are not", () => {
+  const src = "SELECT order_id, total FROM orders UNION ALL SELECT refund_id, amount FROM refunds;";
+  assert.deepEqual(run(unionColumnCount, src), []);
+});
+
+test("a star is counted against the branch beside it, which is what needs the catalog", () => {
+  // `orders` has four columns; a lexer sees one token on the left and one name on the right.
+  const src = "SELECT * FROM orders UNION SELECT order_id FROM orders;";
+  assert.deepEqual(run(unionColumnCount, src), [
+    "this branch returns 1 column(s) and the first returns 4: MySQL refuses a UNION whose branches are not the same width",
+  ]);
+});
+
+test("a star the catalog cannot expand leaves the whole statement unjudged", () => {
+  // A temporary table another procedure created: its width is unknown, so there is no count to
+  // compare and reporting one would be a guess about a statement that may be perfectly right.
+  const src = "SELECT * FROM tmp_from_other_sp UNION SELECT order_id FROM orders;";
+  assert.deepEqual(run(unionColumnCount, src), []);
+});
+
+test("branches wrapped in their own parentheses are read as branches", () => {
+  const src = "(SELECT order_id FROM orders) UNION (SELECT customer_id FROM orders);";
+  assert.deepEqual(run(unionColumnCount, src), []);
+});
+
+test("a UNION inside a derived table is compared with its own siblings", () => {
+  const src = "SELECT x.n FROM (SELECT order_id FROM orders UNION SELECT order_id, total FROM orders) x;";
+  assert.equal(run(unionColumnCount, src).length, 1);
+});
+
+// -------------------------------------------------- writes to generated columns
+
+test("an INSERT that hands a value to a generated column is reported", () => {
+  const src = "INSERT INTO events (event_id, payload, summary) VALUES (1, 'paid', 'p');";
+  assert.deepEqual(run(writeToGeneratedColumn, src), [
+    "summary is a generated column: MySQL refuses a write that gives it a value",
+  ]);
+});
+
+test("the same INSERT passing DEFAULT is what the server accepts", () => {
+  const src = "INSERT INTO events (event_id, payload, summary) VALUES (1, 'paid', DEFAULT);";
+  assert.deepEqual(run(writeToGeneratedColumn, src), []);
+});
+
+test("one row of a multi-row VALUES is enough, since the statement fails on it", () => {
+  const src = "INSERT INTO events (event_id, payload, summary) VALUES (1, 'a', DEFAULT), (2, 'b', 'x');";
+  assert.equal(run(writeToGeneratedColumn, src).length, 1);
+});
+
+test("an INSERT … SELECT naming one is always reported: a select list cannot say DEFAULT", () => {
+  const src = "INSERT INTO events (event_id, payload, summary) SELECT order_id, status, total FROM orders;";
+  assert.equal(run(writeToGeneratedColumn, src).length, 1);
+});
+
+test("an UPDATE assigning one is reported, and DEFAULT is not", () => {
+  assert.equal(run(writeToGeneratedColumn, "UPDATE events SET summary = 'x' WHERE event_id = 1;").length, 1);
+  assert.deepEqual(run(writeToGeneratedColumn, "UPDATE events SET summary = DEFAULT WHERE event_id = 1;"), []);
+});
+
+test("an ON DUPLICATE KEY UPDATE assigning one is reported", () => {
+  const src = "INSERT INTO events (event_id, payload) VALUES (1, 'a') ON DUPLICATE KEY UPDATE summary = 'x';";
+  assert.equal(run(writeToGeneratedColumn, src).length, 1);
+});
+
+test("a positional INSERT names nothing, so there is nothing here to judge", () => {
+  // Whether the count is right is `query/insert-select-column-count`'s question, not this one's.
+  assert.deepEqual(run(writeToGeneratedColumn, "INSERT INTO events VALUES (1, 'a', DEFAULT);"), []);
+});
+
+// -------------------------------------------------------- aggregates in WHERE
+
+test("an aggregate in a WHERE is reported", () => {
+  const src = "SELECT customer_id FROM orders WHERE SUM(total) > 100 GROUP BY customer_id;";
+  assert.deepEqual(run(aggregateInWhere, src), [
+    "SUM in a WHERE: an aggregate has nothing to fold before the rows are grouped, so MySQL refuses " +
+      "the statement — this condition belongs in HAVING",
+  ]);
+});
+
+test("the same condition in a HAVING is where it belongs", () => {
+  const src = "SELECT customer_id FROM orders GROUP BY customer_id HAVING SUM(total) > 100;";
+  assert.deepEqual(run(aggregateInWhere, src), []);
+});
+
+test("an aggregate inside a subquery of the WHERE folds that query's rows, not this one's", () => {
+  assert.deepEqual(run(aggregateInWhere, "SELECT order_id FROM orders WHERE total > (SELECT AVG(total) FROM orders);"), []);
+  assert.deepEqual(run(aggregateInWhere, "SELECT order_id FROM orders WHERE order_id IN (SELECT MAX(order_id) FROM orders);"), []);
+});
+
+test("a DELETE's WHERE is refused just the same", () => {
+  assert.equal(run(aggregateInWhere, "DELETE FROM orders WHERE MAX(total) > 1;").length, 1);
+});
+
+test("an aggregate in a subquery's WHERE may belong to the outer query, which MySQL allows", () => {
+  // Verified against the server: `(SELECT … WHERE x = MAX(outer.col))` is accepted and aggregates
+  // the outer query. Only a `WHERE` at the statement's own depth is judged for that reason.
+  const src = "SELECT o.customer_id, (SELECT COUNT(*) FROM refunds r WHERE r.order_id = MAX(o.order_id)) FROM orders o;";
+  assert.deepEqual(run(aggregateInWhere, src), []);
+});
+
+test("a window function is refused for another reason, and is left to say so", () => {
+  assert.deepEqual(run(aggregateInWhere, "SELECT order_id FROM orders WHERE SUM(total) OVER () > 1;"), []);
+});
+
+// ------------------------------------------------ DISTINCT ordered by a hidden column
+
+test("a SELECT DISTINCT ordered by a column it does not return is reported", () => {
+  const src = "SELECT DISTINCT customer_id FROM orders ORDER BY total;";
+  assert.deepEqual(run(distinctOrderByHiddenColumn, src), [
+    "total orders a SELECT DISTINCT that does not return it: once the rows are collapsed this column " +
+      "has no single value, and a server with ONLY_FULL_GROUP_BY refuses the query",
+  ]);
+});
+
+test("the same query returning that column is fine", () => {
+  assert.deepEqual(run(distinctOrderByHiddenColumn, "SELECT DISTINCT customer_id, total FROM orders ORDER BY total;"), []);
+});
+
+test("a qualifier on one side and not the other is one column, not two", () => {
+  assert.deepEqual(run(distinctOrderByHiddenColumn, "SELECT DISTINCT o.total FROM orders o ORDER BY total;"), []);
+});
+
+test("a function over a returned column is ordering by what came back", () => {
+  assert.deepEqual(run(distinctOrderByHiddenColumn, "SELECT DISTINCT total FROM orders ORDER BY ROUND(total);"), []);
+});
+
+test("but a column that only appears inside an expression is not returned", () => {
+  // Verified against the server: `SELECT DISTINCT DATE(x) … ORDER BY x` is refused, because the
+  // list carries the expression and not the column.
+  assert.equal(run(distinctOrderByHiddenColumn, "SELECT DISTINCT ROUND(total) FROM orders ORDER BY total;").length, 1);
+});
+
+test("an expression the list repeats verbatim is returned, whatever its columns are", () => {
+  assert.deepEqual(run(distinctOrderByHiddenColumn, "SELECT DISTINCT total + 1 FROM orders ORDER BY total + 1;"), []);
+});
+
+test("an alias names a result, and a result is returned", () => {
+  const src = "SELECT DISTINCT CONCAT(status, status) AS tag FROM orders ORDER BY tag;";
+  assert.deepEqual(run(distinctOrderByHiddenColumn, src), []);
+});
+
+test("without DISTINCT nothing is collapsed, so nothing is hidden", () => {
+  assert.deepEqual(run(distinctOrderByHiddenColumn, "SELECT customer_id FROM orders ORDER BY total;"), []);
+});
+
+test("a name no relation has is names/unknown-column's, not this rule's", () => {
+  assert.deepEqual(run(distinctOrderByHiddenColumn, "SELECT DISTINCT customer_id FROM orders ORDER BY nope;"), []);
 });

@@ -31,7 +31,9 @@ import {
   exclusiveBranchAnd,
   nullableIntoArithmetic,
   nullableVariableInPredicate,
+  outParamNeverAssigned,
   shadowedParameter,
+  unknownLabel,
   unusedVariable,
   variableNeverAssigned,
 } from "../src/rules/index.ts";
@@ -1047,4 +1049,99 @@ test("and a taint does not cross into it either", () => {
   ].join("\n");
 
   assert.deepEqual(run(nullableIntoArithmetic, src), []);
+});
+
+// ------------------------------------------------------ OUT parameters never filled
+
+/** A header with modes on it, since what this rule reads is the signature. */
+function withHeader(header: string, ...lines: string[]): string {
+  return [header, "BEGIN", ...lines, "END;"].join("\n");
+}
+
+test("an OUT parameter the body never assigns is reported", () => {
+  const src = withHeader("CREATE PROCEDURE sp_case(IN p_order int, OUT p_result int)", "  SELECT 1;");
+  assert.deepEqual(run(outParamNeverAssigned, src), [
+    "p_result is an OUT parameter and sp_case never assigns it, so every caller reads back NULL",
+  ]);
+});
+
+test("a SET on it is an assignment", () => {
+  const src = withHeader("CREATE PROCEDURE sp_case(IN p_order int, OUT p_result int)", "  SET p_result = 1;");
+  assert.deepEqual(run(outParamNeverAssigned, src), []);
+});
+
+test("so is a SELECT … INTO, which is how most of them are filled", () => {
+  const src = withHeader(
+    "CREATE PROCEDURE sp_case(IN p_order int, OUT p_result decimal(10,2))",
+    "  SELECT total INTO p_result FROM orders WHERE order_id = p_order;",
+  );
+  assert.deepEqual(run(outParamNeverAssigned, src), []);
+});
+
+test("and so is handing it to another procedure's OUT parameter", () => {
+  // Which argument that is comes from the callee's signature in the catalog, not from a guess.
+  const src = withHeader("CREATE PROCEDURE sp_case(IN p_order int, OUT p_result int)", "  CALL sp_returns(p_order, p_result);");
+  assert.deepEqual(run(outParamNeverAssigned, src), []);
+});
+
+test("an INOUT parameter is left alone: not assigning it returns the caller's own value", () => {
+  // Confirmed against a live server — an `OUT` comes back NULL, an `INOUT` comes back unchanged.
+  const src = withHeader("CREATE PROCEDURE sp_case(INOUT p_v int)", "  SELECT p_v;");
+  assert.deepEqual(run(outParamNeverAssigned, src), []);
+});
+
+test("a parameter a DECLARE shadows is the other rule's finding, not this one's", () => {
+  const src = withHeader(
+    "CREATE PROCEDURE sp_case(OUT p_result int)",
+    "  DECLARE p_result int DEFAULT 0;",
+    "  SET p_result = 1;",
+  );
+  assert.deepEqual(run(outParamNeverAssigned, src), []);
+  assert.equal(run(shadowedParameter, src).length, 1);
+});
+
+// -------------------------------------------------------------- unknown labels
+
+test("a LEAVE naming a label no block declares is reported", () => {
+  const src = body("  wheel: LOOP", "    LEAVE nope;", "  END LOOP wheel;");
+  assert.deepEqual(run(unknownLabel, src), ["LEAVE nope: no block in sp_case is labelled nope"]);
+});
+
+test("a LEAVE naming the loop it is in is not", () => {
+  const src = body("  wheel: LOOP", "    LEAVE wheel;", "  END LOOP wheel;");
+  assert.deepEqual(run(unknownLabel, src), []);
+});
+
+test("ITERATE is read the same way, and reported the same way", () => {
+  const src = body("  wheel: LOOP", "    ITERATE nope;", "  END LOOP wheel;");
+  assert.deepEqual(run(unknownLabel, src), ["ITERATE nope: no block in sp_case is labelled nope"]);
+});
+
+test("a label folds case like every other identifier", () => {
+  const src = body("  Wheel: LOOP", "    LEAVE WHEEL;", "  END LOOP;");
+  assert.deepEqual(run(unknownLabel, src), []);
+});
+
+test("a labelled BEGIN block is a label too", () => {
+  const src = body("  blk: BEGIN", "    LEAVE blk;", "  END;");
+  assert.deepEqual(run(unknownLabel, src), []);
+});
+
+test("a WHILE and a REPEAT can be labelled, and are", () => {
+  const loops = body(
+    "  spin: WHILE p_order > 0 DO",
+    "    LEAVE spin;",
+    "  END WHILE spin;",
+    "  again: REPEAT",
+    "    ITERATE again;",
+    "  UNTIL p_order > 0 END REPEAT again;",
+  );
+  assert.deepEqual(run(unknownLabel, loops), []);
+});
+
+test("a CALL the catalog cannot resolve may be the one filling it, so nothing is claimed", () => {
+  // Which argument of a call is `OUT` lives in the callee's signature. Without it there is no way
+  // to tell a filled parameter from an unfilled one, and guessing would accuse the caller.
+  const src = withHeader("CREATE PROCEDURE sp_case(IN p_order int, OUT p_result int)", "  CALL sp_elsewhere(p_order, p_result);");
+  assert.deepEqual(run(outParamNeverAssigned, src), []);
 });

@@ -27,6 +27,7 @@ import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
 import {
   auditTableOutOfSync,
   auditTriggerMissingColumn,
+  autoIncrementNotKey,
   divergentType,
   duplicateConstraintName,
   fkMissingIndex,
@@ -715,4 +716,59 @@ test("two names that differ, and a key with no name at all, are nobody's collisi
 
   assert.deepEqual(run(duplicateConstraintName, distinct), []);
   assert.deepEqual(run(duplicateConstraintName, unnamed), []);
+});
+
+// -------------------------------------------------- AUTO_INCREMENT without a key
+
+test("an AUTO_INCREMENT column in no key at all is reported", () => {
+  const src = "CREATE TABLE tickets (ticket_no int AUTO_INCREMENT, label varchar(20));";
+  assert.deepEqual(run(autoIncrementNotKey, src), [
+    "ticket_no is AUTO_INCREMENT and is in no key: MySQL refuses this table",
+  ]);
+});
+
+test("the same column as the primary key is the well-formed shape", () => {
+  const src = "CREATE TABLE tickets (ticket_no int AUTO_INCREMENT, label varchar(20), PRIMARY KEY (ticket_no));";
+  assert.deepEqual(run(autoIncrementNotKey, src), []);
+});
+
+test("a key written on the column counts, which is how hand-written DDL writes it", () => {
+  const src = "CREATE TABLE tickets (ticket_no int AUTO_INCREMENT PRIMARY KEY, label varchar(20));";
+  assert.deepEqual(run(autoIncrementNotKey, src), []);
+});
+
+test("an ordinary index is a key for this purpose, so long as the column starts it", () => {
+  const src = "CREATE TABLE tickets (ticket_no int AUTO_INCREMENT, branch_id int, KEY ix_ticket (ticket_no));";
+  assert.deepEqual(run(autoIncrementNotKey, src), []);
+});
+
+test("a column buried in a composite key is reported, because InnoDB refuses it", () => {
+  const src = [
+    "CREATE TABLE tickets (",
+    "  branch_id int NOT NULL,",
+    "  ticket_no int NOT NULL AUTO_INCREMENT,",
+    "  PRIMARY KEY (branch_id, ticket_no)",
+    ") ENGINE=InnoDB;",
+  ].join("\n");
+  assert.deepEqual(run(autoIncrementNotKey, src), [
+    "ticket_no is AUTO_INCREMENT but never the first column of a key: MySQL refuses this table",
+  ]);
+});
+
+test("the same table on MyISAM is a per-group counter, and is left alone", () => {
+  // Verified against a live server: MyISAM accepts it and restarts the count per `branch_id`;
+  // InnoDB and MEMORY refuse it. The engine is read from the table's own `ENGINE=`.
+  const src = [
+    "CREATE TABLE tickets (",
+    "  branch_id int NOT NULL,",
+    "  ticket_no int NOT NULL AUTO_INCREMENT,",
+    "  PRIMARY KEY (branch_id, ticket_no)",
+    ") ENGINE=MyISAM;",
+  ].join("\n");
+  assert.deepEqual(run(autoIncrementNotKey, src), []);
+});
+
+test("MyISAM still needs the column in some key", () => {
+  const src = "CREATE TABLE tickets (ticket_no int AUTO_INCREMENT, label varchar(20)) ENGINE=MyISAM;";
+  assert.equal(run(autoIncrementNotKey, src).length, 1);
 });
