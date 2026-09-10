@@ -348,7 +348,7 @@ and those are two defects with two fixes.
 ## Development
 
 ```
-npm test                        # 723 tests, hand-written fixtures only
+npm test                        # 727 tests, hand-written fixtures only
 npm run typecheck
 npm run build                   # emits dist/ for publishing; not needed to develop
 npm run bench <dir>...          # lexer throughput over a directory of SQL

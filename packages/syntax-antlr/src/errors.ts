@@ -2,10 +2,11 @@
 
 import { lineIndex } from "@sqldex/core";
 import type { Span } from "@sqldex/core";
-import { BaseErrorListener } from "antlr4ng";
+import { BaseErrorListener, Parser, ParserRuleContext } from "antlr4ng";
 import type { ANTLRErrorListener, RecognitionException, Recognizer, Token as AntlrToken } from "antlr4ng";
 import type { ATNSimulator } from "antlr4ng";
 import { MySQLLexer } from "./generated/MySQLLexer.ts";
+import { DeleteStatementContext } from "./generated/MySQLParser.ts";
 
 export interface SyntaxError {
   span: Span;
@@ -43,6 +44,65 @@ function isKnownGrammarGap(offendingSymbol: AntlrToken | null): boolean {
   return false;
 }
 
+/** What can follow a table in a `FROM` that joins: a join's first word, or the comma. */
+const JOIN_STARTS = new Set([
+  MySQLLexer.COMMA_SYMBOL,
+  MySQLLexer.INNER_SYMBOL,
+  MySQLLexer.CROSS_SYMBOL,
+  MySQLLexer.JOIN_SYMBOL,
+  MySQLLexer.STRAIGHT_JOIN_SYMBOL,
+  MySQLLexer.LEFT_SYMBOL,
+  MySQLLexer.RIGHT_SYMBOL,
+  MySQLLexer.NATURAL_SYMBOL,
+]);
+
+/** The words of a join up to its `JOIN` — `INNER JOIN`, `NATURAL LEFT OUTER JOIN` — for display only. */
+const JOIN_WORDS = /^(?:[A-Za-z_]+\s+){0,3}?(?:STRAIGHT_)?JOIN\b/i;
+
+function textOf(src: string, ctx: ParserRuleContext): string {
+  return src.slice(ctx.start!.start, ctx.stop!.stop + 1).replace(/\s+/g, " ");
+}
+
+/**
+ * `DELETE FROM orders o INNER JOIN customers …` — a join written into the single-table form, which
+ * has no room for one. The grammar's own message is `mismatched input 'INNER' expecting ';'`: by the
+ * time it sees the join, `DELETE FROM orders o` is already a complete single-table `DELETE`, so all
+ * it can say is that something follows it. What the reader needs is the other form — the one that
+ * names the table it deletes from, `DELETE o FROM orders o INNER JOIN …`. Checked against a live
+ * MariaDB server (the join, the `LEFT JOIN` and the comma all refuse to parse; `DELETE o FROM … JOIN`
+ * and `DELETE FROM o USING … JOIN` both run), and MySQL's reference manual gives neither of its
+ * single-table forms a join either.
+ *
+ * Recognised by the grammar, not by the text: at the error the parser has already closed the
+ * `deleteStatement`, so it is the last rule the current context completed — and it has to be the
+ * single-table alternative, **ending on its table or its alias**. A `DELETE` that got as far as a
+ * `WHERE` or a `LIMIT` before a stray comma is a different mistake, and keeps the grammar's message.
+ */
+function explainDeleteJoin(recognizer: Recognizer<ATNSimulator>, offendingSymbol: AntlrToken | null, src: string): string | undefined {
+  if (!offendingSymbol || !JOIN_STARTS.has(offendingSymbol.type) || !(recognizer instanceof Parser)) return undefined;
+
+  let node: ParserRuleContext | null = recognizer.context;
+  while (node && !(node instanceof DeleteStatementContext)) {
+    let last: ParserRuleContext | null = null;
+    for (const child of node.children) if (child instanceof ParserRuleContext) last = child;
+    node = last;
+  }
+  if (!node || node.tableAliasRefList()) return undefined;
+
+  const table = node.tableRef();
+  const alias = node.tableAlias();
+  const end = alias ?? table;
+  if (!table || !end || node.stop?.tokenIndex !== end.stop?.tokenIndex) return undefined;
+
+  const target = alias ? textOf(src, alias.identifier()) : textOf(src, table);
+  const written = src.slice(table.start!.start, end.stop!.stop + 1).replace(/\s+/g, " ");
+  const join =
+    offendingSymbol.type === MySQLLexer.COMMA_SYMBOL
+      ? ","
+      : ` ${(JOIN_WORDS.exec(src.slice(offendingSymbol.start, offendingSymbol.start + 64))?.[0] ?? offendingSymbol.text ?? "").replace(/\s+/g, " ")}`;
+  return `a DELETE that joins tables has to name the one it deletes from — DELETE ${target} FROM ${written}${join} …`;
+}
+
 /**
  * Collects every syntax error ANTLR reports, rather than stopping at the first.
  *
@@ -52,10 +112,12 @@ function isKnownGrammarGap(offendingSymbol: AntlrToken | null): boolean {
  */
 export class CollectingErrorListener extends BaseErrorListener implements ANTLRErrorListener {
   readonly errors: SyntaxError[] = [];
+  private readonly src: string;
   private readonly starts: number[];
 
   constructor(src: string) {
     super();
+    this.src = src;
     this.starts = lineIndex(src);
   }
 
@@ -78,6 +140,6 @@ export class CollectingErrorListener extends BaseErrorListener implements ANTLRE
           const s = (this.starts[line - 1] ?? 0) + column;
           return { s, e: s + 1 };
         })();
-    this.errors.push({ span, message: msg });
+    this.errors.push({ span, message: explainDeleteJoin(recognizer, offendingSymbol, this.src) ?? msg });
   }
 }

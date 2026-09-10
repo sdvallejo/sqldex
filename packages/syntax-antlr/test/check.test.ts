@@ -277,6 +277,56 @@ test("a genuinely truncated routine — not just missing its terminator — is s
   assert.ok(found.length >= 1);
 });
 
+// ------------------------------------------- a DELETE that joins, and names nothing to delete from
+
+/** The text a finding's span covers — what a reader sees underlined. */
+function underlined(src: string, error: { span: { s: number; e: number } }): string {
+  return src.slice(error.span.s, error.span.e);
+}
+
+test("a single-table DELETE followed by a JOIN says which form it needs, not just 'expecting ;'", () => {
+  // The grammar's own message is `mismatched input 'INNER' expecting ';'`: `DELETE FROM orders o`
+  // is already a complete single-table DELETE, so all it can say is that something follows it.
+  const src = "DELETE FROM orders o INNER JOIN customers WHERE doc = 1234;";
+  const [first] = checkSyntax(src);
+  assert.ok(first);
+  assert.equal(underlined(src, first), "INNER");
+  assert.match(first.message, /a DELETE that joins tables has to name the one it deletes from/);
+  assert.match(first.message, /DELETE o FROM orders o INNER JOIN …/);
+});
+
+test("the suggestion is built from what was written: no alias, AS, a comma, inside a routine", () => {
+  const noAlias = procedure("  DELETE FROM orders LEFT JOIN customers ON orders.cid = customers.cid;");
+  assert.match(checkSyntax(noAlias)[0]!.message, /DELETE orders FROM orders LEFT JOIN …/);
+
+  const withAs = "DELETE FROM orders AS o JOIN customers c ON o.cid = c.cid;";
+  assert.match(checkSyntax(withAs)[0]!.message, /DELETE o FROM orders AS o JOIN …/);
+
+  const comma = "DELETE FROM orders o, customers c WHERE o.cid = c.cid;";
+  const [first] = checkSyntax(comma);
+  assert.equal(underlined(comma, first!), ",");
+  assert.match(first!.message, /DELETE o FROM orders o, …/);
+});
+
+test("both multi-table DELETE forms parse clean, and a broken SELECT keeps the grammar's own message", () => {
+  assert.deepEqual(checkSyntax("DELETE o FROM orders o INNER JOIN customers USING (customer_id) WHERE doc = '1234';"), []);
+  assert.deepEqual(checkSyntax("DELETE FROM o USING orders o JOIN customers c ON o.cid = c.cid;"), []);
+
+  const select = checkSyntax("SELECT a FROM orders JOIN;");
+  assert.ok(select.length >= 1);
+  assert.doesNotMatch(select[0]!.message, /DELETE/);
+});
+
+test("a stray comma after a DELETE's WHERE or LIMIT is a different mistake, and keeps the grammar's message", () => {
+  // The same comma token, and the same completed single-table `deleteStatement` — but it no longer
+  // ends on its table, so nothing about it says the author meant a join.
+  for (const src of ["DELETE FROM orders WHERE order_id = 1, 2;", "DELETE FROM orders LIMIT 1, 2;"]) {
+    const found = checkSyntax(src);
+    assert.ok(found.length >= 1, src);
+    assert.doesNotMatch(found[0]!.message, /joins tables/, src);
+  }
+});
+
 test("VENDORED_GRAMMAR_COMMIT is not accidentally blank", async () => {
   const { VENDORED_GRAMMAR_COMMIT } = await import("../src/generated/VENDORED_GRAMMAR_COMMIT.ts");
   assert.ok(VENDORED_GRAMMAR_COMMIT.length > 0);
