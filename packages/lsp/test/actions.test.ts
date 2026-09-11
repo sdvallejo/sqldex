@@ -454,7 +454,7 @@ END;`,
   );
 });
 
-test("a HANDLER's DECLARE earns no move — the shape is not the plain one this scan reads", () => {
+test("a HANDLER's own BEGIN … END action no longer refuses the move — its bounds are read by kind, not by a plain scan for the next ;", () => {
   const here = cursor(
     `CREATE PROCEDURE sp_z()
 BEGIN
@@ -462,9 +462,61 @@ BEGIN
   |DECLARE CONTINUE HANDLER FOR NOT FOUND BEGIN SET @done = 1; END;
 END;`,
   );
-  assert.deepEqual(
-    actionsAt(here).filter((a) => a.title.startsWith("Move this DECLARE")),
-    [],
+  const action = pick(actionsAt(here), "Move this DECLARE above the block's first statement");
+  assert.deepEqual(codesOf(action), ["routine/declare-after-statement"]);
+  assert.equal(
+    applied(action, join(SHOP, "sps/sp_scratch.sql"), here.text),
+    `CREATE PROCEDURE sp_z()
+BEGIN
+  DECLARE CONTINUE HANDLER FOR NOT FOUND BEGIN SET @done = 1; END;
+  SELECT 1;
+END;`,
+  );
+});
+
+test("a cursor moved above a routine that already declares variables lands after the last one, not above it", () => {
+  const here = cursor(
+    `CREATE PROCEDURE sp_cur()
+BEGIN
+  DECLARE done INT DEFAULT 0;
+  SELECT 1;
+  |DECLARE cur CURSOR FOR SELECT order_id FROM orders;
+END;`,
+  );
+  const action = pick(actionsAt(here), "Move this DECLARE above the block's first statement");
+  assert.deepEqual(codesOf(action), ["routine/declare-after-statement"]);
+  assert.equal(
+    applied(action, join(SHOP, "sps/sp_scratch.sql"), here.text),
+    `CREATE PROCEDURE sp_cur()
+BEGIN
+  DECLARE done INT DEFAULT 0;
+  DECLARE cur CURSOR FOR SELECT order_id FROM orders;
+  SELECT 1;
+END;`,
+  );
+});
+
+test("a BEGIN-less handler moved above a routine that declares a variable and a cursor lands after the cursor", () => {
+  const here = cursor(
+    `CREATE PROCEDURE sp_han()
+BEGIN
+  DECLARE done INT DEFAULT 0;
+  DECLARE cur CURSOR FOR SELECT order_id FROM orders;
+  SELECT 1;
+  |DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+END;`,
+  );
+  const action = pick(actionsAt(here), "Move this DECLARE above the block's first statement");
+  assert.deepEqual(codesOf(action), ["routine/declare-after-statement"]);
+  assert.equal(
+    applied(action, join(SHOP, "sps/sp_scratch.sql"), here.text),
+    `CREATE PROCEDURE sp_han()
+BEGIN
+  DECLARE done INT DEFAULT 0;
+  DECLARE cur CURSOR FOR SELECT order_id FROM orders;
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+  SELECT 1;
+END;`,
   );
 });
 

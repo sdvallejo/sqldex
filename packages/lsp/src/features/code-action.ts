@@ -20,10 +20,12 @@
  * **The quick fixes only act where the edit is unambiguous.** A "did you mean" rename is offered only
  * when exactly one candidate is close enough; an `INSERT` under-supplied on values is only completed
  * when there is one accepted count to complete it to; an unused variable is removed from its own
- * `DECLARE`, alone or shared with others, but a `DECLARE` reordered wholesale refuses the one shape
- * — a handler's — a plain scan cannot read correctly. Where the right edit cannot be known, the rule
- * still reports — there is just no lightbulb. Guessing wrong here is worse than not offering
- * anything, the same principle every rule in `@sqldex/core` is already written against.
+ * `DECLARE`, alone or shared with others; a `DECLARE` out of place moves to the position MySQL's
+ * grammar puts its own kind at — variables and conditions first, then cursors, then handlers — never
+ * just back to the top, which the server would refuse exactly as it refuses the misplaced one to
+ * start with. Where the right edit cannot be known, the rule still reports — there is just no
+ * lightbulb. Guessing wrong here is worse than not offering anything, the same principle every rule
+ * in `@sqldex/core` is already written against.
  */
 
 import {
@@ -48,6 +50,7 @@ import {
   prefixCount,
   punct,
   qualifier,
+  readDeclaration,
   relation,
   sameColumnType,
   statementBounds,
@@ -680,11 +683,19 @@ function cursorNeverOpenedFix(at: At, local: Local, d: Diagnostic, out: CodeActi
 }
 
 /**
- * `routine/declare-after-statement`: move the `DECLARE` to the top of its enclosing block.
+ * `routine/declare-after-statement`: move the `DECLARE` back into its enclosing block's own
+ * declaration section, at the position its **kind** belongs at.
  *
- * Inserted right after the block's own `BEGIN`. MySQL only requires every `DECLARE` to come before
- * the block's first statement, not that several of them stay in any particular relative order, so
- * this is a correct fix for one offender at a time even without tracking where earlier ones landed.
+ * Not just "right after `BEGIN`". Verified against a live server, on both engines: a variable or
+ * condition `DECLARE` after a cursor's, or a cursor's after a handler's, is refused at `CREATE`
+ * (error 1337 for the first, 1338 for the second) exactly as a misplaced one already is — MySQL
+ * demands variables and conditions, then cursors, then handlers, and a fix that always inserted at
+ * the very top would turn a `DECLARE` after a statement into a `DECLARE` in the wrong order instead,
+ * the moment the block already declares something of an earlier kind. So a variable or condition
+ * still goes right after `BEGIN` — nothing about the order of two variables against each other is
+ * required — but a cursor goes after the last variable/condition already there, and a handler after
+ * the last declaration of any kind, each falling back to right after `BEGIN` when there is nothing
+ * of an earlier kind yet.
  */
 function declareReorderFix(at: At, offset: number, d: Diagnostic, out: CodeAction[]): void {
   const tokens = at.lexed.tokens;
@@ -692,20 +703,11 @@ function declareReorderFix(at: At, offset: number, d: Diagnostic, out: CodeActio
   if (!found || !kw(found.token, "DECLARE")) return;
   const declareIdx = found.idx;
 
-  // The terminating `;` — refusing a `DECLARE ... HANDLER FOR ... BEGIN ... END` in between, which
-  // is a different grammatical shape a plain scan should not walk into.
-  let to = declareIdx;
-  let depth = 0;
-  let handler = false;
-  while (to < tokens.length) {
-    const t = tokens[to]!;
-    if (kw(t, "BEGIN")) handler = true;
-    else if (punct(t, "(")) depth++;
-    else if (punct(t, ")")) depth--;
-    else if (depth === 0 && punct(t, ";")) break;
-    to++;
-  }
-  if (to >= tokens.length || handler) return;
+  // What is being moved, read the same way `declarationSection` reads one of a block's own — which
+  // is what makes a handler's `BEGIN ... END` action no longer a shape this has to refuse: its own
+  // `to` already accounts for the block it opens.
+  const moved = readDeclaration(at.text, tokens, declareIdx);
+  if (!moved) return;
 
   // The enclosing block's `BEGIN`, with the same block-depth tracking the rule itself uses.
   let blocks = 0;
@@ -723,21 +725,33 @@ function declareReorderFix(at: At, offset: number, d: Diagnostic, out: CodeActio
   }
   if (beginIdx === -1) return;
 
+  // The block's own top declarations, in file order — which, for a file the server would have
+  // accepted before this one went astray, is already MySQL's own order. The declaration being moved
+  // is never among them: it sits after a statement, which is exactly why it is not at the top.
+  const section = declarationSection(at.text, tokens, beginIdx);
+  let anchor: Declaration | undefined;
+  if (moved.kind === "cursor") {
+    anchor = section.findLast((declared) => declared.kind === "variable" || declared.kind === "condition");
+  } else if (moved.kind === "handler") {
+    anchor = section[section.length - 1];
+  }
+  // A variable or a condition keeps no anchor: it always goes right after `BEGIN`.
+
   const starts = lineIndex(at.text);
   const declareStart = tokens[declareIdx]!.s;
-  const declareText = at.text.slice(declareStart, tokens[to]!.e);
+  const declareText = at.text.slice(declareStart, tokens[moved.to]!.e);
 
   let removeStart = declareStart;
   while (removeStart > 0 && (at.text[removeStart - 1] === " " || at.text[removeStart - 1] === "\t")) removeStart--;
   const indent = at.text.slice(removeStart, declareStart);
 
-  let removeEnd = tokens[to]!.e;
+  let removeEnd = tokens[moved.to]!.e;
   if (at.text[removeEnd] === "\n") removeEnd++;
 
-  const beginEnd = tokens[beginIdx]!.e;
+  const insertAt = anchor ? tokens[anchor.to]!.e : tokens[beginIdx]!.e;
   const edits: TextEdit[] = [
     { range: rangeOf(starts, { s: removeStart, e: removeEnd }), newText: "" },
-    { range: rangeOf(starts, { s: beginEnd, e: beginEnd }), newText: `\n${indent}${declareText}` },
+    { range: rangeOf(starts, { s: insertAt, e: insertAt }), newText: `\n${indent}${declareText}` },
   ];
   out.push(fix(`Move this DECLARE above the block's first statement`, at.document.uri, edits, [d]));
 }

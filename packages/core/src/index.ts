@@ -98,7 +98,7 @@ export { analyze, classify, locateCursor } from "./syntax/fast/cursor.ts";
 export type { ParsedDDL } from "./syntax/fast/ddl.ts";
 export { parseDDL } from "./syntax/fast/ddl.ts";
 export type { Declaration, DeclarationKind } from "./syntax/fast/declarations.ts";
-export { declarationSection } from "./syntax/fast/declarations.ts";
+export { declarationSection, readDeclaration } from "./syntax/fast/declarations.ts";
 export { lineCol, lineIndex, tokenize } from "./syntax/fast/lexer.ts";
 export type { ParsedRoutines } from "./syntax/fast/routine.ts";
 export { cleanDoc, parseHeader, parseRoutines } from "./syntax/fast/routine.ts";

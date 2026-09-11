@@ -72,6 +72,47 @@ function declarationEnd(tokens: readonly Token[], from: number): number {
 }
 
 /**
+ * Reads one declaration starting at `from` — the index of its own `DECLARE` token — classified and
+ * bounded the same way `declarationSection` reads each of a block's own.
+ *
+ * Usable on **any** `DECLARE`, not only one sitting at the top of its block: a misplaced one, which
+ * is a `DECLARE` after the block's first statement, is exactly the shape that is not there. A quick
+ * fix that wants to move one back has to read it first, and reads it with this rather than a second,
+ * looser copy of the same grammar.
+ *
+ * `undefined` when `from` is not a `DECLARE` at all, or names a shape this reader does not know.
+ */
+export function readDeclaration(src: string, tokens: readonly Token[], from: number): Declaration | undefined {
+  if (!kw(tokens[from], "DECLARE")) return undefined;
+  let j = from + 1;
+
+  if (kwAny(tokens[j], HANDLER_STARTERS) !== undefined) {
+    return { kind: "handler", from, to: declarationEnd(tokens, from) };
+  }
+
+  // Names are comma-separated, and MySQL puts every one of them before the type:
+  // `DECLARE a, b, c INT DEFAULT 0;`.
+  const names: Span[] = [];
+  while (tokens[j]?.t === "id") {
+    names.push({ s: tokens[j]!.s, e: tokens[j]!.e });
+    if (punct(tokens[j + 1], ",")) j += 2;
+    else {
+      j++;
+      break;
+    }
+  }
+  if (names.length === 0) return undefined;
+
+  if (kw(tokens[j], "CURSOR")) return { kind: "cursor", from, to: declarationEnd(tokens, from) };
+  if (kw(tokens[j], "CONDITION")) return { kind: "condition", from, to: declarationEnd(tokens, from) };
+
+  const typeEnd = typeExtent(tokens, j, tokens.length - 1);
+  const type = readType(src, tokens, j, typeEnd);
+  const to = declarationEnd(tokens, from);
+  return { kind: "variable", from, to, names, type, hasModifier: to > typeEnd + 1 };
+}
+
+/**
  * The consecutive `DECLARE`s starting right after `beginIdx`, MySQL's grammar order: variables and
  * conditions, then cursors, then handlers.
  *
@@ -86,47 +127,10 @@ export function declarationSection(src: string, tokens: readonly Token[], beginI
   let i = beginIdx + 1;
 
   while (kw(tokens[i], "DECLARE")) {
-    const from = i;
-    let j = i + 1;
-
-    if (kwAny(tokens[j], HANDLER_STARTERS) !== undefined) {
-      const to = declarationEnd(tokens, from);
-      out.push({ kind: "handler", from, to });
-      i = to + 1;
-      continue;
-    }
-
-    // Names are comma-separated, and MySQL puts every one of them before the type:
-    // `DECLARE a, b, c INT DEFAULT 0;`.
-    const names: Span[] = [];
-    while (tokens[j]?.t === "id") {
-      names.push({ s: tokens[j]!.s, e: tokens[j]!.e });
-      if (punct(tokens[j + 1], ",")) j += 2;
-      else {
-        j++;
-        break;
-      }
-    }
-    if (names.length === 0) break; // a shape this reader does not know: stop rather than loop forever
-
-    if (kw(tokens[j], "CURSOR")) {
-      const to = declarationEnd(tokens, from);
-      out.push({ kind: "cursor", from, to });
-      i = to + 1;
-      continue;
-    }
-    if (kw(tokens[j], "CONDITION")) {
-      const to = declarationEnd(tokens, from);
-      out.push({ kind: "condition", from, to });
-      i = to + 1;
-      continue;
-    }
-
-    const typeEnd = typeExtent(tokens, j, tokens.length - 1);
-    const type = readType(src, tokens, j, typeEnd);
-    const to = declarationEnd(tokens, from);
-    out.push({ kind: "variable", from, to, names, type, hasModifier: to > typeEnd + 1 });
-    i = to + 1;
+    const declaration = readDeclaration(src, tokens, i);
+    if (!declaration) break; // a shape this reader does not know: stop rather than loop forever
+    out.push(declaration);
+    i = declaration.to + 1;
   }
 
   return out;
