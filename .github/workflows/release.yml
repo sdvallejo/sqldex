@@ -173,19 +173,55 @@ jobs:
         working-directory: editors/vscode
 
       # `vscode:prepublish` copies the server into the extension before `vsce` looks at the
-      # directory, which is why there is no bundling step here: an extension packaged without it
-      # installs perfectly and then has no server to start.
+      # directory, which is why there is no bundling step here: `vsce package` runs it exactly like
+      # `vsce publish` would, so an extension packaged without it installs perfectly and then has no
+      # server to start.
       #
       # Conditional because the Marketplace half of a release can be done by hand, and getting a PAT
       # is no longer free: Azure DevOps requires an active Azure subscription to create a new
       # organization, and a subscription asks for a card to verify identity. Without the secret the
       # release still happens — npm and all — and the `.vsix` gets uploaded from the publisher page.
+      #
+      # Packaging and publishing are split in two because the Marketplace intermittently leaves
+      # vsce's very first request unanswered: API-location discovery, an `OPTIONS /_apis/gallery`,
+      # sent before a single byte of the `.vsix` goes out. The HTTP client underneath vsce gives up
+      # on it after a fixed three-minute socket timeout, and vsce has no flag or env var to change
+      # that. A try that dies there never reached the server at all, so retrying is safe, and
+      # `--skip-duplicate` turns a retry after an upload that landed anyway into a no-op success
+      # instead of an "already exists" error. See microsoft/vscode-vsce#1303 and #1328.
       - name: Publish the VS Code extension
         if: ${{ env.HAS_VSCE_PAT == 'true' }}
         working-directory: editors/vscode
+        timeout-minutes: 30
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx --yes @vscode/vsce publish
+          VSCE_VERSION: "3.9.2"
+        run: |
+          npx --yes @vscode/vsce@$VSCE_VERSION package --out "$RUNNER_TEMP/sqldex.vsix"
+
+          # `-eo pipefail` means a failed try inside this pipeline would otherwise abort the whole
+          # step, so each try's exit code is read from PIPESTATUS behind an `if`, never left to fall
+          # through on its own.
+          for try in $(seq 1 10); do
+            log="$RUNNER_TEMP/vsce-publish-$try.log"
+            if timeout 90 npx --yes @vscode/vsce@$VSCE_VERSION publish \
+                --packagePath "$RUNNER_TEMP/sqldex.vsix" --skip-duplicate 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            status="${PIPESTATUS[0]}"
+
+            if [ "$status" -eq 124 ] || grep -q "Request timeout" "$log"; then
+              echo "::warning::try $try/10 hit the Marketplace's discovery timeout, retrying in 30s"
+              sleep 30
+              continue
+            fi
+
+            exit "$status"
+          done
+
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "::error::the Marketplace never answered after 10 tries; rerun with 'gh workflow run release.yml -f tag=$tag'"
+          exit 1
 
       # A skipped step is a step nobody notices. This is the difference between "the extension was
       # not published" and "the extension is on the Marketplace and I have no idea why it is old".
