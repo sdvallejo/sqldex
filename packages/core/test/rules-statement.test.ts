@@ -41,6 +41,7 @@ import {
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
+  undeclaredVariable,
   unfilteredWrite,
   unionColumnCount,
   unknownAlias,
@@ -1681,4 +1682,124 @@ test("without DISTINCT nothing is collapsed, so nothing is hidden", () => {
 
 test("a name no relation has is names/unknown-column's, not this rule's", () => {
   assert.deepEqual(run(distinctOrderByHiddenColumn, "SELECT DISTINCT customer_id FROM orders ORDER BY nope;"), []);
+});
+
+// --------------------------------------------------------- an undeclared variable
+
+test("a SELECT ... INTO destination nothing declares is reported", () => {
+  const src = body("  SELECT total INTO v_sum FROM orders WHERE order_id = p_id;");
+  assert.deepEqual(run(undeclaredVariable, src), ["v_sum is not declared"]);
+});
+
+test("a FETCH ... INTO destination nothing declares is reported the same way", () => {
+  const src = body("  FETCH c_rows INTO v_id;");
+  assert.deepEqual(run(undeclaredVariable, src), ["v_id is not declared"]);
+});
+
+test("an INTO inside an IF branch is found too: its SELECT opens a statement without opening the range", () => {
+  // The range `statements()` cuts starts at the `IF`, and the `SELECT` sits after its `THEN` — which
+  // is where most of these live in procedural code.
+  const src = body("  IF p_id > 0 THEN", "    SELECT total INTO v_sum FROM orders WHERE order_id = p_id;", "  END IF;");
+  assert.deepEqual(run(undeclaredVariable, src), ["v_sum is not declared"]);
+});
+
+test("a SET target read back by an IF is the gap names/unqualified-column left: no relation, so it said nothing", () => {
+  const src = body("  SET v_n = 5;", "  IF v_n > 0 THEN SELECT 1; END IF;");
+  assert.deepEqual(run(undeclaredVariable, src), ["v_n is not declared", "v_n is not declared"]);
+});
+
+test("the motivating shape: a SET target, a read inside a subquery, and a read in an UPDATE's SET all sound", () => {
+  const src = body(
+    "  SET v_window = (SELECT CONVERT(label, UNSIGNED) FROM customers WHERE customer_id = p_id);",
+    "  SELECT 1 FROM orders WHERE order_id = (SELECT order_id FROM orders WHERE order_id > p_id - INTERVAL v_window MINUTE);",
+    "  UPDATE orders SET total = total + v_window WHERE order_id = p_id;",
+  );
+  assert.deepEqual(run(undeclaredVariable, src), [
+    "v_window is not declared",
+    "v_window is not declared",
+    "v_window is not declared",
+  ]);
+});
+
+test("it displaces names/unqualified-column on the same token", () => {
+  // Both rules can see the INTO destination. This one says which thing it actually is.
+  const src = body("  SELECT total INTO v_flag FROM orders WHERE order_id = p_id;");
+  const found = check(
+    new Registry().add(unqualifiedColumn, undeclaredVariable),
+    { dialect: mysql, catalog: catalogOf(), schemas: new Set(["shop"]), config: defaults },
+    src,
+  );
+  assert.deepEqual(
+    found.map((d) => `${d.code}: ${d.message}`),
+    ["routine/undeclared-variable: v_flag is not declared"],
+  );
+});
+
+test("a SET alone, with nothing reading it back, is left alone", () => {
+  // `autocommit` is not a name sqldex is ever going to keep a list of: the guard is that nothing
+  // reads it, not that the rule recognises it.
+  assert.deepEqual(run(undeclaredVariable, body("  SET autocommit = 0;")), []);
+});
+
+test("a system variable set once scoped and once bare is not a read of itself", () => {
+  // The scoped write is the one that used to pass for a read: its name follows `SESSION`, not `SET`.
+  const src = body("  SET SESSION tmp_table_size = 1024;", "  SET tmp_table_size = 2048;");
+  assert.deepEqual(run(undeclaredVariable, src), []);
+});
+
+test("nor is the second target of a scoped SET, which follows a comma rather than the scope word", () => {
+  const src = body("  SET SESSION sort_buffer_size = 1, max_heap_table_size = 2;", "  SET max_heap_table_size = 3;");
+  assert.deepEqual(run(undeclaredVariable, src), []);
+});
+
+test("a name some table has as a column is never reported, however it is used", () => {
+  // The catalog guard: `orders` genuinely has a `status` column, so `status` is ambiguous between
+  // the two and this rule only reports what cannot be a column at all.
+  const src = body("  SET status = 1;", "  SELECT order_id FROM orders WHERE status = 1;");
+  assert.deepEqual(run(undeclaredVariable, src), []);
+});
+
+test("a user variable, a scoped SET, an UPDATE's own SET, a plain INSERT and an OUTFILE destination are all quiet", () => {
+  assert.deepEqual(run(undeclaredVariable, body("  SET @x = 1;", "  SELECT @x;")), []);
+  assert.deepEqual(run(undeclaredVariable, body("  SET SESSION sql_mode = '';")), []);
+  assert.deepEqual(run(undeclaredVariable, body("  UPDATE orders SET total = 0 WHERE order_id = p_id;")), []);
+  assert.deepEqual(
+    run(undeclaredVariable, body("  INSERT INTO orders (order_id, customer_id, status, total) VALUES (1, 2, 'A', 3.00);")),
+    [],
+  );
+  assert.deepEqual(
+    run(undeclaredVariable, body("  SELECT order_id, status INTO OUTFILE '/tmp/x' FROM orders;")),
+    [],
+  );
+});
+
+test("a declared variable and a parameter are never candidates, in any of the write forms", () => {
+  const src = body(
+    "  DECLARE v_x int;",
+    "  SET v_x = 1;",
+    "  SELECT v_x;",
+    "  SELECT order_id INTO v_x FROM orders WHERE order_id = p_id;",
+  );
+  assert.deepEqual(run(undeclaredVariable, src), []);
+});
+
+test("evidence from one routine's body does not reach a second one in the same file", () => {
+  const src = [
+    "CREATE PROCEDURE sp_declared()",
+    "BEGIN",
+    "  DECLARE v_x int;",
+    "  SET v_x = 1;",
+    "  SELECT v_x;",
+    "END;",
+    "CREATE PROCEDURE sp_undeclared()",
+    "BEGIN",
+    "  SET v_x = 1;",
+    "  SELECT v_x;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(undeclaredVariable, src), ["v_x is not declared", "v_x is not declared"]);
+});
+
+test("a loose script has no DECLARE section for a name to be missing from", () => {
+  assert.deepEqual(run(undeclaredVariable, "SET v = 1; SELECT v;"), []);
 });

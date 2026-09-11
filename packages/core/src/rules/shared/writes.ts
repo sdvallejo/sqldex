@@ -2,6 +2,7 @@
 
 import type { Routine } from "../../model/routine.ts";
 import type { Token } from "../../syntax/types.ts";
+import { opensStatement } from "../../syntax/fast/stmt.ts";
 import { kw, matchingParen, punct, qualifiedName, splitCommas } from "../../syntax/fast/tok.ts";
 import type { BaseContext } from "../rule.ts";
 
@@ -126,4 +127,37 @@ export function assignmentTargets(ctx: BaseContext): AssignmentTargets {
   }
 
   return { written, callOuts };
+}
+
+/**
+ * Every depth-0 target of a `SET` **statement** in `[from, to]`, by token index — a target being
+ * whatever follows the `SET` itself or a comma at its own depth, whatever it turns out to be.
+ *
+ * A statement's own `SET` is what this tells apart from the `SET` clause of an `UPDATE`/`INSERT`/
+ * `SIGNAL`: only one that opens a statement of its own is read at all. Shared by
+ * `compat/user-variable-in-expression`, which further keeps only a user variable among what comes
+ * back, and `routine/undeclared-variable`, which keeps only a bare name.
+ */
+export function statementSetTargets(tokens: readonly Token[], from: number, to: number): Set<number> {
+  const targets = new Set<number>();
+  for (let i = from; i <= to; i++) {
+    if (!kw(tokens[i], "SET") || !opensStatement(tokens, i, from)) continue;
+
+    let depth = 0;
+    let expecting = true;
+    for (let j = i + 1; j <= to; j++) {
+      const token = tokens[j]!;
+      if (punct(token, "(")) depth++;
+      else if (punct(token, ")")) depth--;
+      else if (punct(token, ";") && depth === 0) break;
+      else if (punct(token, ",") && depth === 0) {
+        expecting = true;
+        continue;
+      }
+      if (!expecting || depth !== 0) continue;
+      targets.add(j);
+      expecting = false;
+    }
+  }
+  return targets;
 }

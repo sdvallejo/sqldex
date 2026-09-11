@@ -1,7 +1,5 @@
-import { bareColumnCandidate } from "../shared/names.ts";
-import { selectListColumns } from "../../analysis/locals.ts";
+import { bareColumnCandidate, knownBareName, selectOutputAliases } from "../shared/names.ts";
 import { cteNames } from "../../syntax/fast/stmt.ts";
-import { kw } from "../../syntax/fast/tok.ts";
 import type { Rule } from "../rule.ts";
 
 export const unqualifiedColumn: Rule = {
@@ -32,36 +30,14 @@ query where every table is known — and those, checked by hand, turn out to be 
     // With anything unresolved the valid set is unknown, and guessing is what this rule must not do.
     if (ctx.resolved.length === 0 || ctx.resolved.length !== ctx.relations.length) return;
 
-    const fold = (name: string): string => ctx.dialect.foldIdentifier(name, false);
     const ctes = cteNames(ctx.dialect, ctx.tokens, ctx.statement.from, ctx.statement.to);
-
-    // Every `SELECT` in the statement contributes its output names.
-    const outputAliases = new Set<string>();
-    for (let i = ctx.statement.from; i <= ctx.statement.to; i++) {
-      if (!kw(ctx.tokens[i], "SELECT")) continue;
-      for (const name of selectListColumns(ctx.tokens, i, ctx.statement.to, true).names) {
-        outputAliases.add(fold(name));
-      }
-    }
+    const outputAliases = selectOutputAliases(ctx);
 
     for (let i = ctx.statement.from; i <= ctx.statement.to; i++) {
       if (!bareColumnCandidate(ctx.tokens, i)) continue;
+      if (knownBareName(ctx, i, outputAliases, ctes)) continue;
+
       const token = ctx.tokens[i]!;
-      const key = fold(token.v);
-
-      if (
-        ctx.byAlias.has(key) ||
-        outputAliases.has(key) ||
-        ctes.has(key) ||
-        ctx.locals.byName.has(key) ||
-        ctx.catalog.table(token.v) ||
-        ctx.catalog.routine(token.v) ||
-        ctx.catalog.tempTable(token.v) ||
-        ctx.resolved.some((table) => table.byName.has(key))
-      ) {
-        continue;
-      }
-
       ctx.report(token, `unknown column: ${token.v}`);
     }
   },

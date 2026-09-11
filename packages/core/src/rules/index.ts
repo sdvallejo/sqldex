@@ -63,6 +63,7 @@ import { exclusiveBranchAnd } from "./routine/exclusive-branch-and.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
 import { nullableVariableInPredicate } from "./routine/nullable-variable-in-predicate.ts";
 import { shadowedParameter } from "./routine/shadowed-parameter.ts";
+import { undeclaredVariable } from "./routine/undeclared-variable.ts";
 import { unknownLabel } from "./routine/unknown-label.ts";
 import { unusedVariable } from "./routine/unused-variable.ts";
 import { variableNeverAssigned } from "./routine/variable-never-assigned.ts";
@@ -135,6 +136,7 @@ export const statementRules = [
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
+  undeclaredVariable,
   nullableScalarSubquery,
   onlyFullGroupBy,
   aggregateWithoutGroupBy,
@@ -220,6 +222,7 @@ export {
   selectIntoArity,
   selectIntoManyRows,
   shadowedParameter,
+  undeclaredVariable,
   unfilteredWrite,
   unknownAlias,
   unknownColumn,

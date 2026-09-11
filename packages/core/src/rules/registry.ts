@@ -534,10 +534,9 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
       const enclosing = bodyScopes[atBody];
       // The file's locals are right only for a statement that is in no body at all: a script, or the
       // `INSERT`s of a `carga-valores/` file. Inside one, they are that body's.
-      const scope =
-        enclosing && statement.from >= enclosing.body.from && statement.to <= enclosing.body.to
-          ? enclosing.locals
-          : locals;
+      const inBody =
+        enclosing !== undefined && statement.from >= enclosing.body.from && statement.to <= enclosing.body.to;
+      const scope = inBody ? enclosing!.locals : locals;
 
       const rels = statementRelations(dialect, tokens, statement.from, statement.to);
       const byAlias = new Map<string, Relation>();
@@ -584,6 +583,7 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
         relations: rels,
         byAlias,
         resolved,
+        body: inBody ? enclosing!.body : undefined,
         calls,
         inserts,
         qualified,

@@ -52,7 +52,7 @@ code --install-extension sqldex.sqldex   # VS Code, server included — nothing 
 |---|---|
 | Catalog and name resolution | works |
 | Rule engine | works — registry, traversals, suppression, per-rule severity |
-| Lint rules | 55 of them, in six groups — see below |
+| Lint rules | 56 of them, in six groups — see below |
 | `sqldex` CLI | works — `check`, `rules`, `explain`, five output formats |
 | `sqldex-lsp` language server | findings as you type, hover, completion, signature help, goto definition and type definition, references, rename, call hierarchy, symbols, inlay hints, code actions |
 | Editor clients | one for Neovim and one for VS Code, in `editors/`; the VS Code one is on the Marketplace and carries the server inside the `.vsix`, and `editors/nvim` installs from this repository |
@@ -249,7 +249,7 @@ Keys are `snake_case` because this is a file format people write by hand, not th
 
 ## Rules
 
-Fifty-five of them, in six groups that say what a rule is *about* — which is what someone
+Fifty-six of them, in six groups that say what a rule is *about* — which is what someone
 turning rules off is choosing between:
 
 | Group | Rules |
@@ -257,7 +257,7 @@ turning rules off is choosing between:
 | `names` | `unknown-table`, `unknown-alias`, `unknown-column`, `unqualified-column`, `unknown-routine`, `ambiguous-column` |
 | `schema` | `fk-unknown-table`, `fk-unknown-column`, `fk-missing-index`, `index-unknown-column`, `redundant-index`, `divergent-type`, `no-primary-key`, `fk-type-mismatch`, `duplicate-constraint-name`, `auto-increment-not-key` |
 | `query` | `insert-value-count`, `insert-select-column-count`, `insert-unknown-column`, `insert-missing-required-column`, `unfiltered-write`, `write-target-in-subquery`, `join-without-condition`, `collation-mismatch`, `left-join-arithmetic`, `join-multiplies-aggregate`, `nullable-scalar-subquery`, `scalar-subquery-many-rows`, `only-full-group-by`, `aggregate-without-group-by`, `literal-type-mismatch`, `enum-value-not-defined`, `union-column-count`, `write-to-generated-column`, `aggregate-in-where`, `distinct-order-by-hidden-column` |
-| `routine` | `call-arity`, `out-argument-not-variable`, `cursor-never-opened`, `unused-variable`, `variable-never-assigned`, `dead-coalesce-default`, `exclusive-branch-and`, `nullable-into-arithmetic`, `nullable-variable-in-predicate`, `select-into-arity`, `select-into-many-rows`, `declare-after-statement`, `shadowed-parameter`, `out-param-never-assigned`, `unknown-label` |
+| `routine` | `call-arity`, `out-argument-not-variable`, `cursor-never-opened`, `unused-variable`, `variable-never-assigned`, `dead-coalesce-default`, `exclusive-branch-and`, `nullable-into-arithmetic`, `nullable-variable-in-predicate`, `select-into-arity`, `select-into-many-rows`, `undeclared-variable`, `declare-after-statement`, `shadowed-parameter`, `out-param-never-assigned`, `unknown-label` |
 | `audit` | `table-out-of-sync`, `trigger-missing-column` |
 | `compat` | `deprecated-function`, `user-variable-in-expression` |
 
@@ -348,7 +348,7 @@ and those are two defects with two fixes.
 ## Development
 
 ```
-npm test                        # 727 tests, hand-written fixtures only
+npm test                        # 770 tests, hand-written fixtures only
 npm run typecheck
 npm run build                   # emits dist/ for publishing; not needed to develop
 npm run bench <dir>...          # lexer throughput over a directory of SQL

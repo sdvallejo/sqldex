@@ -184,6 +184,16 @@ export interface StatementContext extends BaseContext {
   /** Those relations that resolved to a real catalog table. */
   readonly resolved: readonly Table[];
   /**
+   * The routine or trigger body this statement sits inside, `undefined` for a loose script.
+   *
+   * The same bound `RoutineContext` and `TriggerContext` give their own rules, offered here too for
+   * a statement rule that needs evidence from more than one statement of the same body at once —
+   * whether a name used as a `SET` target anywhere in it is ever read as a value elsewhere in it,
+   * say — without that evidence leaking into a second routine in the same file, or into a statement
+   * that sits in no body at all.
+   */
+  readonly body?: TokenRange;
+  /**
    * Token indexes worth stopping at, found in the engine's single pass over the statement.
    *
    * Without these, every rule that reacts to a `CALL` or an `INSERT` would scan the statement

@@ -390,6 +390,25 @@ export function statements(tokens: readonly Token[]): TokenRange[] {
   return list;
 }
 
+/** Words a statement can begin right after, besides a `;`. */
+const OPENS_STATEMENT: ReadonlySet<string> = new Set(["BEGIN", "THEN", "ELSE", "DO", "LOOP", "REPEAT"]);
+
+/**
+ * Does the token at `i` begin a statement of its own?
+ *
+ * `statements` cuts on `;` and `BEGIN` only, so the `SET` of `IF x THEN SET v = 1; END IF` or the
+ * `SELECT … INTO` of an `ELSE` branch sits in the middle of its range rather than at its start —
+ * and reading only the first token of each range misses exactly the ones procedural code is full
+ * of. It is also how a `SET` statement is told from the `SET` clause of an `UPDATE`, an `INSERT` or
+ * a `SIGNAL`, none of which follows one of these.
+ *
+ * @param from Where the range being read starts, which counts as a statement start of its own.
+ */
+export function opensStatement(tokens: readonly Token[], i: number, from = 0): boolean {
+  const before = tokens[i - 1];
+  return i === from || punct(before, ";") || kwAny(before, OPENS_STATEMENT) !== undefined;
+}
+
 /**
  * Splits the stream into **query scopes**: one per `SELECT`, `UPDATE`, `DELETE`, `INSERT` or
  * `REPLACE`, nested through the parentheses.

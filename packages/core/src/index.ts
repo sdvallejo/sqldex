@@ -31,6 +31,8 @@ export {
 } from "./analysis/resolve.ts";
 export type { ColumnValue, ValueAccumulator } from "./analysis/values.ts";
 export { fromComment, isEnumLike } from "./analysis/values.ts";
+export type { InferVariableTypeInput } from "./analysis/variable-type.ts";
+export { inferVariableType, sameColumnType } from "./analysis/variable-type.ts";
 export type { CatalogLookup, CatalogStats, FileEntry, IncomingFk, TempTableEntry } from "./catalog/catalog.ts";
 export { Catalog, columnTypeCensus, normaliseType } from "./catalog/catalog.ts";
 export { withOwnDefinitions } from "./catalog/overlay.ts";
@@ -95,6 +97,8 @@ export type { Analysis, Context, ContextKind, Cursor } from "./syntax/fast/curso
 export { analyze, classify, locateCursor } from "./syntax/fast/cursor.ts";
 export type { ParsedDDL } from "./syntax/fast/ddl.ts";
 export { parseDDL } from "./syntax/fast/ddl.ts";
+export type { Declaration, DeclarationKind } from "./syntax/fast/declarations.ts";
+export { declarationSection } from "./syntax/fast/declarations.ts";
 export { lineCol, lineIndex, tokenize } from "./syntax/fast/lexer.ts";
 export type { ParsedRoutines } from "./syntax/fast/routine.ts";
 export { cleanDoc, parseHeader, parseRoutines } from "./syntax/fast/routine.ts";
