@@ -199,9 +199,11 @@ jobs:
         run: |
           npx --yes @vscode/vsce@$VSCE_VERSION package --out "$RUNNER_TEMP/sqldex.vsix"
 
-          # `-eo pipefail` means a failed try inside this pipeline would otherwise abort the whole
-          # step, so each try's exit code is read from PIPESTATUS behind an `if`, never left to fall
-          # through on its own.
+          # A step with no `shell:` runs as `bash -e`, without pipefail, and then a pipeline's status
+          # is `tee`'s: a try killed by `timeout` would read as a success and publish nothing, green.
+          # So pipefail is set here, beside the only code that depends on it. The `if` keeps `-e`
+          # from aborting the step on a failed try, and PIPESTATUS still holds that try's own code.
+          set -o pipefail
           for try in $(seq 1 10); do
             log="$RUNNER_TEMP/vsce-publish-$try.log"
             if timeout 90 npx --yes @vscode/vsce@$VSCE_VERSION publish \
