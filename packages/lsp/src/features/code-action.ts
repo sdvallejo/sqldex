@@ -33,7 +33,9 @@ import {
   auditTableName,
   collect,
   columnNames,
+  declarationSection,
   identifierAt,
+  inferVariableType,
   insertions,
   insertTarget,
   kw,
@@ -47,13 +49,16 @@ import {
   punct,
   qualifier,
   relation,
+  sameColumnType,
   statementBounds,
   tokenize,
   triggerInserts,
   type Column,
+  type Declaration,
   type InsertTarget,
   type Lexed,
   type Local,
+  type Routine,
   type Span,
   type Table,
   type Token,
@@ -737,6 +742,126 @@ function declareReorderFix(at: At, offset: number, d: Diagnostic, out: CodeActio
   out.push(fix(`Move this DECLARE above the block's first statement`, at.document.uri, edits, [d]));
 }
 
+/**
+ * The routine `offset` sits inside, and where its own declaration section could grow: the index of
+ * the body's `BEGIN`, and the last token still inside that body — the same bound `registry.ts`'s
+ * own `routineScopes` computes for the engine, needed again here because a quick fix does not have
+ * the engine's `RoutineContext` to read it from.
+ *
+ * `undefined` when the body between the header and the next routine (or the file's end) never
+ * reaches a `BEGIN` at all: a single-statement body has no declaration section to add to.
+ */
+function enclosingBody(
+  tokens: readonly Token[],
+  routines: readonly Routine[],
+  offset: number,
+): { routine: Routine; beginIdx: number; bodyTo: number } | undefined {
+  let routine: Routine | undefined;
+  let at = -1;
+  routines.forEach((candidate, i) => {
+    if (candidate.nameSpan.s < offset) {
+      routine = candidate;
+      at = i;
+    }
+  });
+  if (!routine) return undefined;
+
+  const limit = routines[at + 1]?.nameSpan.s ?? Number.POSITIVE_INFINITY;
+  let beginIdx = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    if (t.s < routine.headerEnd) continue;
+    if (t.s >= limit) break;
+    if (kw(t, "BEGIN")) {
+      beginIdx = i;
+      break;
+    }
+  }
+  if (beginIdx === -1) return undefined;
+
+  let bodyTo = beginIdx;
+  while (bodyTo + 1 < tokens.length && tokens[bodyTo + 1]!.s < limit) bodyTo++;
+
+  return { routine, beginIdx, bodyTo };
+}
+
+/** The whitespace right before `offset`, on the same line — what a new `DECLARE`, or a name joining
+ * an existing list, takes on so it reads like the rest of the routine. */
+function indentBefore(text: string, offset: number): string {
+  let start = offset;
+  while (start > 0 && (text[start - 1] === " " || text[start - 1] === "\t")) start--;
+  return text.slice(start, offset);
+}
+
+/**
+ * `routine/undeclared-variable`: add the missing `DECLARE`.
+ *
+ * **One action per distinct name**, carrying every diagnostic that name earned — three uses of one
+ * undeclared variable are one thing to fix, not three identical lightbulbs saying so. The type is a
+ * guess `inferVariableType` makes from how the name is already used; where it agrees with an
+ * existing `DECLARE`'s own type, the name joins that list instead of adding a line that would
+ * declare the same type twice.
+ */
+function undeclaredVariableFix(at: At, diagnostics: readonly Diagnostic[], out: CodeAction[]): void {
+  const byName = new Map<string, Diagnostic[]>();
+  for (const d of diagnostics) {
+    if (d.code !== "routine/undeclared-variable") continue;
+    const found = tokenAt(at.lexed.tokens, startOf(at, d));
+    if (!found) continue;
+    const list = byName.get(found.token.v);
+    if (list) list.push(d);
+    else byName.set(found.token.v, [d]);
+  }
+  if (byName.size === 0) return;
+
+  const tokens = at.lexed.tokens;
+  const routines = parseRoutines(at.text, at.lexed).routines;
+  const starts = lineIndex(at.text);
+
+  for (const [name, diags] of byName) {
+    const enclosing = enclosingBody(tokens, routines, startOf(at, diags[0]!));
+    if (!enclosing) continue; // not a BEGIN block: nowhere known-correct to add a DECLARE
+    const { routine, beginIdx, bodyTo } = enclosing;
+
+    const scope = collect(at.workspace.dialect, at.text, tokens, tokens[bodyTo]!.e, routines, routine.headerEnd);
+    const type = inferVariableType(
+      { dialect: at.workspace.dialect, catalog: at.workspace.catalog, src: at.text, tokens, locals: scope },
+      name,
+      { from: beginIdx, to: bodyTo },
+    );
+
+    const section = declarationSection(at.text, tokens, beginIdx);
+    // Never a list carrying its own `DEFAULT`: the joined name would inherit it, starting at that
+    // value instead of NULL.
+    const joinTarget: Declaration | undefined =
+      type && section.findLast((d) => d.kind === "variable" && d.type !== undefined && !d.hasModifier && sameColumnType(d.type, type));
+
+    let edit: TextEdit;
+    let title: string;
+
+    if (joinTarget) {
+      const lastName = joinTarget.names![joinTarget.names!.length - 1]!;
+      edit = { range: rangeOf(starts, { s: lastName.e, e: lastName.e }), newText: `, ${name}` };
+      title = `Declare ${name} alongside ${at.text.slice(lastName.s, lastName.e)}`;
+    } else {
+      // Always before any cursor or handler, which MySQL's own grammar demands: variables and
+      // conditions first. After the last one of those if there is one, right after the `BEGIN`
+      // otherwise — which is before every cursor and handler regardless of where they sit.
+      const anchor = section.findLast((d) => d.kind === "variable" || d.kind === "condition");
+      const insertAt = anchor ? tokens[anchor.to]!.e : tokens[beginIdx]!.e;
+      const indent = anchor
+        ? indentBefore(at.text, tokens[anchor.from]!.s)
+        : indentBefore(at.text, tokens[beginIdx + 1]!.s);
+
+      const declared = type ? `DECLARE ${name} ${type.raw};` : `DECLARE ${name} /* type */;`;
+      edit = { range: rangeOf(starts, { s: insertAt, e: insertAt }), newText: `\n${indent}${declared}` };
+      title = type ? `Declare ${name} ${type.raw}` : `Declare ${name} (type to fill in)`;
+    }
+
+    out.push(fix(title, at.document.uri, [edit], diags));
+  }
+}
+
 /** The range to delete an `Index`'s whole clause, plus one adjacent comma so the surrounding
  * column-definition list stays well formed. */
 function removeClauseEdit(text: string, span: Span): TextEdit | undefined {
@@ -970,6 +1095,7 @@ export function codeActions(at: At, diagnostics: readonly Diagnostic[] = []): Co
     didYouMean(at, diagnostics, out);
     structuralQuickFixes(at, diagnostics, out);
     insertQuickFixes(at, diagnostics, out);
+    undeclaredVariableFix(at, diagnostics, out);
   }
 
   return out;

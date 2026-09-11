@@ -489,6 +489,131 @@ END;`,
   );
 });
 
+// ------------------------------------------------ quick fixes: an undeclared variable
+
+test("a new line after the last variable DECLARE, before an EXIT HANDLER", () => {
+  const here = cursor(
+    `CREATE PROCEDURE sp_v()
+BEGIN
+  DECLARE v_done INT DEFAULT 0;
+  DECLARE EXIT HANDLER FOR NOT FOUND SET v_done = 1;
+  SELECT customer_id INTO |v_flag FROM customers WHERE customer_id = 1;
+END;`,
+  );
+  const action = pick(actionsAt(here), "Declare v_flag int");
+  assert.deepEqual(codesOf(action), ["routine/undeclared-variable"]);
+  assert.equal(
+    applied(action, join(SHOP, "sps/sp_scratch.sql"), here.text),
+    `CREATE PROCEDURE sp_v()
+BEGIN
+  DECLARE v_done INT DEFAULT 0;
+  DECLARE v_flag int;
+  DECLARE EXIT HANDLER FOR NOT FOUND SET v_done = 1;
+  SELECT customer_id INTO v_flag FROM customers WHERE customer_id = 1;
+END;`,
+  );
+});
+
+test("the name joins an existing list whose type matches", () => {
+  const here = cursor(
+    `CREATE PROCEDURE sp_w()
+BEGIN
+  DECLARE v_a, v_b INT;
+  SET |v_c = (SELECT customer_id FROM customers WHERE customer_id = 1);
+  SELECT v_a, v_b, v_c;
+END;`,
+  );
+  const action = pick(actionsAt(here), "Declare v_c alongside v_b");
+  assert.equal(
+    applied(action, join(SHOP, "sps/sp_scratch.sql"), here.text),
+    `CREATE PROCEDURE sp_w()
+BEGIN
+  DECLARE v_a, v_b, v_c INT;
+  SET v_c = (SELECT customer_id FROM customers WHERE customer_id = 1);
+  SELECT v_a, v_b, v_c;
+END;`,
+  );
+});
+
+test("it never joins a list that carries its own DEFAULT — the new name would inherit it", () => {
+  const here = cursor(
+    `CREATE PROCEDURE sp_x()
+BEGIN
+  DECLARE v_a INT DEFAULT 0;
+  SET |v_b = (SELECT customer_id FROM customers WHERE customer_id = 1);
+  SELECT v_a, v_b;
+END;`,
+  );
+  const action = pick(actionsAt(here), "Declare v_b int");
+  assert.equal(
+    applied(action, join(SHOP, "sps/sp_scratch.sql"), here.text),
+    `CREATE PROCEDURE sp_x()
+BEGIN
+  DECLARE v_a INT DEFAULT 0;
+  DECLARE v_b int;
+  SET v_b = (SELECT customer_id FROM customers WHERE customer_id = 1);
+  SELECT v_a, v_b;
+END;`,
+  );
+});
+
+test("a type nothing can infer leaves a marker to fill in", () => {
+  const here = cursor(
+    `CREATE PROCEDURE sp_y()
+BEGIN
+  DECLARE v_a INT;
+  SET |v_x = 1;
+  SELECT v_x;
+END;`,
+  );
+  const action = pick(actionsAt(here), "Declare v_x (type to fill in)");
+  assert.equal(
+    applied(action, join(SHOP, "sps/sp_scratch.sql"), here.text),
+    `CREATE PROCEDURE sp_y()
+BEGIN
+  DECLARE v_a INT;
+  DECLARE v_x /* type */;
+  SET v_x = 1;
+  SELECT v_x;
+END;`,
+  );
+});
+
+test("with no DECLARE at all, the new line goes right after BEGIN, indented like the first statement", () => {
+  const here = cursor(
+    `CREATE PROCEDURE sp_z()
+BEGIN
+  SELECT customer_id INTO |v_y FROM customers WHERE customer_id = 1;
+END;`,
+  );
+  const action = pick(actionsAt(here), "Declare v_y int");
+  assert.equal(
+    applied(action, join(SHOP, "sps/sp_scratch.sql"), here.text),
+    `CREATE PROCEDURE sp_z()
+BEGIN
+  DECLARE v_y int;
+  SELECT customer_id INTO v_y FROM customers WHERE customer_id = 1;
+END;`,
+  );
+});
+
+test("three diagnostics of the same name earn one action, carrying all three", () => {
+  const here = cursor(
+    `CREATE PROCEDURE sp_n()
+BEGIN
+  SET |v_n = 1;
+  SELECT v_n;
+  SELECT v_n;
+END;`,
+  );
+  const action = pick(actionsAt(here), "Declare v_n (type to fill in)");
+  assert.deepEqual(codesOf(action), [
+    "routine/undeclared-variable",
+    "routine/undeclared-variable",
+    "routine/undeclared-variable",
+  ]);
+});
+
 test("a redundant index is dropped, comma and all", () => {
   const here = cursor(
     `CREATE TABLE t (
