@@ -181,6 +181,14 @@ test("after FROM, the catalog's tables", () => {
   assert.deepEqual(offered, ["customers", "orders", "shipments"]);
 });
 
+test("EXTRACT's own FROM is not a table clause", () => {
+  // A plain FROM offers exactly the catalog's tables…
+  assert.deepEqual(labels("SELECT * FROM |"), ["customers", "orders", "shipments"]);
+  // …while EXTRACT(YEAR FROM |) falls through to the general position instead, which offers a
+  // built-in alongside them — proof this FROM was not read as opening a table list.
+  assert.ok(labels("SELECT EXTRACT(YEAR FROM |").includes("COALESCE"));
+});
+
 test("after CALL, the project's routines and not the built-ins", () => {
   const offered = labels("CALL |");
   assert.deepEqual(offered, ["sp_customer_report", "sp_settle_orders"]);

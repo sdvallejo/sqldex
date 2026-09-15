@@ -11,7 +11,7 @@
 import type { Dialect } from "../../dialects/dialect.ts";
 import type { Relation } from "../../model/query.ts";
 import type { Token, TokenRange } from "../types.ts";
-import { EXPECTS_TABLE, relations, statementBounds } from "./stmt.ts";
+import { EXPECTS_TABLE, fromBelongsToCall, relations, statementBounds } from "./stmt.ts";
 import { kw, kwAny, punct } from "./tok.ts";
 
 export interface Cursor {
@@ -193,7 +193,10 @@ export function classify(tokens: readonly Token[], cursor: Cursor, from: number)
   }
 
   if (kw(prev, "CALL")) return { kind: "routine" };
-  if (kwAny(prev, EXPECTS_TABLE)) return { kind: "table" };
+  // `EXTRACT(YEAR FROM |`: this `FROM` belongs to the function's own argument syntax, not a
+  // table clause.
+  const fromInCall = kw(prev, "FROM") && cursor.openIdx !== undefined && fromBelongsToCall(tokens, cursor.openIdx);
+  if (kwAny(prev, EXPECTS_TABLE) && !fromInCall) return { kind: "table" };
   if (
     kw(prev, "INTO") &&
     (kw(tokens[cursor.prevIdx! - 1], "INSERT") || kw(tokens[cursor.prevIdx! - 1], "REPLACE"))

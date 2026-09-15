@@ -115,6 +115,13 @@ test("a relation resolves the same way a qualifier does", () => {
   assert.equal(relation(ctx, EMPTY_SCOPE, item)?.table?.name, "customers");
 });
 
+test("TRIM's own FROM does not name a relation", () => {
+  const sql = "SELECT TRIM(BOTH ' ' FROM c) FROM orders o";
+  const tokens = tokenize(sql).tokens;
+  const found = analyze(mysql, sql, tokens, sql.length).relations;
+  assert.deepEqual(found.map((r) => r.name), ["orders"]);
+});
+
 test("identifierAt separates the qualifier from the name, and stops at the token's end", () => {
   const sql = "SELECT o.status FROM x o";
   const lexed = tokenize(sql);

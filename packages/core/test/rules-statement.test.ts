@@ -271,6 +271,27 @@ test("a reference into a schema the engine owns is not this repo's to define", (
   assert.deepEqual(run(unknownTable, "SELECT * FROM information_schema.tables;"), []);
 });
 
+test("a FROM inside TRIM/EXTRACT/SUBSTRING's own arguments is not a table clause", () => {
+  // `TRIM`, `EXTRACT` and `SUBSTRING` all take a `FROM` as part of their own grammar, and each of
+  // these used to invent a relation out of whatever followed it.
+  const src = [
+    "CREATE PROCEDURE sp_import_batch(IN p_in JSON, IN p_date DATE, IN p_pos INT)",
+    "BEGIN",
+    "  DECLARE v TEXT;",
+    "  SET v = REPLACE(TRIM(TRAILING '\\n' FROM p_in->>'$.body'), '\\r', '');",
+    "  SELECT TRIM(LEADING '0' FROM v),",
+    "         EXTRACT(YEAR FROM p_date),",
+    "         SUBSTRING(p_in FROM p_pos FOR 3);",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(unknownTable, src), []);
+});
+
+test("a subquery nested in the same arguments keeps its own FROM", () => {
+  const src = "SELECT TRIM(BOTH ' ' FROM (SELECT name FROM ghosts LIMIT 1));";
+  assert.deepEqual(run(unknownTable, src), ["unknown table: ghosts"]);
+});
+
 // ------------------------------------------------------------ unknown aliases
 
 test("a qualifier nothing declares is reported", () => {

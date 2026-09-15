@@ -55,6 +55,21 @@ const NOT_AN_ALIAS: ReadonlySet<string> = new Set([
 /** Words after which what you type is a table name. */
 export const EXPECTS_TABLE: ReadonlySet<string> = new Set(["FROM", "JOIN", "UPDATE", "STRAIGHT_JOIN"]);
 
+/**
+ * Functions whose own argument syntax carries a `FROM` that is not a table clause:
+ * `TRIM(BOTH ' ' FROM col)`, `EXTRACT(YEAR FROM col)`, `SUBSTRING(s FROM pos FOR len)`.
+ */
+const FROM_IN_CALL: ReadonlySet<string> = new Set(["TRIM", "EXTRACT", "SUBSTRING", "SUBSTR"]);
+
+/**
+ * Is the `(` at `openIdx` one whose contents belong to a call in {@link FROM_IN_CALL}? A `FROM`
+ * directly inside one of these is the function's own grammar, not a table clause — this is what
+ * tells it apart from a subquery's `FROM` nested in the same argument list.
+ */
+export function fromBelongsToCall(tokens: readonly Token[], openIdx: number): boolean {
+  return kwAny(tokens[openIdx - 1], FROM_IN_CALL) !== undefined;
+}
+
 /** Modifiers that may sit between `INSERT`/`REPLACE` and the table it writes to. */
 const INSERT_MODIFIERS: ReadonlySet<string> = new Set(["IGNORE", "LOW_PRIORITY", "DELAYED", "HIGH_PRIORITY"]);
 
@@ -269,10 +284,32 @@ export function relations(
   // Whether the range is worth a second pass looking for `WITH` names. Almost none are, and this
   // walk goes past every token anyway.
   let sawWith = false;
+  // Indices of `FROM` tokens that belong to a call's own argument syntax (`TRIM(... FROM ...)`,
+  // `EXTRACT(YEAR FROM ...)`, `SUBSTRING(s FROM pos)`) rather than a table clause. The non-shallow
+  // walk does not track parenthesis depth, so `SET v = TRIM(LEADING '0' FROM p)` read that `FROM`
+  // as opening a table list and invented a relation called `p`. A subquery nested in the same
+  // arguments, `TRIM(BOTH ' ' FROM (SELECT x FROM t))`, keeps its own `FROM`, since it sits one
+  // paren level deeper than the call's.
+  let callFroms: Set<number> | undefined;
 
   while (i <= to) {
     const t = tokens[i];
     if (kw(t, "WITH")) sawWith = true;
+    if (kwAny(t, FROM_IN_CALL) && punct(tokens[i + 1], "(")) {
+      const openIdx = i + 1;
+      const closeIdx = matchingParen(tokens, openIdx);
+      if (closeIdx !== -1) {
+        let callDepth = 0;
+        for (let j = openIdx; j <= closeIdx; j++) {
+          if (punct(tokens[j], "(")) callDepth++;
+          else if (punct(tokens[j], ")")) callDepth--;
+          else if (callDepth === 1 && kw(tokens[j], "FROM")) {
+            callFroms ??= new Set();
+            callFroms.add(j);
+          }
+        }
+      }
+    }
     // `INSERT ... ON DUPLICATE KEY UPDATE Col = ...`: here `UPDATE` opens an assignment list
     // rather than a table, and reading `Col` as a table invented one that does not exist.
     const duplicateKeyUpdate = kw(t, "UPDATE") && kw(tokens[i - 1], "KEY");
@@ -285,7 +322,7 @@ export function relations(
       i++;
     } else if (depth > 0) {
       i++;
-    } else if (kwAny(t, EXPECTS_TABLE) && !duplicateKeyUpdate) {
+    } else if (kwAny(t, EXPECTS_TABLE) && !duplicateKeyUpdate && !callFroms?.has(i)) {
       // `FROM a x, b y` is a list of references; a `JOIN` takes exactly one.
       const isList = kw(t, "FROM") || kw(t, "UPDATE");
       i++;
