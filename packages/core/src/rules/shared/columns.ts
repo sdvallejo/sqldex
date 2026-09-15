@@ -7,12 +7,15 @@
  * belongs to, which would show up as one rule reporting a name the other resolved elsewhere.
  */
 
-import type { Column } from "../../model/table.ts";
+import type { Column, Table } from "../../model/table.ts";
 import { kw, punct } from "../../syntax/fast/tok.ts";
 import type { StatementContext } from "../rule.ts";
 
 /** The column a qualified or bare name refers to, when the catalog has exactly one answer for it. */
-export function columnAt(ctx: StatementContext, index: number): { column: Column; text: string } | undefined {
+export function columnAt(
+  ctx: StatementContext,
+  index: number,
+): { column: Column; table: Table; text: string } | undefined {
   const { tokens, dialect } = ctx;
   const fold = (name: string): string => dialect.foldIdentifier(name, false);
   const token = tokens[index];
@@ -23,7 +26,7 @@ export function columnAt(ctx: StatementContext, index: number): { column: Column
     const relation = ctx.aliasesFor(index - 2, alias).get(alias);
     const table = relation?.name ? ctx.catalog.table(relation.name) : undefined;
     const column = table?.byName.get(fold(token.v));
-    return column ? { column, text: `${tokens[index - 2]!.v}.${token.v}` } : undefined;
+    return column && table ? { column, table, text: `${tokens[index - 2]!.v}.${token.v}` } : undefined;
   }
   if (punct(tokens[index + 1], ".") || punct(tokens[index - 1], ".")) return undefined;
 
@@ -31,9 +34,10 @@ export function columnAt(ctx: StatementContext, index: number): { column: Column
   // compare against: two tables with a `code` column of different types are two different questions.
   const owners = ctx.relations
     .map((relation) => (relation.name ? ctx.catalog.table(relation.name) : undefined))
-    .map((table) => table?.byName.get(fold(token.v)))
-    .filter((column) => column !== undefined);
-  return owners.length === 1 ? { column: owners[0]!, text: token.v } : undefined;
+    .filter((table): table is Table => table !== undefined)
+    .map((table) => ({ table, column: table.byName.get(fold(token.v)) }))
+    .filter((hit): hit is { table: Table; column: Column } => hit.column !== undefined);
+  return owners.length === 1 ? { column: owners[0]!.column, table: owners[0]!.table, text: token.v } : undefined;
 }
 
 /**

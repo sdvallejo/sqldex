@@ -57,8 +57,13 @@ export const aggregateWithoutGroupBy: Rule = {
 \`SELECT customer, SUM(total) FROM orders\` returns **one** row — that is what aggregating without a
 \`GROUP BY\` means — and the \`customer\` on it belongs to whichever row the server happened to read.
 Not the first, not the largest, no promise at all. A server with \`ONLY_FULL_GROUP_BY\`, which is the
-default since 5.7, refuses the statement outright with error 1055; one without it answers, and the
+default since 5.7, refuses the statement outright with error 1140; one without it answers, and the
 answer looks like an answer.
+
+A column does not have to stand alone to be arbitrary this way: \`SUM(total) + customer_count\` names
+\`customer_count\` beside the aggregate exactly as \`SELECT customer_count, SUM(total)\` would, and the
+column is read out of the expression the same way \`query/only-full-group-by\` reads one out of a
+\`GROUP BY\` item.
 
 **This is the half of the question that needs nothing but the query.** Its sibling
 \`query/only-full-group-by\` reads the schema's keys to decide whether a grouping determines a column,
@@ -100,8 +105,8 @@ What it leaves alone:
       if (tokens[last]?.t === "id" && last > item.from && !punct(tokens[last - 1], ".")) {
         last = kw(tokens[last - 1], "AS") ? last - 2 : last - 1;
       }
-      const { aggregates, columns } = scan(ctx, item.from, last);
-      if (aggregates > 0 || columns.length === 0) continue;
+      const { columns } = scan(ctx, item.from, last);
+      if (columns.length === 0) continue;
 
       // Only if the statement aggregates at all, which is what makes it one row.
       if (scan(ctx, ctx.statement.from + 1, end - 1).aggregates === 0) return;

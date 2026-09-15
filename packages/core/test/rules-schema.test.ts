@@ -35,6 +35,7 @@ import {
   fkUnknownColumn,
   fkUnknownTable,
   indexUnknownColumn,
+  invalidDateDefault,
   noPrimaryKey,
   redundantIndex,
 } from "../src/rules/index.ts";
@@ -771,4 +772,63 @@ test("the same table on MyISAM is a per-group counter, and is left alone", () =>
 test("MyISAM still needs the column in some key", () => {
   const src = "CREATE TABLE tickets (ticket_no int AUTO_INCREMENT, label varchar(20)) ENGINE=MyISAM;";
   assert.equal(run(autoIncrementNotKey, src).length, 1);
+});
+
+// ---------------------------------------------- a DATE/DATETIME/TIMESTAMP default the calendar lacks
+
+test("a DEFAULT of the zero date is reported, and MariaDB alone accepts it", () => {
+  const src = "CREATE TABLE events (id int NOT NULL, happened_on date NOT NULL DEFAULT '0000-00-00', PRIMARY KEY (id));";
+  assert.equal(run(invalidDateDefault, src).length, 1);
+});
+
+test("a DEFAULT of the bare 0 is reported the same way", () => {
+  const src = "CREATE TABLE events (id int NOT NULL, happened_on date NOT NULL DEFAULT 0, PRIMARY KEY (id));";
+  assert.equal(run(invalidDateDefault, src).length, 1);
+});
+
+test("a zero month or day is reported, whichever field is the zero one", () => {
+  const month = "CREATE TABLE events (id int NOT NULL, happened_on date NOT NULL DEFAULT '2020-00-15', PRIMARY KEY (id));";
+  const day = "CREATE TABLE events (id int NOT NULL, happened_on date NOT NULL DEFAULT '2020-05-00', PRIMARY KEY (id));";
+  assert.equal(run(invalidDateDefault, month).length, 1);
+  assert.equal(run(invalidDateDefault, day).length, 1);
+});
+
+test("a year alone at zero is accepted, on both engines", () => {
+  const src = "CREATE TABLE events (id int NOT NULL, happened_on date NOT NULL DEFAULT '0000-05-15', PRIMARY KEY (id));";
+  assert.deepEqual(run(invalidDateDefault, src), []);
+});
+
+test("an impossible date is reported regardless of mode, since both engines refuse it", () => {
+  const src = "CREATE TABLE events (id int NOT NULL, happened_on date NOT NULL DEFAULT '2020-02-30', PRIMARY KEY (id));";
+  assert.equal(run(invalidDateDefault, src).length, 1);
+});
+
+test("DATETIME and TIMESTAMP defaults are read the same way as DATE", () => {
+  const datetime = [
+    "CREATE TABLE events (id int NOT NULL, happened_on datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+    "PRIMARY KEY (id));",
+  ].join(" ");
+  const timestamp = [
+    "CREATE TABLE events (id int NOT NULL, happened_on timestamp NULL DEFAULT '0000-00-00 00:00:00',",
+    "PRIMARY KEY (id));",
+  ].join(" ");
+  assert.equal(run(invalidDateDefault, datetime).length, 1);
+  assert.equal(run(invalidDateDefault, timestamp).length, 1);
+});
+
+test("a DEFAULT this rule cannot read as a date is left alone, and so is no DEFAULT at all", () => {
+  const current = [
+    "CREATE TABLE events (id int NOT NULL, happened_on timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,",
+    "PRIMARY KEY (id));",
+  ].join(" ");
+  const noDefault = "CREATE TABLE events (id int NOT NULL, happened_on date NOT NULL, PRIMARY KEY (id));";
+  assert.deepEqual(run(invalidDateDefault, current), []);
+  assert.deepEqual(run(invalidDateDefault, noDefault), []);
+});
+
+test("a YEAR column and an ordinary valid date are both left alone", () => {
+  const year = "CREATE TABLE events (id int NOT NULL, happened_year year NOT NULL DEFAULT 0, PRIMARY KEY (id));";
+  const ordinary = "CREATE TABLE events (id int NOT NULL, happened_on date NOT NULL DEFAULT '2020-05-15', PRIMARY KEY (id));";
+  assert.deepEqual(run(invalidDateDefault, year), []);
+  assert.deepEqual(run(invalidDateDefault, ordinary), []);
 });

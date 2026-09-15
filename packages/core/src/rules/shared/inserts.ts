@@ -25,6 +25,10 @@ export interface InsertTarget {
   after: number;
   /** The explicit column list, when the statement has one. */
   list?: { names: string[]; from: number; to: number };
+  /** Was this `INSERT`'s own `IGNORE` written? Downgrades the strict-mode errors a bad value would
+   * otherwise cause to warnings, which is why `shared/written.ts` reads it off here rather than
+   * re-scanning the modifiers for it. */
+  ignore: boolean;
 }
 
 /** The two things `insertTarget` reads — narrower than `StatementContext` so a caller outside the
@@ -37,7 +41,11 @@ export interface InsertLookup {
 export function insertTarget(ctx: InsertLookup, insertIdx: number): InsertTarget | undefined {
   const tokens: readonly Token[] = ctx.tokens;
   let i = insertIdx + 1;
-  while (kwAny(tokens[i], INSERT_MODIFIERS)) i++;
+  let ignore = false;
+  while (kwAny(tokens[i], INSERT_MODIFIERS)) {
+    if (kw(tokens[i], "IGNORE")) ignore = true;
+    i++;
+  }
 
   const { name, nextIdx } = qualifiedName(tokens, i);
   if (!name) return undefined;
@@ -59,8 +67,8 @@ export function insertTarget(ctx: InsertLookup, insertIdx: number): InsertTarget
   if (punct(tokens[nextIdx], "(") && !wrapsQuery) {
     const { names, closeIdx } = columnList(tokens, nextIdx);
     if (closeIdx === -1) return undefined;
-    return { table, after: closeIdx + 1, list: { names, from: nextIdx, to: closeIdx } };
+    return { table, after: closeIdx + 1, list: { names, from: nextIdx, to: closeIdx }, ignore };
   }
 
-  return { table, after: nextIdx };
+  return { table, after: nextIdx, ignore };
 }

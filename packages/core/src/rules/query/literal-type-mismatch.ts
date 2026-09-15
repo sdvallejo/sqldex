@@ -1,36 +1,12 @@
 import { columnAt, setClause } from "../shared/columns.ts";
+import { NUMERIC, readsAsNumber, TEXT } from "../shared/literals.ts";
 import type { Column } from "../../model/table.ts";
-import { kw, matchingParen, punct, unquote } from "../../syntax/fast/tok.ts";
+import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
 import type { Rule } from "../rule.ts";
 
 /** Comparisons where a converted operand costs an index and can change the answer. */
 const COMPARISONS: ReadonlySet<string> = new Set(["=", "!=", "<>", "<", ">", "<=", ">=", "<=>"]);
-
-const NUMERIC: ReadonlySet<string> = new Set([
-  "int",
-  "integer",
-  "bigint",
-  "smallint",
-  "tinyint",
-  "mediumint",
-  "decimal",
-  "dec",
-  "numeric",
-  "fixed",
-  "float",
-  "double",
-  "real",
-  "bit",
-]);
-
-const TEXT: ReadonlySet<string> = new Set(["char", "varchar", "tinytext", "text", "mediumtext", "longtext", "enum", "set"]);
-
-/** Is this string a number as MySQL would read one, so that comparing it costs nothing? */
-function readsAsNumber(literal: string): boolean {
-  const text = unquote(literal).trim();
-  return text.length > 0 && Number.isFinite(Number(text));
-}
 
 /** The two shapes worth reporting, or `undefined` when the pair is fine. */
 function mismatch(column: Column, literal: Token): string | undefined {

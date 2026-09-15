@@ -49,8 +49,12 @@ import {
   unknownRoutine,
   unknownTable,
   unqualifiedColumn,
+  writeNullToNotNull,
   writeTargetInSubquery,
   writeToGeneratedColumn,
+  writeValueInvalidForType,
+  writeValueOutOfRange,
+  writeValueTooLong,
 } from "../src/rules/index.ts";
 import { parseDDL } from "../src/syntax/fast/ddl.ts";
 import { tokenize } from "../src/syntax/fast/lexer.ts";
@@ -156,6 +160,37 @@ const SCHEMA = [
   "  summary varchar(80) AS (LEFT(payload, 10)) STORED,",
   "  PRIMARY KEY (event_id)",
   ");",
+  // Every column type the strict-mode write rules judge a literal against: character and binary
+  // limits, signed and unsigned integer and decimal ranges, the three date types, an ordinary enum
+  // next to a `_bin`-collated one, and a set.
+  "CREATE TABLE inventory_items (",
+  "  item_id int NOT NULL AUTO_INCREMENT,",
+  "  sku varchar(3) NOT NULL,",
+  "  code varbinary(3) NOT NULL,",
+  "  priority tinyint NOT NULL,",
+  "  qty tinyint UNSIGNED NOT NULL,",
+  "  big_count bigint NOT NULL,",
+  "  big_qty bigint UNSIGNED NOT NULL,",
+  "  price decimal(5,2) NOT NULL,",
+  "  weight decimal(5,2) UNSIGNED NOT NULL,",
+  "  score int NOT NULL,",
+  "  arrived date NOT NULL,",
+  "  updated_at datetime NOT NULL,",
+  "  received_at timestamp NOT NULL,",
+  "  state enum('A','B') NOT NULL,",
+  "  state_bin enum('A','B') NOT NULL COLLATE utf8mb4_bin,",
+  "  tags set('x','y') NOT NULL,",
+  "  remark varchar(80) NULL,",
+  "  PRIMARY KEY (item_id)",
+  ");",
+  // The same shape on a non-transactional engine: `STRICT_TRANS_TABLES` does not cover it, so only
+  // the first row of a multi-row write fails outright.
+  "CREATE TABLE inventory_counts (",
+  "  item_id int NOT NULL,",
+  "  qty tinyint NOT NULL,",
+  "  label varchar(3) NOT NULL,",
+  "  PRIMARY KEY (item_id)",
+  ") ENGINE=MyISAM;",
 ].join("\n");
 
 const ROUTINES = [
@@ -1434,6 +1469,18 @@ test("what the aggregate rule leaves alone", () => {
   for (const src of cases) assert.deepEqual(run(aggregateWithoutGroupBy, src), [], src);
 });
 
+test("a column beside an aggregate inside one expression is reported too", () => {
+  // `SUM(x) + y` used to be skipped whole because the item also carries an aggregate; `y` is exactly
+  // as arbitrary here as it would be on its own.
+  const src = "SELECT SUM(o.total) + o.customer_id FROM orders o;";
+  assert.equal(run(aggregateWithoutGroupBy, src).length, 1);
+});
+
+test("an ORDER BY column is not this rule's business, only the select list is", () => {
+  const src = "SELECT SUM(o.total) FROM orders o ORDER BY o.status;";
+  assert.deepEqual(run(aggregateWithoutGroupBy, src), []);
+});
+
 test("the variables of a SELECT … INTO are not columns of the query", () => {
   // They sit before the `FROM`, so a select list cut at the wrong clause reads them as columns and
   // reports every procedure that counts something into a variable.
@@ -1443,6 +1490,35 @@ test("the variables of a SELECT … INTO are not columns of the query", () => {
 
 test("a star says nothing about which columns those are", () => {
   assert.deepEqual(run(onlyFullGroupBy, "SELECT *, COUNT(*) FROM orders o GROUP BY o.status;"), []);
+});
+
+test("an ORDER BY column the grouping does not determine is reported, same as the select list", () => {
+  const src = "SELECT o.customer_id, COUNT(*) FROM orders o GROUP BY o.customer_id ORDER BY o.status;";
+  assert.equal(run(onlyFullGroupBy, src).length, 1);
+});
+
+test("what the ORDER BY of a grouped query leaves alone", () => {
+  const alias = "SELECT o.order_id, COUNT(*) AS n FROM orders o GROUP BY o.order_id ORDER BY n;";
+  const ordinal = "SELECT o.order_id, COUNT(*) FROM orders o GROUP BY o.order_id ORDER BY 1;";
+  const aggregate = "SELECT o.order_id, COUNT(*) FROM orders o GROUP BY o.order_id ORDER BY SUM(o.total);";
+  const expression = "SELECT o.order_id FROM orders o GROUP BY o.order_id ORDER BY o.order_id + 1;";
+  // Grouped by the whole primary key, every other column of `orders` is determined — `o.status`
+  // included, even though nothing named it in the `GROUP BY`.
+  const pkGrouped = "SELECT o.order_id FROM orders o GROUP BY o.order_id ORDER BY o.status;";
+  for (const src of [alias, ordinal, aggregate, expression, pkGrouped]) {
+    assert.deepEqual(run(onlyFullGroupBy, src), [], src);
+  }
+});
+
+test("a grouped column is grouped whichever side wrote the qualifier", () => {
+  // The server resolves a bare `total` to `o.total`, grouped or not, and the other way round.
+  const bareOrder = "SELECT o.customer_id, COUNT(*) FROM orders o GROUP BY o.customer_id, o.total ORDER BY total;";
+  const bareGroup = "SELECT o.customer_id, o.total, COUNT(*) FROM orders o GROUP BY customer_id, total;";
+  for (const src of [bareOrder, bareGroup]) {
+    assert.deepEqual(run(onlyFullGroupBy, src), [], src);
+  }
+  const ungrouped = "SELECT o.customer_id, COUNT(*) FROM orders o GROUP BY o.customer_id ORDER BY total;";
+  assert.equal(run(onlyFullGroupBy, ungrouped).length, 1);
 });
 
 // ------------------------------------------- a code the column does not declare
@@ -1602,6 +1678,238 @@ test("an ON DUPLICATE KEY UPDATE assigning one is reported", () => {
 test("a positional INSERT names nothing, so there is nothing here to judge", () => {
   // Whether the count is right is `query/insert-select-column-count`'s question, not this one's.
   assert.deepEqual(run(writeToGeneratedColumn, "INSERT INTO events VALUES (1, 'a', DEFAULT);"), []);
+});
+
+// ---------------------------------------------------- a string too long for its column
+
+test("a VARCHAR value longer than its column is reported, and one that fits is not", () => {
+  const long = "INSERT INTO inventory_items (item_id, sku) VALUES (1, 'abcd');";
+  const short = "INSERT INTO inventory_items (item_id, sku) VALUES (1, 'abc');";
+  assert.equal(run(writeValueTooLong, long).length, 1);
+  assert.deepEqual(run(writeValueTooLong, short), []);
+});
+
+test("a VARCHAR's trailing spaces are trimmed before counting, and a VARBINARY's are not", () => {
+  const varcharPadded = "INSERT INTO inventory_items (item_id, sku) VALUES (1, 'abc   ');";
+  const varbinaryPadded = "INSERT INTO inventory_items (item_id, code) VALUES (1, 'abc ');";
+  assert.deepEqual(run(writeValueTooLong, varcharPadded), []);
+  assert.equal(run(writeValueTooLong, varbinaryPadded).length, 1);
+});
+
+test("a number written into a character column counts its own text", () => {
+  const src = "INSERT INTO inventory_items (item_id, sku) VALUES (1, 1234);";
+  assert.equal(run(writeValueTooLong, src).length, 1);
+});
+
+test("a charset-introduced literal and a double-quoted string are read like an ordinary string", () => {
+  const introduced = "INSERT INTO inventory_items (item_id, sku) VALUES (1, _utf8mb4'abcd');";
+  const doubleQuoted = 'INSERT INTO inventory_items (item_id, sku) VALUES (1, "abcd");';
+  assert.equal(run(writeValueTooLong, introduced).length, 1);
+  assert.equal(run(writeValueTooLong, doubleQuoted).length, 1);
+});
+
+test("INSERT IGNORE downgrades the refusal, so write-value-too-long stays quiet", () => {
+  const src = "INSERT IGNORE INTO inventory_items (item_id, sku) VALUES (1, 'abcd');";
+  assert.deepEqual(run(writeValueTooLong, src), []);
+});
+
+test("only the first row of a non-transactional table's multi-row write is judged", () => {
+  const row1 = "INSERT INTO inventory_counts (item_id, qty, label) VALUES (1, 1, 'abcd'), (2, 1, 'ok');";
+  const row2 = "INSERT INTO inventory_counts (item_id, qty, label) VALUES (1, 1, 'ok'), (2, 1, 'abcd');";
+  assert.equal(run(writeValueTooLong, row1).length, 1);
+  assert.deepEqual(run(writeValueTooLong, row2), []);
+});
+
+test("an expression is not a literal this rule reads, and neither is a table the catalog lacks", () => {
+  const expression = "UPDATE inventory_items SET sku = CONCAT('a', 'b', 'c', 'd') WHERE item_id = 1;";
+  const unknownTableSrc = "INSERT INTO ghost_table (sku) VALUES ('abcd');";
+  assert.deepEqual(run(writeValueTooLong, expression), []);
+  assert.deepEqual(run(writeValueTooLong, unknownTableSrc), []);
+});
+
+// ----------------------------------------------- a number out of range for its column
+
+test("TINYINT rounds before judging range: 127.4 fits, and 127.5 does not", () => {
+  const fits = "INSERT INTO inventory_items (item_id, priority) VALUES (1, 127.4);";
+  const rounds = "INSERT INTO inventory_items (item_id, priority) VALUES (1, 127.5);";
+  assert.deepEqual(run(writeValueOutOfRange, fits), []);
+  assert.equal(run(writeValueOutOfRange, rounds).length, 1);
+});
+
+test("a negative literal into UNSIGNED is refused however it rounds", () => {
+  const src = "INSERT INTO inventory_items (item_id, qty) VALUES (1, -0.4);";
+  assert.equal(run(writeValueOutOfRange, src).length, 1);
+});
+
+test("DECIMAL(5,2) rounds to its scale before counting integer digits", () => {
+  const overflow = "INSERT INTO inventory_items (item_id, price) VALUES (1, 999.995);";
+  const fits = "INSERT INTO inventory_items (item_id, price) VALUES (1, 999.99);";
+  const negativeFits = "INSERT INTO inventory_items (item_id, price) VALUES (1, -999.99);";
+  assert.equal(run(writeValueOutOfRange, overflow).length, 1);
+  assert.deepEqual(run(writeValueOutOfRange, fits), []);
+  assert.deepEqual(run(writeValueOutOfRange, negativeFits), []);
+});
+
+test("extra precision that rounds away without reaching the integer digits is left alone", () => {
+  const src = "INSERT INTO inventory_items (item_id, price) VALUES (1, 1.239);";
+  assert.deepEqual(run(writeValueOutOfRange, src), []);
+});
+
+test("a negative literal into an UNSIGNED DECIMAL is refused", () => {
+  const src = "INSERT INTO inventory_items (item_id, weight) VALUES (1, -1);";
+  assert.equal(run(writeValueOutOfRange, src).length, 1);
+});
+
+test("a numeric string is read the same as a bare number", () => {
+  const src = "INSERT INTO inventory_items (item_id, priority) VALUES (1, '300');";
+  assert.equal(run(writeValueOutOfRange, src).length, 1);
+});
+
+test("BIGINT UNSIGNED's own maximum fits, and one past it does not", () => {
+  const fits = "INSERT INTO inventory_items (item_id, big_qty) VALUES (1, 18446744073709551615);";
+  const over = "INSERT INTO inventory_items (item_id, big_qty) VALUES (1, 18446744073709551616);";
+  assert.deepEqual(run(writeValueOutOfRange, fits), []);
+  assert.equal(run(writeValueOutOfRange, over).length, 1);
+});
+
+test("INSERT IGNORE downgrades the refusal, so write-value-out-of-range stays quiet", () => {
+  const src = "INSERT IGNORE INTO inventory_items (item_id, priority) VALUES (1, 300);";
+  assert.deepEqual(run(writeValueOutOfRange, src), []);
+});
+
+test("an expression is not a literal this rule reads", () => {
+  const src = "UPDATE inventory_items SET priority = priority + 1 WHERE item_id = 1;";
+  assert.deepEqual(run(writeValueOutOfRange, src), []);
+});
+
+// ------------------------------------------- a literal that cannot hold what it says
+
+test("a non-numeric string into a numeric column is reported, and a numeric-looking one is not", () => {
+  const garbage = "INSERT INTO inventory_items (item_id, score) VALUES (1, 'abc');";
+  const empty = "INSERT INTO inventory_items (item_id, score) VALUES (1, '');";
+  const partial = "INSERT INTO inventory_items (item_id, score) VALUES (1, '12abc');";
+  const hex = "INSERT INTO inventory_items (item_id, score) VALUES (1, '0x10');";
+  const decimal = "INSERT INTO inventory_items (item_id, score) VALUES (1, '1.5');";
+  const scientific = "INSERT INTO inventory_items (item_id, score) VALUES (1, '1e3');";
+  const padded = "INSERT INTO inventory_items (item_id, score) VALUES (1, ' 12 ');";
+  assert.equal(run(writeValueInvalidForType, garbage).length, 1);
+  assert.equal(run(writeValueInvalidForType, empty).length, 1);
+  assert.equal(run(writeValueInvalidForType, partial).length, 1);
+  assert.equal(run(writeValueInvalidForType, hex).length, 1);
+  assert.deepEqual(run(writeValueInvalidForType, decimal), []);
+  assert.deepEqual(run(writeValueInvalidForType, scientific), []);
+  assert.deepEqual(run(writeValueInvalidForType, padded), []);
+});
+
+test("an impossible date is reported, and a real leap day is not", () => {
+  const impossible = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, '2021-02-29');";
+  const leap = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, '2020-02-29');";
+  assert.equal(run(writeValueInvalidForType, impossible).length, 1);
+  assert.deepEqual(run(writeValueInvalidForType, leap), []);
+});
+
+test("a year alone at zero is accepted, on both engines", () => {
+  const src = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, '0000-05-15');";
+  assert.deepEqual(run(writeValueInvalidForType, src), []);
+});
+
+test("a zero date, a zero month, and the bare literal 0 are refused — MySQL alone", () => {
+  const zeroDate = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, '0000-00-00');";
+  const zeroMonth = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, '2020-00-15');";
+  const bareZero = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, 0);";
+  assert.equal(run(writeValueInvalidForType, zeroDate).length, 1);
+  assert.equal(run(writeValueInvalidForType, zeroMonth).length, 1);
+  assert.equal(run(writeValueInvalidForType, bareZero).length, 1);
+  for (const column of ["updated_at", "received_at"]) {
+    const src = `INSERT INTO inventory_items (item_id, ${column}) VALUES (1, 0);`;
+    assert.equal(run(writeValueInvalidForType, src).length, 1, src);
+  }
+});
+
+test("an impossible time of day in a DATETIME is reported, and a DATE ignores the time part it carries", () => {
+  const badTime = "INSERT INTO inventory_items (item_id, updated_at) VALUES (1, '2020-01-01 25:00:00');";
+  const dateWithTime = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, '2020-05-15 10:00:00');";
+  assert.equal(run(writeValueInvalidForType, badTime).length, 1);
+  assert.deepEqual(run(writeValueInvalidForType, dateWithTime), []);
+});
+
+test("a shape this rule does not read with confidence is left alone", () => {
+  const compact = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, '20200515');";
+  const slash = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, '2020/05/15');";
+  const free = "INSERT INTO inventory_items (item_id, arrived) VALUES (1, 'hello');";
+  assert.deepEqual(run(writeValueInvalidForType, compact), []);
+  assert.deepEqual(run(writeValueInvalidForType, slash), []);
+  assert.deepEqual(run(writeValueInvalidForType, free), []);
+});
+
+test("an ENUM value not on its list is reported; case alone is not, except under a _bin collation", () => {
+  const ok = "INSERT INTO inventory_items (item_id, state) VALUES (1, 'a');";
+  const binary = "INSERT INTO inventory_items (item_id, state_bin) VALUES (1, 'a');";
+  assert.deepEqual(run(writeValueInvalidForType, ok), []);
+  assert.equal(run(writeValueInvalidForType, binary).length, 1);
+});
+
+test("a leading space does not match, and a trailing one is trimmed away first", () => {
+  const leading = "INSERT INTO inventory_items (item_id, state) VALUES (1, ' A');";
+  const trailing = "INSERT INTO inventory_items (item_id, state) VALUES (1, 'A ');";
+  assert.equal(run(writeValueInvalidForType, leading).length, 1);
+  assert.deepEqual(run(writeValueInvalidForType, trailing), []);
+});
+
+test("an ENUM's numeric index in range is accepted, and one out of range is reported", () => {
+  const inRange = "INSERT INTO inventory_items (item_id, state) VALUES (1, 2);";
+  const outOfRange = "INSERT INTO inventory_items (item_id, state) VALUES (1, 3);";
+  assert.deepEqual(run(writeValueInvalidForType, inRange), []);
+  assert.equal(run(writeValueInvalidForType, outOfRange).length, 1);
+});
+
+test("a SET member not on its list is reported, and the empty SET is accepted", () => {
+  const bad = "INSERT INTO inventory_items (item_id, tags) VALUES (1, 'x,z');";
+  const ok = "INSERT INTO inventory_items (item_id, tags) VALUES (1, 'X,y');";
+  const empty = "INSERT INTO inventory_items (item_id, tags) VALUES (1, '');";
+  assert.equal(run(writeValueInvalidForType, bad).length, 1);
+  assert.deepEqual(run(writeValueInvalidForType, ok), []);
+  assert.deepEqual(run(writeValueInvalidForType, empty), []);
+});
+
+test("INSERT IGNORE downgrades every one of these to a warning, so this rule stays quiet", () => {
+  const src = "INSERT IGNORE INTO inventory_items (item_id, score) VALUES (1, 'abc');";
+  assert.deepEqual(run(writeValueInvalidForType, src), []);
+});
+
+// -------------------------------------------------- NULL written into NOT NULL
+
+test("NULL into a NOT NULL column is reported, and a nullable column is not", () => {
+  const notNull = "INSERT INTO inventory_items (item_id, score) VALUES (1, NULL);";
+  const nullable = "INSERT INTO inventory_items (item_id, remark) VALUES (1, NULL);";
+  assert.equal(run(writeNullToNotNull, notNull).length, 1);
+  assert.deepEqual(run(writeNullToNotNull, nullable), []);
+});
+
+test("AUTO_INCREMENT accepts NULL in an INSERT, asking for the counter, but not in an UPDATE", () => {
+  const insert = "INSERT INTO inventory_items (item_id, score) VALUES (NULL, 1);";
+  const update = "UPDATE inventory_items SET item_id = NULL WHERE item_id = 1;";
+  assert.deepEqual(run(writeNullToNotNull, insert), []);
+  assert.equal(run(writeNullToNotNull, update).length, 1);
+});
+
+test("a TIMESTAMP is left alone regardless of form, since MariaDB accepts NULL into one", () => {
+  const insert = "INSERT INTO inventory_items (item_id, received_at) VALUES (1, NULL);";
+  const update = "UPDATE inventory_items SET received_at = NULL WHERE item_id = 1;";
+  assert.deepEqual(run(writeNullToNotNull, insert), []);
+  assert.deepEqual(run(writeNullToNotNull, update), []);
+});
+
+test("INSERT IGNORE downgrades the refusal, so write-null-to-not-null stays quiet", () => {
+  const src = "INSERT IGNORE INTO inventory_items (item_id, score) VALUES (1, NULL);";
+  assert.deepEqual(run(writeNullToNotNull, src), []);
+});
+
+test("an expression is not the literal NULL this rule reads, and neither is DEFAULT", () => {
+  const expression = "UPDATE inventory_items SET score = IFNULL(score, 0) WHERE item_id = 1;";
+  const defaultKeyword = "UPDATE inventory_items SET score = DEFAULT WHERE item_id = 1;";
+  assert.deepEqual(run(writeNullToNotNull, expression), []);
+  assert.deepEqual(run(writeNullToNotNull, defaultKeyword), []);
 });
 
 // -------------------------------------------------------- aggregates in WHERE

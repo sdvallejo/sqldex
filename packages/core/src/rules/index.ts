@@ -50,6 +50,10 @@ import { unionColumnCount } from "./query/union-column-count.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
 import { writeToGeneratedColumn } from "./query/write-to-generated-column.ts";
 import { writeTargetInSubquery } from "./query/write-target-in-subquery.ts";
+import { writeNullToNotNull } from "./query/write-null-to-not-null.ts";
+import { writeValueInvalidForType } from "./query/write-value-invalid-for-type.ts";
+import { writeValueOutOfRange } from "./query/write-value-out-of-range.ts";
+import { writeValueTooLong } from "./query/write-value-too-long.ts";
 import { callArity } from "./routine/call-arity.ts";
 import { outParamNeverAssigned } from "./routine/out-param-never-assigned.ts";
 import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
@@ -75,6 +79,7 @@ import { fkUnknownColumn } from "./schema/fk-unknown-column.ts";
 import { fkUnknownTable } from "./schema/fk-unknown-table.ts";
 import { indexUnknownColumn } from "./schema/index-unknown-column.ts";
 import { autoIncrementNotKey } from "./schema/auto-increment-not-key.ts";
+import { invalidDateDefault } from "./schema/invalid-date-default.ts";
 import { noPrimaryKey } from "./schema/no-primary-key.ts";
 import { redundantIndex } from "./schema/redundant-index.ts";
 
@@ -149,6 +154,10 @@ export const statementRules = [
   joinWithoutCondition,
   unionColumnCount,
   writeToGeneratedColumn,
+  writeValueTooLong,
+  writeValueOutOfRange,
+  writeValueInvalidForType,
+  writeNullToNotNull,
   distinctOrderByHiddenColumn,
 ] as const;
 
@@ -166,6 +175,7 @@ export const schemaRules = [
   noPrimaryKey,
   auditTriggerMissingColumn,
   autoIncrementNotKey,
+  invalidDateDefault,
 ] as const;
 
 /**
@@ -201,6 +211,7 @@ export {
   fkTypeMismatch,
   fkUnknownTable,
   indexUnknownColumn,
+  invalidDateDefault,
   insertMissingRequiredColumn,
   insertSelectColumnCount,
   insertUnknownColumn,
@@ -233,6 +244,10 @@ export {
   unusedVariable,
   userVariableInExpression,
   variableNeverAssigned,
+  writeNullToNotNull,
   writeTargetInSubquery,
   writeToGeneratedColumn,
+  writeValueInvalidForType,
+  writeValueOutOfRange,
+  writeValueTooLong,
 };

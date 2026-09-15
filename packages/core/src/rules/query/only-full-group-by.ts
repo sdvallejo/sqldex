@@ -10,6 +10,9 @@ import type { Rule, StatementContext } from "../rule.ts";
 /** Clauses that end the `GROUP BY` list. */
 const AFTER_GROUP: ReadonlySet<string> = new Set(["HAVING", "ORDER", "LIMIT", "INTO", "UNION", "WITH", "PROCEDURE"]);
 
+/** Clauses that end the `ORDER BY` list. */
+const AFTER_ORDER: ReadonlySet<string> = new Set(["LIMIT", "OFFSET", "INTO", "UNION", "PROCEDURE", "FOR", "LOCK"]);
+
 /** A column named in the select list, with what it was written as. */
 interface Reference {
   token: Token;
@@ -222,6 +225,13 @@ table has one value per group, which is a fact about the schema and not about th
 that dependence out of the DDL is what lets the rule stay quiet on the ordinary shape,
 \`GROUP BY o.order_id\` with half the order in the select list, and still report the one that is not.
 
+**The \`ORDER BY\` of a grouped query is read the same way, and the same server error covers it.**
+\`SELECT o.customer_id, COUNT(*) FROM orders o GROUP BY o.customer_id ORDER BY o.status\` fails on
+\`o.status\` even though the select list is fine, since a server with \`ONLY_FULL_GROUP_BY\` demands
+the whole statement determine what it sorts by, not only what it returns. An ordinal (\`ORDER BY 1\`)
+and a name the select list itself gave a result (\`ORDER BY total\`) refer to the result, not to a
+column, and neither is read as one.
+
 What it deliberately leaves alone:
 
   - **A column the grouping determines**, as above: a whole primary key or unique index of its own
@@ -232,7 +242,10 @@ What it deliberately leaves alone:
   - **\`SELECT *\`**, where there is nothing to name and the answer would be a guess.
   - **A query with no \`GROUP BY\` at all**, which is \`query/aggregate-without-group-by\`'s to
     report: with nothing to group by there is no dependence to read, and that answer needs neither
-    the keys nor the closure this one is built on.`,
+    the keys nor the closure this one is built on.
+  - **A \`HAVING\`.** An ungrouped, non-aggregated column there is refused too, but as a different
+    error — 1054, *unknown column*, and MariaDB, which runs without \`ONLY_FULL_GROUP_BY\`, refuses
+    it the same way — so it is not this rule's claim to make, and is left unreported for now.`,
 
   check(ctx) {
     const { tokens, dialect } = ctx;
@@ -260,7 +273,6 @@ What it deliberately leaves alone:
       else if (punct(tokens[i], ")")) depth--;
       else if (depth === 0 && punct(tokens[i], "*")) return;
     }
-    if (list.every((item) => item.refs.length === 0)) return;
 
     // What the `GROUP BY` holds: each item as written, folded, plus its columns per relation.
     const grouped = new Set<string>();
@@ -323,36 +335,94 @@ What it deliberately leaves alone:
       if (table && coversUniqueKey(fold, table, columnsByAlias.get("") ?? [])) determined.add("");
     }
 
+    // Whether the `GROUP BY` names this column of that relation, however either side qualified it:
+    // `GROUP BY o.status` groups a bare `status` of `o`, and a bare `GROUP BY status` has already
+    // been filed under every relation that has one.
+    const groupedUnder = (label: string, name: string): boolean =>
+      (columnsByAlias.get(label) ?? []).some((column) => fold(column) === name);
+
+    // Is this reference neither grouped nor determined by the grouping — the one question both the
+    // select list and the `ORDER BY` ask, over the same `grouped`/`determined` this statement's own
+    // `GROUP BY` produced.
+    const isUngrouped = (reference: Reference): boolean => {
+      if (grouped.has(reference.text)) return false;
+
+      // A bare name is attributed to the one relation of this query that has such a column. Where
+      // several do, or none does, there is nothing to attribute it to — and a rule that cannot say
+      // whose column it is cannot say whether the grouping determines it.
+      if (reference.alias !== undefined) {
+        if (groupedUnder(reference.alias, fold(reference.token.v))) return false;
+        return !determined.has(reference.alias);
+      }
+
+      // The same merged-column reading: a bare name is this query's column wherever it lives, so one
+      // determined owner is enough. Where no relation has it, there is nothing to judge.
+      const owners = ctx.relations.filter((relation) => {
+        const table = relation.name ? ctx.catalog.table(relation.name) : undefined;
+        return table?.byName.has(reference.text) === true;
+      });
+      if (owners.length === 0) return false;
+      return !owners.some((relation) => {
+        const label = fold(relation.alias ?? relation.name!);
+        return groupedUnder(label, reference.text) || determined.has(label);
+      });
+    };
+
+    // One per statement, on the first that is not grouped. The server stops at the first too, and a
+    // report with a dozen ungrouped columns is one query to fix, not a dozen findings to read.
+    const report = (reference: Reference): void => {
+      ctx.report(
+        reference.token,
+        `${reference.text} is neither grouped nor aggregated: a server with ONLY_FULL_GROUP_BY ` +
+          "refuses this, and one without it returns an arbitrary row's value",
+      );
+    };
+
     for (const item of list) {
       // The clause may name the item rather than repeat its expression.
       if (item.label !== undefined && grouped.has(item.label)) continue;
       for (const reference of item.refs) {
-        if (grouped.has(reference.text)) continue;
+        if (!isUngrouped(reference)) continue;
+        report(reference);
+        return;
+      }
+    }
 
-        // A bare name is attributed to the one relation of this query that has such a column. Where
-        // several do, or none does, there is nothing to attribute it to — and a rule that cannot say
-        // whose column it is cannot say whether the grouping determines it.
-        if (reference.alias !== undefined) {
-          if (determined.has(reference.alias)) continue;
-        } else {
-          // The same merged-column reading: a bare name is this query's column wherever it lives,
-          // so one determined owner is enough. Where no relation has it, there is nothing to judge.
-          const owners = ctx.relations.filter((relation) => {
-            const table = relation.name ? ctx.catalog.table(relation.name) : undefined;
-            return table?.byName.has(reference.text) === true;
-          });
-          if (owners.length === 0) continue;
-          if (owners.some((relation) => determined.has(fold(relation.alias ?? relation.name!)))) continue;
-        }
+    // The `ORDER BY` of a grouped query, past the select list: the same question, the same server
+    // error. An ordinal (`ORDER BY 1`) and a name the select list itself gave a result
+    // (`ORDER BY total`) refer to the result rather than to a column, and neither is read as one.
+    const order = clauseAt(ctx, "ORDER", "BY");
+    if (order === -1) return;
 
-        // One per statement, on the first that is not grouped. The server stops at the first too,
-        // and a report with a dozen ungrouped columns is one query to fix, not a dozen findings to
-        // read.
-        ctx.report(
-          reference.token,
-          `${reference.text} is neither grouped nor aggregated: a server with ONLY_FULL_GROUP_BY ` +
-            "refuses this, and one without it returns an arbitrary row's value",
-        );
+    let stop = order + 2;
+    depth = 0;
+    while (stop <= ctx.statement.to) {
+      const t = tokens[stop]!;
+      if (punct(t, "(")) depth++;
+      else if (punct(t, ")")) depth--;
+      else if (depth === 0 && (kwAny(t, AFTER_ORDER) !== undefined || punct(t, ";"))) break;
+      stop++;
+    }
+    if (stop <= order + 2) return;
+
+    const outputLabels = new Set(list.map((item) => item.label).filter((label): label is string => label !== undefined));
+
+    for (const span of splitCommas(tokens, order + 2, stop - 1)) {
+      let last = span.to;
+      if (last > span.from && (kw(tokens[last], "ASC") || kw(tokens[last], "DESC"))) last--;
+      if (last < span.from) continue;
+
+      // An ordinal position, or the select list's own name for a result: both refer to the result,
+      // not to a column.
+      if (last === span.from) {
+        const only = tokens[span.from]!;
+        if (only.t === "num") continue;
+        if (only.t === "id" && outputLabels.has(fold(only.v))) continue;
+      }
+
+      for (const reference of references(ctx, span.from, last)) {
+        if (!isUngrouped(reference)) continue;
+        report(reference);
         return;
       }
     }
