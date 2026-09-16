@@ -22,6 +22,7 @@
 
 import { auditTableOutOfSync } from "./audit/table-out-of-sync.ts";
 import { deprecatedFunction } from "./compat/deprecated-function.ts";
+import { integerDisplayWidth } from "./compat/integer-display-width.ts";
 import { userVariableInExpression } from "./compat/user-variable-in-expression.ts";
 import { auditTriggerMissingColumn } from "./audit/trigger-missing-column.ts";
 import { aggregateInWhere } from "./query/aggregate-in-where.ts";
@@ -98,7 +99,7 @@ export const documentRules = [ambiguousColumn] as const;
  * way in a `SELECT`, in the body of a procedure and in a trigger, and one pass over the file's
  * tokens finds all three without needing a statement's relations resolved.
  */
-export const compatRules = [deprecatedFunction, userVariableInExpression] as const;
+export const compatRules = [deprecatedFunction, integerDisplayWidth, userVariableInExpression] as const;
 
 /**
  * The rules that read one routine, with that routine's own locals.
@@ -216,6 +217,7 @@ export {
   insertSelectColumnCount,
   insertUnknownColumn,
   insertValueCount,
+  integerDisplayWidth,
   joinMultipliesAggregate,
   joinWithoutCondition,
   leftJoinArithmetic,

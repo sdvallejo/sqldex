@@ -688,6 +688,61 @@ test("a redundant index is dropped, comma and all", () => {
   );
 });
 
+test("a deprecated display width is removed, the rest of the column definition untouched", () => {
+  const here = cursor(
+    `CREATE TABLE t (
+  a |int(11) unsigned,
+  b int
+);`,
+    "tables/t.sql",
+  );
+  const action = pick(actionsAt(here), "Remove display width");
+  assert.deepEqual(codesOf(action), ["compat/integer-display-width"]);
+  assert.equal(
+    applied(action, join(SHOP, "tables/t.sql"), here.text),
+    `CREATE TABLE t (
+  a int unsigned,
+  b int
+);`,
+  );
+});
+
+test("TINYINT(1) is reported but offered no fix: removing the width is not a no-op there", () => {
+  const here = cursor(
+    `CREATE TABLE t (
+  a |tinyint(1)
+);`,
+    "tables/t.sql",
+  );
+  assert.equal(titles(actionsAt(here)).includes("Remove display width"), false);
+});
+
+test("a width followed by ZEROFILL is reported but offered no fix either", () => {
+  const here = cursor(
+    `CREATE TABLE t (
+  a |int(11) zerofill
+);`,
+    "tables/t.sql",
+  );
+  assert.equal(titles(actionsAt(here)).includes("Remove display width"), false);
+});
+
+test("a width with no ZEROFILL and no TINYINT(1) is still offered the fix", () => {
+  const here = cursor(
+    `CREATE TABLE t (
+  a |tinyint(4)
+);`,
+    "tables/t.sql",
+  );
+  const action = pick(actionsAt(here), "Remove display width");
+  assert.equal(
+    applied(action, join(SHOP, "tables/t.sql"), here.text),
+    `CREATE TABLE t (
+  a tinyint
+);`,
+  );
+});
+
 test("a foreign key with nothing to check it against gets an index on the table it references", () => {
   // `customers.status` has no index of its own — only `customer_id` (its primary key) and `email`
   // (a unique key) do — so a foreign key referencing it earns `schema/fk-missing-index`.

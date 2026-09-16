@@ -21,7 +21,7 @@ import type { Routine } from "../src/model/routine.ts";
 import type { Table } from "../src/model/table.ts";
 import { check, Registry } from "../src/rules/registry.ts";
 import type { Rule, RuleCatalog } from "../src/rules/rule.ts";
-import { deprecatedFunction, userVariableInExpression } from "../src/rules/index.ts";
+import { deprecatedFunction, integerDisplayWidth, userVariableInExpression } from "../src/rules/index.ts";
 import { parseDDL } from "../src/syntax/fast/ddl.ts";
 import { tokenize } from "../src/syntax/fast/lexer.ts";
 import { parseHeader } from "../src/syntax/fast/routine.ts";
@@ -165,4 +165,74 @@ test("an assignment inside a routine's expression is reported wherever it sits",
 test("each assignment is reported on its own, the way the server warns once per one", () => {
   const src = "SELECT @a := 1, @b := 2 FROM orders;";
   assert.equal(run(userVariableInExpression, src).length, 2);
+});
+
+// ------------------------------------------------- integer display width
+
+test("a column written with a display width is reported, the bare type is not", () => {
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a int(11));"), [
+    "INT(11): integer display width is deprecated in MySQL 8.0; write INT",
+  ]);
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a int);"), []);
+});
+
+test("UNSIGNED after the width does not hide it", () => {
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a bigint(20) unsigned);"), [
+    "BIGINT(20): integer display width is deprecated in MySQL 8.0; write BIGINT",
+  ]);
+});
+
+test("a routine's parameter, RETURNS and DECLARE are each read the same way as a column", () => {
+  assert.deepEqual(run(integerDisplayWidth, "CREATE PROCEDURE sp_x(IN p_a int(11)) BEGIN SELECT 1; END;"), [
+    "INT(11): integer display width is deprecated in MySQL 8.0; write INT",
+  ]);
+  assert.deepEqual(run(integerDisplayWidth, "CREATE PROCEDURE sp_x(IN p_a int) BEGIN SELECT 1; END;"), []);
+
+  assert.deepEqual(
+    run(integerDisplayWidth, "CREATE FUNCTION fn_x() RETURNS int(11) BEGIN RETURN 1; END;"),
+    ["INT(11): integer display width is deprecated in MySQL 8.0; write INT"],
+  );
+  assert.deepEqual(run(integerDisplayWidth, "CREATE FUNCTION fn_x() RETURNS int BEGIN RETURN 1; END;"), []);
+
+  assert.deepEqual(run(integerDisplayWidth, body("  DECLARE v_a int(11);")), [
+    "INT(11): integer display width is deprecated in MySQL 8.0; write INT",
+  ]);
+  assert.deepEqual(run(integerDisplayWidth, body("  DECLARE v_a int;")), []);
+});
+
+test("one DECLARE naming several variables of the same width is one finding, not one per name", () => {
+  assert.deepEqual(run(integerDisplayWidth, body("  DECLARE a, b bigint(20);")), [
+    "BIGINT(20): integer display width is deprecated in MySQL 8.0; write BIGINT",
+  ]);
+});
+
+test("every synonym MySQL warns about is read the same way", () => {
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a integer(11));"), [
+    "INTEGER(11): integer display width is deprecated in MySQL 8.0; write INTEGER",
+  ]);
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a mediumint(9));"), [
+    "MEDIUMINT(9): integer display width is deprecated in MySQL 8.0; write MEDIUMINT",
+  ]);
+});
+
+test("TINYINT(1) is reported like any other width, even though its own quick fix declines", () => {
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a tinyint(1));"), [
+    "TINYINT(1): integer display width is deprecated in MySQL 8.0; write TINYINT",
+  ]);
+});
+
+test("a backticked name is a name, not the type it happens to spell", () => {
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (`int` int);"), []);
+});
+
+test("a type with no integer display width is left alone", () => {
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a char(10));"), []);
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a decimal(10,2));"), []);
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a year(4));"), []);
+});
+
+test("ZEROFILL does not exempt the width, and is not itself what gets named", () => {
+  assert.deepEqual(run(integerDisplayWidth, "CREATE TABLE t (a int(11) zerofill);"), [
+    "INT(11): integer display width is deprecated in MySQL 8.0; write INT",
+  ]);
 });

@@ -23,9 +23,11 @@
  * `DECLARE`, alone or shared with others; a `DECLARE` out of place moves to the position MySQL's
  * grammar puts its own kind at — variables and conditions first, then cursors, then handlers — never
  * just back to the top, which the server would refuse exactly as it refuses the misplaced one to
- * start with. Where the right edit cannot be known, the rule still reports — there is just no
- * lightbulb. Guessing wrong here is worse than not offering anything, the same principle every rule
- * in `@sqldex/core` is already written against.
+ * start with; an integer's deprecated display width is dropped from its type, except on a
+ * `TINYINT(1)` or a width `ZEROFILL` still follows, where the fix stands down because the edit is not
+ * the no-op it is everywhere else. Where the right edit cannot be known, the rule still reports —
+ * there is just no lightbulb. Guessing wrong here is worse than not offering anything, the same
+ * principle every rule in `@sqldex/core` is already written against.
  */
 
 import {
@@ -903,6 +905,39 @@ function removeClauseEdit(text: string, span: Span): TextEdit | undefined {
   return { range: rangeOf(lineIndex(text), { s: start, e: end }), newText: "" };
 }
 
+/**
+ * `compat/integer-display-width`: remove the `(N)` from the type it decorates.
+ *
+ * **Stands down twice**, both times because the width is not the inert decoration it is everywhere
+ * else: on a `TINYINT(1)`, where `SHOW CREATE TABLE` keeps the `(1)` and a client reads back a
+ * different result-metadata length without it, and on any width followed by `ZEROFILL`, since that
+ * attribute is a separate, still-active deprecation this rule says nothing about — deleting half of
+ * a pair the server is retiring together is not this fix's call to make alone.
+ */
+function displayWidthFix(at: At, offset: number, d: Diagnostic, out: CodeAction[]): void {
+  const tokens = at.lexed.tokens;
+  const found = tokenAt(tokens, offset);
+  if (!found) return;
+
+  const open = tokens[found.idx + 1];
+  if (!open || !punct(open, "(")) return;
+  const closeIdx = matchingParen(tokens, found.idx + 1);
+  if (closeIdx === -1) return;
+  const close = tokens[closeIdx]!;
+
+  const isTinyintOne =
+    found.token.v.toUpperCase() === "TINYINT" && closeIdx === found.idx + 3 && tokens[found.idx + 2]?.v === "1";
+  if (isTinyintOne) return;
+
+  let after = tokens[closeIdx + 1];
+  if (kw(after, "SIGNED") || kw(after, "UNSIGNED")) after = tokens[closeIdx + 2];
+  if (kw(after, "ZEROFILL")) return;
+
+  out.push(
+    fix("Remove display width", at.document.uri, [{ range: rangeOf(lineIndex(at.text), { s: open.s, e: close.e }), newText: "" }], [d]),
+  );
+}
+
 /** `schema/redundant-index`: delete the redundant index's own clause. */
 function redundantIndexFix(at: At, offset: number, d: Diagnostic, out: CodeAction[]): void {
   const parsed = parseDDL(at.workspace.dialect, at.text, at.lexed);
@@ -984,8 +1019,8 @@ function fkMissingIndexFix(at: At, offset: number, d: Diagnostic, out: CodeActio
 }
 
 /** `routine/unused-variable`, `routine/cursor-never-opened`, `routine/declare-after-statement`,
- * `schema/redundant-index`, `schema/fk-missing-index`: fixes that do not need a candidate set,
- * just the finding's own location read back out of the tokens. */
+ * `schema/redundant-index`, `schema/fk-missing-index`, `compat/integer-display-width`: fixes that
+ * do not need a candidate set, just the finding's own location read back out of the tokens. */
 function structuralQuickFixes(at: At, diagnostics: readonly Diagnostic[], out: CodeAction[]): void {
   for (const d of diagnostics) {
     const offset = startOf(at, d);
@@ -1003,6 +1038,8 @@ function structuralQuickFixes(at: At, diagnostics: readonly Diagnostic[], out: C
       redundantIndexFix(at, offset, d, out);
     } else if (d.code === "schema/fk-missing-index") {
       fkMissingIndexFix(at, offset, d, out);
+    } else if (d.code === "compat/integer-display-width") {
+      displayWidthFix(at, offset, d, out);
     }
   }
 }
