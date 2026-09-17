@@ -99,6 +99,28 @@ test("an alias is shown as the table it stands for", () => {
   assert.match(text, /CREATE TABLE `orders`/);
 });
 
+test("a derived table's alias is shown as the columns its query produces", () => {
+  const text = markdown(hover(cursor("SELECT |t.is_settled FROM (SELECT order_id, 'N' AS is_settled FROM orders) t;")));
+  assert.match(text, /t {2}— derived table, 2 columns/);
+  assert.match(text, /order_id, is_settled/);
+  assert.doesNotMatch(text, /could not be worked out/);
+});
+
+test("a derived table whose query names only some columns says the list is partial", () => {
+  const text = markdown(hover(cursor("SELECT * FROM (SELECT order_id, COUNT(*) FROM orders GROUP BY order_id) |t;")));
+  assert.match(text, /derived table, 1 columns/);
+  assert.match(text, /could not be worked out/);
+});
+
+test("a column of a derived table says whose it is", () => {
+  const text = markdown(hover(cursor("SELECT t.is_sett|led FROM (SELECT 'N' AS is_settled FROM orders) t;")));
+  assert.match(text, /`t\.is_settled` — column of a derived table/);
+});
+
+test("a name a derived table does not produce gets no answer", () => {
+  assert.equal(hover(cursor("SELECT t.nos|uch FROM (SELECT 'N' AS is_settled FROM orders) t;")), undefined);
+});
+
 test("a routine is shown with its signature and its comment", () => {
   const text = markdown(hover(cursor("CALL sp_customer_re|port(1, @t);")));
   // `IN` is left off because it is the default; `OUT` is the one that has to be written down.

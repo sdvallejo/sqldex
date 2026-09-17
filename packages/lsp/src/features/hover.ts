@@ -36,11 +36,14 @@ export function hover(at: At): Hover | undefined {
   // not resolve there is nothing to say — offering the catalog's `y` instead would be answering a
   // question nobody asked.
   if (found.qualifier !== undefined) {
-    const resolved = qualifier(at.resolve, analysis, scope, found.qualifier);
+    const resolved = qualifier(at.resolve, analysis, scope, found.qualifier, at.lexed.tokens);
     const column = resolved?.table?.byName.get(key);
     if (resolved?.table && column) return answer(columnDoc(workspace, resolved.table, column));
     if (resolved?.kind === "temp_table") {
       return answer(`\`${resolved.name}.${name}\` — column of a temporary table`);
+    }
+    if (resolved?.kind === "derived" && resolved.columns?.some((column) => fold(column) === key)) {
+      return answer(`\`${resolved.name}.${name}\` — column of a derived table`);
     }
     return undefined;
   }
@@ -80,6 +83,20 @@ export function hover(at: At): Hover | undefined {
 
   // Hovering an alias shows the table it stands for: precisely the thing you cannot remember.
   const aliased = analysis.byAlias.get(key);
+
+  // A derived table has no `CREATE TABLE` to show, so what it stands for is the columns its query
+  // produces — and, when some item could not be named, a word that the list is not the whole of it.
+  if (aliased?.derived !== undefined && aliased.name === undefined) {
+    const resolved = relation(at.resolve, scope, aliased, at.lexed.tokens);
+    if (resolved?.columns !== undefined) {
+      const columns = resolved.columns;
+      const parts = [sqlBlock(`${name}  — derived table, ${columns.length} columns`)];
+      if (columns.length > 0) parts.push(columns.join(", "));
+      if (resolved.complete !== true) parts.push("Some of its columns could not be worked out from the query.");
+      return answer(parts.join("\n\n"));
+    }
+  }
+
   if (aliased?.name !== undefined && fold(aliased.name) !== key) {
     const table = catalog.table(aliased.name);
     if (table) return answer(tableDoc(workspace, table));
