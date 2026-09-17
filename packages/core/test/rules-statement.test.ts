@@ -323,8 +323,77 @@ test("nothing is claimed about a temporary table's columns", () => {
   assert.deepEqual(run(unknownColumn, "SELECT t.whatever FROM tmp_from_other_sp t;"), []);
 });
 
-test("nor about a derived table's", () => {
-  assert.deepEqual(run(unknownColumn, "SELECT x.whatever FROM (SELECT 1 AS n) x;"), []);
+test("a derived table's columns are known when its query names every one, and checked the same way", () => {
+  assert.deepEqual(run(unknownColumn, "SELECT x.whatever FROM (SELECT 1 AS n) x;"), [
+    "derived table x has no column whatever",
+  ]);
+});
+
+test("the right name is quiet, only the wrong one sounds", () => {
+  assert.deepEqual(run(unknownColumn, "SELECT x.n FROM (SELECT 1 AS n) x;"), []);
+});
+
+test("under a UNION the first branch names the result, and only that branch is compared", () => {
+  const src =
+    "SELECT t.is_settled INTO v FROM (SELECT o.order_id, 'N' is_setled FROM orders o " +
+    "UNION ALL SELECT o.order_id, 'S' is_settled FROM orders o) t;";
+  assert.deepEqual(run(unknownColumn, src), ["derived table t has no column is_settled"]);
+});
+
+test("the same query, spelled right in the first branch, is quiet", () => {
+  const src =
+    "SELECT t.is_settled INTO v FROM (SELECT o.order_id, 'N' is_settled FROM orders o " +
+    "UNION ALL SELECT o.order_id, 'S' is_settled FROM orders o) t;";
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("case alone does not make a derived table's column unknown", () => {
+  assert.deepEqual(run(unknownColumn, "SELECT x.IS_SETTLED FROM (SELECT 1 AS is_settled) x;"), []);
+});
+
+test("a derived table's own x.* is expanded against the catalog table it selects from", () => {
+  assert.deepEqual(run(unknownColumn, "SELECT x.order_id FROM (SELECT o.* FROM orders o) x;"), []);
+});
+
+test("an unaliased expression stands the rule down on the whole derived table", () => {
+  // `COUNT(*)` names nothing, so nothing about `x` beyond it can be claimed either.
+  assert.deepEqual(run(unknownColumn, "SELECT x.anything FROM (SELECT COUNT(*) FROM orders) x;"), []);
+});
+
+test("a * over a table the catalog does not hold stands the rule down too", () => {
+  assert.deepEqual(run(unknownColumn, "SELECT x.whatever FROM (SELECT o.* FROM ordrs o) x;"), []);
+});
+
+test("a * over a temporary table stands the rule down, since its columns are a best effort", () => {
+  assert.deepEqual(run(unknownColumn, "SELECT x.whatever FROM (SELECT * FROM tmp_from_other_sp) x;"), []);
+});
+
+test("a * over the file's own temporary table reads that one, not another procedure's of the same name", () => {
+  // The catalog knows `tmp_from_other_sp` with other columns; the one this body creates shadows it.
+  const src = body(
+    "  CREATE TEMPORARY TABLE tmp_from_other_sp (line_no int, error_text varchar(255));",
+    "  SELECT GROUP_CONCAT(t.line_no, t.error_text) INTO p_id FROM (SELECT * FROM tmp_from_other_sp) t;",
+  );
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("JSON_TABLE shares the derived table's own shape, but not a query this rule can read", () => {
+  const src = "SELECT jt.whatever FROM JSON_TABLE(orders.total, '$[*]' COLUMNS (v INT PATH '$')) jt;";
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("an alias with its own column list renames the output past what this rule reads", () => {
+  assert.deepEqual(run(unknownColumn, "SELECT x.b FROM (SELECT 1 AS n) x (a, b);"), []);
+});
+
+test("a common table expression's columns come out of a query this rule does not read either", () => {
+  const src = "WITH recent AS (SELECT order_id FROM orders) SELECT recent.whatever FROM recent;";
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("a reference inside a derived table's own UNION branch is checked against the real table it names", () => {
+  const src = "SELECT * FROM (SELECT o.order_id FROM orders o UNION SELECT ra.nosuch FROM orders ra) t;";
+  assert.deepEqual(run(unknownColumn, src), ["orders has no column nosuch"]);
 });
 
 test("NEW and OLD are checked against the trigger's own table", () => {

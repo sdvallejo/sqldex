@@ -11,7 +11,7 @@ import type { Dialect } from "../dialects/dialect.ts";
 import type { Local, Locals } from "../model/locals.ts";
 import type { Routine } from "../model/routine.ts";
 import type { Relation } from "../model/query.ts";
-import { relations } from "../syntax/fast/stmt.ts";
+import { EXPECTS_TABLE, relations } from "../syntax/fast/stmt.ts";
 import { kw, kwAny, matchingParen, objectAfterCreate, punct, qualifiedName, splitCommas, unquote } from "../syntax/fast/tok.ts";
 import { readType, typeExtent } from "../syntax/fast/type.ts";
 import type { Token } from "../syntax/types.ts";
@@ -44,6 +44,14 @@ export interface SelectListColumns {
    * that line and the first one **is** a column.
    */
   definedAt: Set<number>;
+  /**
+   * How many items neither named themselves nor were a `*`: an unaliased expression like
+   * `COUNT(*)`, or a lone literal with nothing after it. Whoever needs the list to be **complete**
+   * — every item accounted for, not just the ones that could be named — reads this rather than
+   * comparing `names.length` against the number of commas, since a `*` legitimately contributes no
+   * name of its own yet is not missing anything.
+   */
+  unnamed: number;
 }
 
 /**
@@ -94,15 +102,23 @@ export function selectListColumns(
   const names: string[] = [];
   const stars: string[] = [];
   const definedAt = new Set<number>();
+  let unnamed = 0;
 
   for (const part of splitCommas(tokens, selectIdx + 1, stop)) {
     const last = tokens[part.to];
     // `*` and `alias.*` name nothing on their own: where they come from is recorded so that
-    // whoever has the catalog at hand can expand them.
+    // whoever has the catalog at hand can expand them. Either way the item is accounted for, so
+    // it is not what `unnamed` counts.
+    let named = false;
     if (punct(last, "*")) {
       const owner = tokens[part.to - 2];
-      if (punct(tokens[part.to - 1], ".") && owner && owner.t === "id") stars.push(owner.v);
-      else if (part.to === part.from) stars.push("*");
+      if (punct(tokens[part.to - 1], ".") && owner && owner.t === "id") {
+        stars.push(owner.v);
+        named = true;
+      } else if (part.to === part.from) {
+        stars.push("*");
+        named = true;
+      }
     }
 
     // An explicit alias overrides everything else.
@@ -121,10 +137,12 @@ export function selectListColumns(
     if (aliasIdx !== -1) {
       names.push(tokens[aliasIdx]!.v);
       definedAt.add(aliasIdx);
+      named = true;
     } else if (last && last.t === "str" && part.to > part.from) {
       // MySQL accepts a literal as an alias: `ROUND(a + b, 2) 'net_total'`, which is common
       // enough to matter. If the literal is the item's only content it is a value, not an alias.
       names.push(unquote(last.v));
+      named = true;
     } else if (last && last.t === "id" && !kwAny(last, SELECT_NOISE)) {
       // Without `AS`, it can only be named if the item ends in an identifier: `Col`, or the `Col`
       // of `t.Col`. If it ends in `)` it is an anonymous expression.
@@ -135,10 +153,13 @@ export function selectListColumns(
       const definesName = part.to > part.from && !punct(tokens[part.to - 1], ".");
       if (!aliasesOnly || definesName) names.push(last.v);
       if (definesName) definedAt.add(part.to);
+      named = true;
     }
+
+    if (!named) unnamed++;
   }
 
-  return { names, stars, definedAt };
+  return { names, stars, definedAt, unnamed };
 }
 
 /**
@@ -151,6 +172,11 @@ export interface ResolvedSelect {
   names: string[];
   /** Outside tables whose `*` has to be expanded with the catalog, which this module lacks. */
   sources: string[];
+  /**
+   * Whether every item is accounted for: no unaliased expression, no `*` that could not be traced
+   * to exactly one relation, no nested derived subquery that was itself incomplete.
+   */
+  complete: boolean;
 }
 
 /** The columns a `SELECT` produces, descending into derived subqueries. */
@@ -161,13 +187,10 @@ function resolveSelect(
   limit: number,
   depth: number,
 ): ResolvedSelect {
-  const { names, stars } = selectListColumns(tokens, selectIdx, limit);
-  const sources: string[] = [];
-  if (stars.length === 0 || depth > MAX_DERIVED_DEPTH) return { names, sources };
-
   // In a `SELECT * FROM a UNION ALL SELECT * FROM b`, the result's columns are defined by the
-  // **first** branch. Without stopping here, relations from both are collected and the `*` is no
-  // longer unambiguous, which leaves the temporary table it feeds without columns.
+  // **first** branch. Without cutting the list there too, an item with nothing before the `UNION`
+  // — `SELECT 'N' AS a UNION SELECT 'S'` has no `FROM` to stop at — bleeds into the next branch's
+  // list, and the last thing read is `'S'` rather than `a`.
   let branchLimit = limit;
   let depthInBranch = 0;
   for (let i = selectIdx + 1; i <= limit; i++) {
@@ -179,6 +202,17 @@ function resolveSelect(
       branchLimit = i - 1;
       break;
     }
+  }
+
+  const { names, stars, unnamed } = selectListColumns(tokens, selectIdx, branchLimit);
+  const sources: string[] = [];
+  let complete = unnamed === 0;
+
+  if (stars.length === 0 || depth > MAX_DERIVED_DEPTH) {
+    // Depth exceeded with stars still unresolved is not the same as none: the list stops being
+    // complete right there, even though nothing further can be read to prove it.
+    if (stars.length > 0 && depth > MAX_DERIVED_DEPTH) complete = false;
+    return { names, sources, complete };
   }
 
   const found = relations(dialect, tokens, selectIdx, branchLimit);
@@ -197,7 +231,10 @@ function resolveSelect(
       sources.push(relation.name);
       return;
     }
-    if (!relation.derived) return;
+    if (!relation.derived) {
+      complete = false;
+      return;
+    }
 
     // Anonymous subquery: descend into its own `SELECT` and repeat the analysis.
     for (let i = relation.derived.from; i <= relation.derived.to; i++) {
@@ -205,22 +242,71 @@ function resolveSelect(
         const inner = resolveSelect(dialect, tokens, i, relation.derived.to - 1, depth + 1);
         names.push(...inner.names);
         sources.push(...inner.sources);
+        if (!inner.complete) complete = false;
         return;
       }
     }
+    complete = false;
   };
 
   for (const star of stars) {
     if (star === "*") {
       // `SELECT * FROM t`: with a single relation the `*` is unambiguous; with several, not.
       if (found.length === 1) absorb(found[0]!);
+      else complete = false;
     } else {
       const relation = byAlias.get(dialect.foldIdentifier(star, false));
       if (relation) absorb(relation);
+      else complete = false;
     }
   }
 
-  return { names, sources };
+  return { names, sources, complete };
+}
+
+/**
+ * A derived table's output columns: `FROM (SELECT ...) t` or the `JSON_TABLE(...)` a relation is
+ * shaped the same as.
+ *
+ * `complete` says whether every column is known: it is `false` when the relation is a table
+ * function rather than a real subquery (nothing here reads `JSON_TABLE`'s own column syntax), when
+ * what is inside the parentheses is not a `SELECT` (a `VALUES` row constructor, say), when the
+ * alias carries its own column list (`(SELECT ...) t (a, b)` renames the output past what the
+ * query itself calls it), or when the query's own first branch left something unnamed. `names` is
+ * still returned in every case — best-effort — so a caller only after completion candidates is not
+ * left with nothing just because one item could not be named.
+ */
+export function derivedColumns(
+  dialect: Dialect,
+  tokens: readonly Token[],
+  relation: Relation,
+): ResolvedSelect | undefined {
+  const derived = relation.derived;
+  if (!derived) return undefined;
+
+  // A table function shares the subquery's token shape (`readRelation` reads `JSON_TABLE(...)`
+  // the same way it reads `(SELECT ...)`), but only a subquery is ever preceded by the tokens
+  // `relations()` calls `readRelation` after — `FROM`, `JOIN`, `UPDATE`, `STRAIGHT_JOIN`, a comma.
+  // Anything else there is the function's own name.
+  const before = tokens[derived.from - 1];
+  const isTableFunction = before !== undefined && before.t === "id" && !kwAny(before, EXPECTS_TABLE);
+
+  // The alias carries its own column list, which renames the output past what this function reads.
+  let after = derived.to + 1;
+  if (kw(tokens[after], "AS")) after++;
+  if (relation.alias !== undefined) after++;
+  const hasColumnList = punct(tokens[after], "(");
+
+  // What is inside the parentheses has to be a `SELECT`; nested `((SELECT ...))` is followed
+  // through, anything else is not something this function reads.
+  let i = derived.from + 1;
+  while (punct(tokens[i], "(")) i++;
+  const isSelect = kw(tokens[i], "SELECT");
+
+  if (isTableFunction || !isSelect) return { names: [], sources: [], complete: false };
+
+  const resolved = resolveSelect(dialect, tokens, i, derived.to - 1, 0);
+  return { ...resolved, complete: resolved.complete && !hasColumnList };
 }
 
 /** Reads a `DECLARE`, appending the locals it defines to `out`. */

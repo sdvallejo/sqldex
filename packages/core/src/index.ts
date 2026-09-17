@@ -9,7 +9,7 @@ export {
   triggerInserts,
 } from "./analysis/audit.ts";
 export type { ResolvedSelect, SelectListColumns } from "./analysis/locals.ts";
-export { collect, selectListColumns } from "./analysis/locals.ts";
+export { collect, derivedColumns, selectListColumns } from "./analysis/locals.ts";
 export type {
   FileReferences,
   FileSource,

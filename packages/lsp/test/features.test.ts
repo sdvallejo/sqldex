@@ -176,6 +176,13 @@ test("after a dot, only that qualifier's columns", () => {
   assert.deepEqual(labels("SELECT o.| FROM orders o;"), ["order_id", "customer_id", "total"].sort());
 });
 
+test("after a dot into a derived table, the first branch of its UNION names the columns", () => {
+  const source =
+    "SELECT t.| FROM (SELECT order_id, customer_id FROM orders " +
+    "UNION SELECT order_id, customer_id FROM orders) t;";
+  assert.deepEqual(labels(source), ["order_id", "customer_id"].sort());
+});
+
 test("after FROM, the catalog's tables", () => {
   const offered = labels("SELECT * FROM |");
   assert.deepEqual(offered, ["customers", "orders", "shipments"]);

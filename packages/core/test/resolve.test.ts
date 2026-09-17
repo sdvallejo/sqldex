@@ -115,6 +115,35 @@ test("a relation resolves the same way a qualifier does", () => {
   assert.equal(relation(ctx, EMPTY_SCOPE, item)?.table?.name, "customers");
 });
 
+test("a derived table's columns are read from its own query, given the tokens", () => {
+  const ctx = contextFor(SCHEMA);
+  const sql = "SELECT t. FROM (SELECT user_id, name FROM customers) t";
+  const tokens = tokenize(sql).tokens;
+  const resolved = qualifier(ctx, analyze(mysql, sql, tokens, sql.length), EMPTY_SCOPE, "t", tokens);
+  assert.equal(resolved?.kind, "derived");
+  assert.equal(resolved?.complete, true);
+  assert.deepEqual(columnNames(resolved), ["user_id", "name"]);
+});
+
+test("without tokens a derived table resolves the same as before: no columns, nothing claimed", () => {
+  const ctx = contextFor(SCHEMA);
+  const sql = "SELECT t. FROM (SELECT user_id, name FROM customers) t";
+  const tokens = tokenize(sql).tokens;
+  const resolved = qualifier(ctx, analyze(mysql, sql, tokens, sql.length), EMPTY_SCOPE, "t");
+  assert.equal(resolved?.kind, "derived");
+  assert.equal(resolved?.complete, undefined);
+  assert.deepEqual(columnNames(resolved), []);
+});
+
+test("an unaliased expression in a derived table's query leaves it incomplete", () => {
+  const ctx = contextFor(SCHEMA);
+  const sql = "SELECT t. FROM (SELECT COUNT(*) FROM customers) t";
+  const tokens = tokenize(sql).tokens;
+  const resolved = qualifier(ctx, analyze(mysql, sql, tokens, sql.length), EMPTY_SCOPE, "t", tokens);
+  assert.equal(resolved?.kind, "derived");
+  assert.equal(resolved?.complete, false);
+});
+
 test("TRIM's own FROM does not name a relation", () => {
   const sql = "SELECT TRIM(BOTH ' ' FROM c) FROM orders o";
   const tokens = tokenize(sql).tokens;

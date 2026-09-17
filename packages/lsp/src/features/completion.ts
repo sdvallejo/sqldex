@@ -96,12 +96,14 @@ function fold(workspace: Workspace, name: string): string {
 }
 
 function addColumns(out: Items, workspace: Workspace, resolved: Resolved, rank: number): void {
-  if (resolved.kind === "temp_table") {
+  if (resolved.kind === "temp_table" || resolved.kind === "derived") {
+    // A derived table's `columns` may be incomplete — one item this pass could not name — but
+    // what could be worked out is still worth offering: the alternative is nothing at all.
     for (const name of resolved.columns ?? []) {
       out.add(`col:${fold(workspace, resolved.name)}.${fold(workspace, name)}`, rank, {
         label: name,
         kind: CompletionItemKind.Field,
-        detail: `column of ${resolved.name}`,
+        detail: resolved.kind === "temp_table" ? `column of ${resolved.name}` : "column of a derived table",
         labelDetails: { description: resolved.name },
       });
     }
@@ -289,7 +291,7 @@ function addColumnValues(out: Items, at: At): void {
 }
 
 function qualifierOf(at: At, name: string): Resolved | undefined {
-  return qualifier(at.resolve, at.analysis, at.scope, name);
+  return qualifier(at.resolve, at.analysis, at.scope, name, at.lexed.tokens);
 }
 
 export function complete(at: At, snippets: boolean): CompletionList {

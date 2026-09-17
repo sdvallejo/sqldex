@@ -16,6 +16,7 @@ import type { Relation } from "../model/query.ts";
 import type { Table } from "../model/table.ts";
 import type { Analysis } from "../syntax/fast/cursor.ts";
 import type { Lexed, Token } from "../syntax/types.ts";
+import { derivedColumns, type ResolvedSelect } from "./locals.ts";
 
 export type ResolvedKind = "table" | "temp_table" | "derived";
 
@@ -23,8 +24,15 @@ export interface Resolved {
   kind: ResolvedKind;
   /** The catalog definition, when it is a real table. */
   table?: Table;
-  /** Column names, when it is temporary. */
+  /** Column names, when it is temporary or, given the tokens, derived. */
   columns?: string[];
+  /**
+   * Whether `columns` is the whole answer. Only set for `derived`: a temporary table's `columns`
+   * has always been a best effort, but a derived table's completeness is exactly what tells
+   * `names/unknown-column` whether a name missing from `columns` is worth reporting or just
+   * something this pass could not follow.
+   */
+  complete?: boolean;
   name: string;
 }
 
@@ -101,6 +109,61 @@ export function tempTable(ctx: ResolveContext, scope: Locals, name: string): Res
 }
 
 /**
+ * A derived table's columns, given the tokens: `derivedColumns` reads the subquery, and this
+ * expands whatever its `*` selected from, resolved the way any `FROM` name is — the file's own
+ * temporary tables first, then the catalog.
+ *
+ * Only a catalog table keeps the answer complete. A temporary table's columns are a best effort
+ * (a `CREATE TEMPORARY TABLE ... SELECT` may not have been inferable, and one with the same name
+ * in another file may not be this one), so its names are offered but the list stops being
+ * something a missing name can be reported against. A source nothing resolves does the same.
+ */
+function expandDerivedColumns(
+  ctx: ResolveContext,
+  scope: Locals,
+  derived: ResolvedSelect,
+): { names: string[]; complete: boolean } {
+  const names: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (name: string): void => {
+    const key = ctx.dialect.foldIdentifier(name, false);
+    if (seen.has(key)) return;
+    seen.add(key);
+    names.push(name);
+  };
+
+  for (const name of derived.names) push(name);
+
+  let complete = derived.complete;
+  for (const source of derived.sources) {
+    const resolved = named(ctx, scope, source);
+    if (resolved?.kind !== "table") complete = false;
+    for (const name of columnNames(resolved)) push(name);
+  }
+
+  return { names, complete };
+}
+
+/** A `derived` result, with columns filled in from `tokens` when the relation is a real subquery. */
+function resolvedDerived(
+  ctx: ResolveContext,
+  scope: Locals,
+  item: Relation,
+  name: string,
+  tokens?: readonly Token[],
+): Resolved {
+  if (!item.name && tokens) {
+    const found = derivedColumns(ctx.dialect, tokens, item);
+    if (found) {
+      const expanded = expandDerivedColumns(ctx, scope, found);
+      return { kind: "derived", name, columns: expanded.names, complete: expanded.complete };
+    }
+  }
+  return { kind: "derived", name };
+}
+
+/**
  * Does this reference name a database the repo does not define?
  *
  * `shop.orders` inside the `shop` repo is the table next door and resolves as usual;
@@ -136,8 +199,9 @@ export function qualifier(
   analysis: Analysis,
   scope: Locals,
   name: string,
+  tokens?: readonly Token[],
 ): Resolved | undefined {
-  return qualifierIn(ctx, analysis.byAlias, scope, name);
+  return qualifierIn(ctx, analysis.byAlias, scope, name, tokens);
 }
 
 /**
@@ -146,12 +210,17 @@ export function qualifier(
  * A caller that has the aliases but not a cursor `Analysis` — a diagnostic reading a reference
  * somewhere in the middle of a statement, rather than under a cursor — would otherwise have to
  * fabricate the rest of an `Analysis` to ask this question.
+ *
+ * @param tokens The statement's tokens, so a genuine subquery's columns can be read rather than
+ * left empty. Optional: a caller that only needs to know *whether* something resolves, not to
+ * *what columns*, has no reason to carry them.
  */
 export function qualifierIn(
   ctx: ResolveContext,
   byAlias: ReadonlyMap<string, Relation>,
   scope: Locals,
   name: string,
+  tokens?: readonly Token[],
 ): Resolved | undefined {
   const key = ctx.dialect.foldIdentifier(name, false);
 
@@ -163,7 +232,7 @@ export function qualifierIn(
   const relation = byAlias.get(key);
   if (relation) {
     if (!relation.name || relation.cte || foreignSchema(ctx, relation)) {
-      return { kind: "derived", name };
+      return resolvedDerived(ctx, scope, relation, name, tokens);
     }
     return named(ctx, scope, relation.name);
   }
@@ -172,12 +241,17 @@ export function qualifierIn(
 }
 
 /** Resolves a `FROM` relation to its definition. */
-export function relation(ctx: ResolveContext, scope: Locals, item: Relation): Resolved | undefined {
+export function relation(
+  ctx: ResolveContext,
+  scope: Locals,
+  item: Relation,
+  tokens?: readonly Token[],
+): Resolved | undefined {
   // A common table expression is a relation whose columns come out of its own query, and a
   // foreign schema's is a relation this repo cannot see: both have a name and neither has columns
   // anybody here can assert, which is exactly what `derived` means.
   if (!item.name || item.cte || foreignSchema(ctx, item)) {
-    return { kind: "derived", name: item.alias ?? item.name ?? "?" };
+    return resolvedDerived(ctx, scope, item, item.alias ?? item.name ?? "?", tokens);
   }
   return named(ctx, scope, item.name);
 }
@@ -185,9 +259,8 @@ export function relation(ctx: ResolveContext, scope: Locals, item: Relation): Re
 /** Column names of something already resolved. */
 export function columnNames(resolved: Resolved | undefined): string[] {
   if (!resolved) return [];
-  if (resolved.kind === "temp_table") return resolved.columns ?? [];
   if (resolved.table) return resolved.table.columns.map((column) => column.name);
-  return [];
+  return resolved.columns ?? [];
 }
 
 export interface IdentifierAt {
