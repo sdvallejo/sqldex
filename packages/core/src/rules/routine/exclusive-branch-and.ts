@@ -1,82 +1,11 @@
+import { ifStatements } from "../shared/branches.ts";
 import { assignmentTargets } from "../shared/writes.ts";
-import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
+import { kw, punct } from "../../syntax/fast/tok.ts";
 import type { Token, TokenRange } from "../../syntax/types.ts";
 import type { Rule } from "../rule.ts";
 
 /** Comparison operators where a NULL operand makes the whole comparison NULL. `<=>` is excluded on purpose: it is the operator built for exactly this case. */
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["=", "!=", "<>", "<", ">", "<=", ">="]);
-
-interface IfStatement {
-  /** Index of the control `IF` token itself. */
-  ifIdx: number;
-  /** Index of the `IF` in the closing `END IF`, i.e. one past the frame's `END`. */
-  endIdx: number;
-  /** Each arm's body, condition excluded — `THEN`/`ELSE` to the next separator or `END`. */
-  branches: TokenRange[];
-}
-
-/**
- * Is this `IF` the control statement, not the `IF(a, b, c)` function?
- *
- * The function form always needs `(` immediately; the control form's condition may or may not be
- * parenthesized. So the only ambiguous shape is `IF (`, and that is resolved by looking past the
- * matching `)`: a `THEN` right there means control flow, anything else means the function used as a
- * value. This needs no context from the surrounding scan, unlike a flag that tracks "are we at the
- * start of a statement" — that kind of flag is fooled by a `CASE … WHEN a THEN IF(b,c,d) …` whose
- * inner `THEN` belongs to the `CASE`, not to an enclosing `IF`.
- */
-function isControlIf(tokens: readonly Token[], i: number): boolean {
-  if (!punct(tokens[i + 1], "(")) return true;
-  const close = matchingParen(tokens, i + 1);
-  return close !== -1 && kw(tokens[close + 1], "THEN");
-}
-
-/**
- * Every `IF … [ELSEIF …]* [ELSE …] END IF` in `[from, to]` with at least two arms.
- *
- * A single stack of open blocks (`BEGIN`, `IF`, `CASE`, `WHILE`, `LOOP`, `REPEAT`), all pushed
- * unconditionally except `IF`, all popped on the next `END` regardless of kind — nesting inside one
- * arm never reaches the enclosing `IF` frame, because whatever is nested is on top of the stack for
- * its own duration. An arm's range is a plain token span, so a `SET` inside a nested block still
- * counts as belonging to the arm that contains it.
- */
-function ifStatements(tokens: readonly Token[], from: number, to: number): IfStatement[] {
-  type Frame =
-    | { kind: "if"; ifIdx: number; armStart: number | undefined; branches: TokenRange[] }
-    | { kind: "begin" | "case" | "while" | "loop" | "repeat" };
-  const stack: Frame[] = [];
-  const found: IfStatement[] = [];
-
-  for (let i = from; i <= to; i++) {
-    const t = tokens[i]!;
-    if (t.t !== "id" || t.q) continue;
-    const top = stack[stack.length - 1];
-
-    if (kw(t, "CASE")) stack.push({ kind: "case" });
-    else if (kw(t, "BEGIN")) stack.push({ kind: "begin" });
-    else if (kw(t, "WHILE")) stack.push({ kind: "while" });
-    else if (kw(t, "LOOP")) stack.push({ kind: "loop" });
-    else if (kw(t, "REPEAT")) stack.push({ kind: "repeat" });
-    else if (kw(t, "IF") && isControlIf(tokens, i)) stack.push({ kind: "if", ifIdx: i, armStart: undefined, branches: [] });
-    else if (kw(t, "THEN") && top?.kind === "if" && top.armStart === undefined) top.armStart = i + 1;
-    else if (kw(t, "ELSEIF") && top?.kind === "if" && top.armStart !== undefined) {
-      top.branches.push({ from: top.armStart, to: i - 1 });
-      top.armStart = undefined;
-    } else if (kw(t, "ELSE") && top?.kind === "if" && top.armStart !== undefined) {
-      top.branches.push({ from: top.armStart, to: i - 1 });
-      top.armStart = i + 1;
-    } else if (kw(t, "END")) {
-      const frame = stack.pop();
-      if (frame?.kind === "if") {
-        if (frame.armStart !== undefined) frame.branches.push({ from: frame.armStart, to: i - 1 });
-        if (kw(tokens[i + 1], "IF") && frame.branches.length >= 2) {
-          found.push({ ifIdx: frame.ifIdx, endIdx: i + 1, branches: frame.branches });
-        }
-      }
-    }
-  }
-  return found;
-}
 
 /** Folded name of an unqualified identifier read, or `undefined` for anything else. */
 function readName(tokens: readonly Token[], dialect: { foldIdentifier(name: string, quoted: boolean): string }, i: number): string | undefined {
@@ -127,7 +56,8 @@ reports.`,
 
   check(ctx) {
     const { tokens, dialect } = ctx;
-    const ifs = ifStatements(tokens, ctx.body.from, ctx.body.to);
+    // A single arm has no partner arm for a second variable to be exclusive against.
+    const ifs = ifStatements(tokens, ctx.body.from, ctx.body.to).filter((f) => f.branches.length >= 2);
     if (ifs.length === 0) return;
 
     const candidates = new Set<string>();

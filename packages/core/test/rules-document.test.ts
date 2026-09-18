@@ -30,6 +30,7 @@ import {
   declareAfterStatement,
   exclusiveBranchAnd,
   nullableIntoArithmetic,
+  nullableVariableInConcat,
   nullableVariableInPredicate,
   outParamNeverAssigned,
   shadowedParameter,
@@ -449,6 +450,25 @@ test("a write to either variable between the IF and the check is the fix, and st
     "  END IF;",
   );
   assert.deepEqual(run(exclusiveBranchAnd, src), []);
+});
+
+test("an IF nested inside one arm does not hide the arms of the IF around it", () => {
+  // The `IF` of the inner `END IF` is the closing's own word, not a new block: read as one, it
+  // would sit on top of the outer frame and swallow its `ELSE`.
+  const src = body(
+    "  DECLARE v1 int;",
+    "  DECLARE v2 int;",
+    "  IF p_order = 1 THEN",
+    "    IF p_order > 0 THEN SELECT 1; END IF;",
+    "    SET v1 = 1;",
+    "  ELSE",
+    "    SET v2 = 1;",
+    "  END IF;",
+    "  IF v1 = 0 AND v2 = 0 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.equal(run(exclusiveBranchAnd, src).length, 1);
 });
 
 test("an IS NOT NULL test on either variable, anywhere in the statement, has handled it", () => {
@@ -917,13 +937,45 @@ test("the NULL-safe operator is the fix, not the defect", () => {
   assert.deepEqual(run(nullableVariableInPredicate, src), []);
 });
 
+test("an IF arm reached only after asking about the NULL has handled it", () => {
+  // Inside the outer arm the variable is known not to be NULL; the inner comparison never repeats
+  // the test, and does not need to.
+  const guarded = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  IF v_disc IS NOT NULL THEN",
+    "    IF v_disc != 0 THEN SELECT 1; END IF;",
+    "  END IF;",
+  );
+  const bare = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  IF p_order > 0 THEN",
+    "    IF v_disc != 0 THEN SELECT 1; END IF;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(nullableVariableInPredicate, guarded), []);
+  assert.equal(run(nullableVariableInPredicate, bare).length, 1);
+});
+
+test("a CONCAT is not a predicate, and has a rule of its own", () => {
+  const src = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  SELECT CONCAT('discount: ', v_disc);",
+  );
+  assert.deepEqual(run(nullableVariableInPredicate, src), []);
+});
+
+// ------------------------------------------------ nullable through a variable, into a CONCAT
+
 test("one NULL argument takes the whole CONCAT with it", () => {
   const src = body(
     "  DECLARE v_disc decimal(10,2);",
     "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
     "  SELECT CONCAT('discount: ', v_disc);",
   );
-  assert.deepEqual(run(nullableVariableInPredicate, src), [
+  assert.deepEqual(run(nullableVariableInConcat, src), [
     "v_disc comes from orders.discount, which is nullable; one NULL argument makes the whole CONCAT NULL",
   ]);
 });
@@ -939,17 +991,88 @@ test("the innermost wrapper is the one that counts, and CONCAT_WS skips its NULL
     "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
     "  SELECT CONCAT_WS(' ', 'discount:', v_disc);",
   );
-  assert.deepEqual(run(nullableVariableInPredicate, fixed), []);
-  assert.deepEqual(run(nullableVariableInPredicate, skipped), []);
+  assert.deepEqual(run(nullableVariableInConcat, fixed), []);
+  assert.deepEqual(run(nullableVariableInConcat, skipped), []);
 });
 
-test("a read that is neither compared nor concatenated is not this rule's business", () => {
+test("an arm after an ELSEIF that asked about the NULL knows the answer", () => {
+  // Reaching the second arm means `v_disc IS NULL` was asked and came back no.
+  const guarded = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  IF p_order < 0 THEN",
+    "    SELECT 1;",
+    "  ELSEIF v_disc IS NULL THEN",
+    "    SELECT 2;",
+    "  ELSEIF p_order > 0 THEN",
+    "    SELECT CONCAT('discount: ', v_disc);",
+    "  END IF;",
+  );
+  const bare = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  IF p_order < 0 THEN",
+    "    SELECT 1;",
+    "  ELSEIF p_order > 0 THEN",
+    "    SELECT CONCAT('discount: ', v_disc);",
+    "  END IF;",
+  );
+  assert.deepEqual(run(nullableVariableInConcat, guarded), []);
+  assert.equal(run(nullableVariableInConcat, bare).length, 1);
+});
+
+test("the ELSE after an IS NULL arm knows the answer too", () => {
+  const src = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  IF v_disc IS NULL THEN",
+    "    SELECT 1;",
+    "  ELSE",
+    "    SELECT CONCAT('discount: ', v_disc);",
+    "  END IF;",
+  );
+  assert.deepEqual(run(nullableVariableInConcat, src), []);
+});
+
+test("an IS NULL test after the arm, not before it, guards nothing", () => {
+  // Only arms that ran their conditions before this one know anything; a later ELSEIF was never asked.
+  const src = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  IF p_order > 0 THEN",
+    "    SELECT CONCAT('discount: ', v_disc);",
+    "  ELSEIF v_disc IS NULL THEN",
+    "    SELECT 1;",
+    "  END IF;",
+  );
+  assert.equal(run(nullableVariableInConcat, src).length, 1);
+});
+
+test("a read inside CONCAT that is also arithmetic belongs to the arithmetic rule", () => {
+  const src = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  SELECT CONCAT('discount: ', v_disc + 1);",
+  );
+  const found = check(
+    new Registry().add(nullableIntoArithmetic, nullableVariableInConcat),
+    { dialect: mysql, catalog: catalogOf(SCHEMA), schemas: new Set(["shop"]), config: defaults },
+    src,
+  );
+  assert.deepEqual(
+    found.map((d) => d.code),
+    ["routine/nullable-into-arithmetic"],
+  );
+});
+
+test("a read that is neither compared nor concatenated is neither rule's business", () => {
   const src = body(
     "  DECLARE v_disc decimal(10,2);",
     "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
     "  SELECT v_disc;",
   );
   assert.deepEqual(run(nullableVariableInPredicate, src), []);
+  assert.deepEqual(run(nullableVariableInConcat, src), []);
 });
 
 test("a read that is both arithmetic and negated belongs to the arithmetic rule", () => {

@@ -8,8 +8,9 @@ export const nullableIntoArithmetic: Rule = {
   id: "routine/nullable-into-arithmetic",
   group: "routine",
   // `a + v != b` is one read next to an operator and next to a negation. The NULL escapes through
-  // the sum before the comparison ever sees it, so the sum is where the reader has to look.
-  supersedes: ["routine/nullable-variable-in-predicate"],
+  // the sum before the comparison ever sees it, so the sum is where the reader has to look — and the
+  // same holds for `CONCAT(v + 1)`.
+  supersedes: ["routine/nullable-variable-in-predicate", "routine/nullable-variable-in-concat"],
   severity: "warn",
   scope: "routine",
   docs: `A nullable column reaching arithmetic through a variable.

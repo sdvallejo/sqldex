@@ -66,6 +66,7 @@ import { deadCoalesceDefault } from "./routine/dead-coalesce-default.ts";
 import { declareAfterStatement } from "./routine/declare-after-statement.ts";
 import { exclusiveBranchAnd } from "./routine/exclusive-branch-and.ts";
 import { nullableIntoArithmetic } from "./routine/nullable-into-arithmetic.ts";
+import { nullableVariableInConcat } from "./routine/nullable-variable-in-concat.ts";
 import { nullableVariableInPredicate } from "./routine/nullable-variable-in-predicate.ts";
 import { shadowedParameter } from "./routine/shadowed-parameter.ts";
 import { undeclaredVariable } from "./routine/undeclared-variable.ts";
@@ -117,6 +118,7 @@ export const routineRules = [
   exclusiveBranchAnd,
   nullableIntoArithmetic,
   nullableVariableInPredicate,
+  nullableVariableInConcat,
   cursorNeverOpened,
   outParamNeverAssigned,
   unknownLabel,
@@ -226,6 +228,7 @@ export {
   nullableIntoArithmetic,
   onlyFullGroupBy,
   nullableScalarSubquery,
+  nullableVariableInConcat,
   nullableVariableInPredicate,
   outArgumentNotVariable,
   outParamNeverAssigned,
