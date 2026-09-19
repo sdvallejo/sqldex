@@ -173,6 +173,7 @@ const SCHEMA = [
   "  big_qty bigint UNSIGNED NOT NULL,",
   "  price decimal(5,2) NOT NULL,",
   "  weight decimal(5,2) UNSIGNED NOT NULL,",
+  "  small_price decimal(3,0) NOT NULL,",
   "  score int NOT NULL,",
   "  arrived date NOT NULL,",
   "  updated_at datetime NOT NULL,",
@@ -1876,6 +1877,60 @@ test("INSERT IGNORE downgrades the refusal, so write-value-out-of-range stays qu
 
 test("an expression is not a literal this rule reads", () => {
   const src = "UPDATE inventory_items SET priority = priority + 1 WHERE item_id = 1;";
+  assert.deepEqual(run(writeValueOutOfRange, src), []);
+});
+
+// ----------------------------------- an exponent literal is a DOUBLE, rounded half to even
+
+test("a bare exponent literal rounds half to even, unlike a plain decimal", () => {
+  const fits = "INSERT INTO inventory_items (item_id, priority) VALUES (1, 1.265e2);";
+  const refused = "INSERT INTO inventory_items (item_id, priority) VALUES (1, 1.275e2);";
+  const negativeFits = "INSERT INTO inventory_items (item_id, priority) VALUES (1, -1.285e2);";
+  assert.deepEqual(run(writeValueOutOfRange, fits), []);
+  assert.equal(run(writeValueOutOfRange, refused).length, 1);
+  assert.deepEqual(run(writeValueOutOfRange, negativeFits), []);
+});
+
+test("a quoted numeric string still rounds an exponent half away from zero", () => {
+  const refused = "INSERT INTO inventory_items (item_id, priority) VALUES (1, '1.275e2');";
+  const negativeRefused = "INSERT INTO inventory_items (item_id, priority) VALUES (1, '-1.285e2');";
+  assert.equal(run(writeValueOutOfRange, refused).length, 1);
+  assert.equal(run(writeValueOutOfRange, negativeRefused).length, 1);
+});
+
+test("a numeric string into UNSIGNED is refused only when its rounded value is negative", () => {
+  const fits = "INSERT INTO inventory_items (item_id, qty) VALUES (1, '-0.4');";
+  const refused = "INSERT INTO inventory_items (item_id, qty) VALUES (1, '-0.5');";
+  assert.deepEqual(run(writeValueOutOfRange, fits), []);
+  assert.equal(run(writeValueOutOfRange, refused).length, 1);
+});
+
+test("a bare zero magnitude into UNSIGNED is not negative, whatever its sign", () => {
+  const fits = "INSERT INTO inventory_items (item_id, qty) VALUES (1, -0);";
+  assert.deepEqual(run(writeValueOutOfRange, fits), []);
+});
+
+test("an exponent literal into UNSIGNED is refused only when its rounded value is negative", () => {
+  const fits = "INSERT INTO inventory_items (item_id, qty) VALUES (1, -4e-1);";
+  const refused = "INSERT INTO inventory_items (item_id, qty) VALUES (1, -1.5e0);";
+  assert.deepEqual(run(writeValueOutOfRange, fits), []);
+  assert.equal(run(writeValueOutOfRange, refused).length, 1);
+});
+
+test("an exponent literal into DECIMAL rounds half away from zero at the declared scale", () => {
+  const refused = "INSERT INTO inventory_items (item_id, small_price) VALUES (1, 9.995e2);";
+  const fits = "INSERT INTO inventory_items (item_id, small_price) VALUES (1, 9.985e2);";
+  assert.equal(run(writeValueOutOfRange, refused).length, 1);
+  assert.deepEqual(run(writeValueOutOfRange, fits), []);
+});
+
+test("a negative exponent literal into UNSIGNED DECIMAL is refused", () => {
+  const src = "INSERT INTO inventory_items (item_id, weight) VALUES (1, -1e-3);";
+  assert.equal(run(writeValueOutOfRange, src).length, 1);
+});
+
+test("an exponent literal too precise for a DOUBLE stands down, even where an ordinary one would not fit", () => {
+  const src = "INSERT INTO inventory_items (item_id, priority) VALUES (1, 1.234567890123456e5);";
   assert.deepEqual(run(writeValueOutOfRange, src), []);
 });
 
