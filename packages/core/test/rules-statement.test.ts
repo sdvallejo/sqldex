@@ -661,6 +661,13 @@ test("a reserved word is not a column, unless it was written delimited", () => {
   assert.deepEqual(run(unqualifiedColumn, "SELECT order_id FROM orders WHERE status IS NOT NULL;"), []);
 });
 
+test("a number written in exponent notation is not mistaken for a bare column", () => {
+  // `2.5e2` and `1e9` must lex as one number, not a number followed by an `e2`/`e9` identifier the
+  // rule would otherwise report as an unqualified column.
+  assert.deepEqual(run(unqualifiedColumn, "SELECT o.order_id FROM orders o WHERE o.total > 2.5e2;"), []);
+  assert.deepEqual(run(unqualifiedColumn, "UPDATE orders SET total = 1e9;"), []);
+});
+
 test("the row alias of an INSERT ... ON DUPLICATE KEY UPDATE is a name the statement declares", () => {
   const src = [
     "INSERT INTO orders (order_id, customer_id, status, total)",

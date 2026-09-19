@@ -27,6 +27,7 @@ const HASH = 35;
 const DOLLAR = 36;
 const SQUOTE = 39;
 const STAR = 42;
+const PLUS = 43;
 const DASH = 45;
 const DOT = 46;
 const SLASH = 47;
@@ -38,12 +39,14 @@ const EQ = 61;
 const GT = 62;
 const AT = 64;
 const UPPER_A = 65;
+const UPPER_E = 69;
 const UPPER_F = 70;
 const UPPER_X = 88;
 const UPPER_Z = 90;
 const UNDERSCORE = 95;
 const BACKTICK = 96;
 const LOWER_A = 97;
+const LOWER_E = 101;
 const LOWER_F = 102;
 const LOWER_X = 120;
 const LOWER_Z = 122;
@@ -231,6 +234,21 @@ export function tokenize(src: string): Lexed {
         if (src.charCodeAt(j) === DOT) {
           j++;
           while (isDigit(src.charCodeAt(j))) j++;
+        }
+        // `1e9`, `2.5e-2`: an exponent only belongs to the number if a digit follows the
+        // optional sign — otherwise the `e`/`E` starts an identifier of its own (`1e` and `1e+`
+        // split as they always have). A name that merely starts that way (`1e3abc`) is left
+        // split too: this only claims scientific literals, not digit-led identifiers.
+        const expC = src.charCodeAt(j);
+        if (expC === LOWER_E || expC === UPPER_E) {
+          let k = j + 1;
+          const signC = src.charCodeAt(k);
+          if (signC === PLUS || signC === DASH) k++;
+          if (isDigit(src.charCodeAt(k))) {
+            k++;
+            while (isDigit(src.charCodeAt(k))) k++;
+            if (!isIdentPart(src.charCodeAt(k))) j = k;
+          }
         }
         stop = j;
       }
