@@ -339,6 +339,28 @@ test("a DELIMITER reset at end of file does not hide the real terminator two lin
   assert.deepEqual(checkSyntax(src), []);
 });
 
+/** A routine returning one long `SELECT … UNION SELECT …` chain, the shape full LL prediction chokes on. */
+function unionChain(branches: number, broken = false): string {
+  const selects = Array.from({ length: branches }, (_, i) => `  SELECT 'region ${i}' region_name`);
+  if (broken) selects[branches - 1] = "  SELECT 'region last' region_name FROM";
+  return procedure(`${selects.join("\n  UNION\n")};`);
+}
+
+test("a long UNION chain parses clean in about a second, not in time that grows with the cube of its length", () => {
+  // Measured before the two-stage parse: 80 branches took about 7 s and 200 most of a minute. The
+  // bound is loose on purpose — it only has to tell milliseconds from that.
+  const started = performance.now();
+  assert.deepEqual(checkSyntax(unionChain(200)), []);
+  assert.ok(performance.now() - started < 5_000, "a 200-branch UNION chain took over 5 s");
+});
+
+test("an error at the end of a long UNION chain is still reported, by the full-context fallback", () => {
+  const src = unionChain(30, true);
+  const found = checkSyntax(src);
+  assert.equal(found.length, 1);
+  assert.ok(found[0]!.span.s > src.lastIndexOf("FROM"));
+});
+
 // ---------------------------------------------------------------- malformed, and says so
 
 test("a CREATE TABLE with a missing comma between columns is a syntax error", () => {

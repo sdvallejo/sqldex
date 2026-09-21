@@ -1,7 +1,14 @@
 /** A real MySQL grammar, run for its syntax errors alone — nothing here extracts structure. */
 
 import { tokenize } from "@sqldex/core";
-import { CharStream, CommonTokenStream } from "antlr4ng";
+import {
+  BailErrorStrategy,
+  CharStream,
+  CommonTokenStream,
+  DefaultErrorStrategy,
+  ParseCancellationException,
+  PredictionMode,
+} from "antlr4ng";
 import { MySQLLexer } from "./generated/MySQLLexer.ts";
 import { MySQLParser } from "./generated/MySQLParser.ts";
 import { CollectingErrorListener } from "./errors.ts";
@@ -295,6 +302,28 @@ export function checkSyntax(src: string): SyntaxError[] {
   const tokens = new CommonTokenStream(lexer);
   const parser = new MySQLParser(tokens);
   parser.removeErrorListeners();
+
+  // Two stages, the standard ANTLR remedy for a grammar this ambiguous. Full-context LL prediction —
+  // the runtime's default — is what makes some valid shapes superlinear: measured on a routine body
+  // made of one long `SELECT … UNION SELECT …` chain, each doubling of the chain costs about seven
+  // times as much, so a couple of hundred branches take most of a minute. SLL prediction parses the
+  // same chain in milliseconds. SLL can fail on input that is valid, but never succeeds on input that
+  // is not, so a clean SLL parse is final; anything else is parsed again from the start in LL mode
+  // with the ordinary error recovery, which is where every error reported here comes from. The
+  // lexer's own errors are collected once either way: the second pass reuses the buffered tokens.
+  parser.interpreter.predictionMode = PredictionMode.SLL;
+  parser.errorHandler = new BailErrorStrategy();
+  try {
+    parser.queries();
+    return listener.errors;
+  } catch (error) {
+    if (!(error instanceof ParseCancellationException)) throw error;
+  }
+
+  tokens.seek(0);
+  parser.reset();
+  parser.interpreter.predictionMode = PredictionMode.LL;
+  parser.errorHandler = new DefaultErrorStrategy();
   parser.addErrorListener(listener);
   parser.queries();
 
