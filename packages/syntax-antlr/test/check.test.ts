@@ -96,6 +96,99 @@ test("a JSON path containing a quote character is left alone, and stays a known,
   assert.deepEqual(checkSyntax(src), []);
 });
 
+test("PATH written with double quotes, inside a LABELLED block, with TWO columns in COLUMNS(...) parses clean", () => {
+  // The three-condition shape that reaches the ANTLR parser as a real, otherwise-uncaught error:
+  // `isKnownGrammarGap` suppresses every double-quoted "$..." token on its own, but a *labelled*
+  // block shifts error recovery one token past the guarded string, onto the second column's data
+  // type — a token no guard covers. Both the label (`relabel:`) and the second column
+  // (`b INT PATH "$.Position"`) are load-bearing here: drop either one and the shape parsed clean
+  // even before this change, by suppression alone, which is exactly why this defect stayed hidden.
+  const src = [
+    "CREATE PROCEDURE sp_reorder(pI JSON)",
+    "relabel: BEGIN",
+    "  CREATE TEMPORARY TABLE temp_order ENGINE = MEMORY AS",
+    '    SELECT * FROM JSON_TABLE(pI->>"$.Items", "$[*]"',
+    '      COLUMNS(a INT PATH "$.Id", b INT PATH "$.Position")',
+    "    ) data;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(checkSyntax(src), []);
+});
+
+test("the same shape unlabelled, and the same shape with only one column, parse clean too — by suppression before this change, for real now", () => {
+  const unlabelled = [
+    "CREATE PROCEDURE sp_reorder(pI JSON)",
+    "BEGIN",
+    "  CREATE TEMPORARY TABLE temp_order ENGINE = MEMORY AS",
+    '    SELECT * FROM JSON_TABLE(pI->>"$.Items", "$[*]"',
+    '      COLUMNS(a INT PATH "$.Id", b INT PATH "$.Position")',
+    "    ) data;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(checkSyntax(unlabelled), []);
+
+  const oneColumn = [
+    "CREATE PROCEDURE sp_reorder(pI JSON)",
+    "relabel: BEGIN",
+    "  CREATE TEMPORARY TABLE temp_order ENGINE = MEMORY AS",
+    '    SELECT * FROM JSON_TABLE(pI->>"$.Items", "$[*]"',
+    '      COLUMNS(a INT PATH "$.Id")',
+    "    ) data;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(checkSyntax(oneColumn), []);
+});
+
+test("JSON_TABLE's own path argument, double-quoted, parses clean", () => {
+  // The `,` right before `COLUMNS` — a separate anchor from `PATH` above, and from the `->`/`->>`
+  // operator this normalisation originally covered alone.
+  const src = "SELECT * FROM JSON_TABLE(doc, \"$[*]\" COLUMNS(a INT PATH '$.Id')) data;";
+  assert.deepEqual(checkSyntax(src), []);
+});
+
+test("NESTED PATH with a double-quoted path, jtColumn's third grammar alternative, parses clean", () => {
+  // Zero hits in the corpora this was measured against — the unit test is the justification, per this
+  // project's own convention for a shape a real dump simply may never contain.
+  const src = "SELECT * FROM JSON_TABLE(doc, '$[*]' COLUMNS(a INT PATH '$.Id', NESTED PATH \"$.Sub\" COLUMNS(b INT PATH '$.Position'))) data;";
+  assert.deepEqual(checkSyntax(src), []);
+});
+
+test("JSON_VALUE with a double-quoted path ahead of RETURNING parses clean", () => {
+  // Also zero corpus hits, and a sibling of the RETURNING gap already covered further down: before
+  // this change nothing suppressed it either, because the token the parser actually reported was the
+  // closing `)`, not a DOUBLE_QUOTED_TEXT — so no existing guard, and no existing anchor, caught it.
+  const src = 'SELECT JSON_VALUE(doc, "$.a" RETURNING UNSIGNED);';
+  assert.deepEqual(checkSyntax(src), []);
+});
+
+test("a JSON_TABLE written inside a dynamic-SQL string literal is left completely alone", () => {
+  // Reduced from a routine that builds a prepared statement piece by piece: the *contents* of a
+  // single-quoted string happen to look exactly like the JSON_TABLE/PATH shape this file rewrites
+  // everywhere else — unbalanced parenthesis and all, which is legal, because MySQL never parses
+  // inside a string literal. A textual, regex-based rewrite cannot tell a real PATH argument from one
+  // that only looks like one inside quotes; it would swap this string's inner quotes for single quotes
+  // too, terminating the literal early. The fast lexer returns the whole string as one `str` token, so
+  // nothing inside it is ever visited as a separate token — this is why the rewrite walks tokens
+  // rather than text.
+  const src = [
+    "SET @stmt = 'SELECT * FROM JSON_TABLE(@m, \"$[*]\" COLUMNS(a INT PATH \"$.Id\"';",
+    "SELECT 1;",
+  ].join("\n");
+  // The unbalanced parenthesis inside the literal is what gives this teeth: if the rewrite reached in,
+  // the string would terminate early and everything after it would be parsed as code, which does not
+  // balance. Measured against the rejected textual rewrite, this source reports
+  // `mismatched input '$' expecting ';'`.
+  assert.deepEqual(checkSyntax(src), []);
+});
+
+test("a genuinely malformed COLUMNS(...) is still an error, even with a double-quoted path inside it", () => {
+  // `jtColumn`'s alternative is `identifier dataType ... PATH textStringLiteral` — a column with no
+  // data type before PATH is malformed regardless of how the path itself is quoted, so widening the
+  // rewrite must not have turned this clause into a blind spot.
+  const src = "SELECT * FROM JSON_TABLE(doc, '$[*]' COLUMNS(a PATH \"$.Id\")) data;";
+  assert.ok(checkSyntax(src).length >= 1);
+});
+
 test("REPLACE(...) or IF(...) with a charset-introduced literal argument now parses clean", () => {
   // Not a grammar ambiguity — this was first misdiagnosed as one, on the strength of the grammar's
   // own "Function calls with other conflicts" comment (~MySQLParser.g4:3095-3108) and a

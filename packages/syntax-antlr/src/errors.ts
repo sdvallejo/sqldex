@@ -35,10 +35,11 @@ function isKnownGrammarGap(offendingSymbol: AntlrToken | null): boolean {
   // 8.0.32) as non-reserved. A grammar omission, not a genuine ambiguity.
   if (offendingSymbol.type === MySQLLexer.URL_SYMBOL) return true;
 
-  // `col->>"$.path"` / `col->"$.path"`: a double-quoted JSON path read as an ANSI_QUOTES identifier.
-  // No `sqlModes` setting fixes this shape without breaking the far more common "double-quoted
-  // string as an ordinary function argument" one — see the comment where `checkSyntax` builds the
-  // lexer and parser.
+  // A double-quoted JSON path read as an ANSI_QUOTES identifier. `check.ts`'s
+  // `normaliseJsonPathQuotes` now rewrites this shape in every position MySQL's JSON functions can
+  // put one, so this is the narrow residue that rewrite deliberately refuses — a path holding a
+  // quote or backslash character, where re-escaping it risks turning an embedded `'` into a premature
+  // string terminator — not the primary mechanism for double-quoted paths any more.
   if (offendingSymbol.type === MySQLLexer.DOUBLE_QUOTED_TEXT && offendingSymbol.text?.startsWith('"$')) return true;
 
   return false;

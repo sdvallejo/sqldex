@@ -1,5 +1,6 @@
 /** A real MySQL grammar, run for its syntax errors alone — nothing here extracts structure. */
 
+import { tokenize } from "@sqldex/core";
 import { CharStream, CommonTokenStream } from "antlr4ng";
 import { MySQLLexer } from "./generated/MySQLLexer.ts";
 import { MySQLParser } from "./generated/MySQLParser.ts";
@@ -168,28 +169,61 @@ function stripDelimiterDirectives(src: string): string {
 }
 
 /**
- * `col->>"$.path"` / `col->"$.path"`: MySQL's ordinary way to write a JSON path argument to the
- * `->`/`->>` operators — the standard shape across all four private corpora this was measured
- * against, not a rare one. The vendored grammar's `ANSI_QUOTES` default (see the comment on the
- * lexer/parser construction in `checkSyntax`) reads a double-quoted string as a quoted *identifier*
- * there, not a string literal, which both fails to parse on its own and cascades into further
- * unrelated-looking errors later in the same statement — confirmed on a real file, where one
- * `->>"..."` produced four errors, only the first of which pointed at the actual token.
+ * A double-quoted JSON path — `"$.foo.bar"` — read as an ANSI_QUOTES identifier in every position
+ * MySQL's JSON functions can put one, not only the `->`/`->>` operator this used to cover alone:
  *
- * Turning the outer quote characters into single quotes ahead of parsing is a real fix, not a guard:
- * MySQL string literals mean the same thing under either quoting style, so the rewritten source is
- * still exactly what the query means. Same length-preserving text-substitution technique
- * `stripDelimiterDirectives` already uses above — swapping one delimiter character for another changes
- * nothing about the offsets `checkSyntax`'s spans point into.
+ * - the `->`/`->>` operator's own argument (`col->>"$.path"`) — the shape this originally handled,
+ *   and still the ordinary one;
+ * - `PATH` inside `JSON_TABLE`'s `COLUMNS(...)` — `jtColumn`'s `identifier dataType PATH
+ *   textStringLiteral` alternative, and the same rule `NESTED PATH "..." COLUMNS(...)` goes through;
+ * - `JSON_TABLE`'s own path argument, the `,` right before `COLUMNS`;
+ * - `JSON_VALUE(doc, "$.a" RETURNING <type>)`, the `,` right before `RETURNING`.
  *
- * Restricted to a path containing no quote or backslash character at all — every real path measured
- * across the four corpora (`$.foo.bar`, `$[0].x`, `$.*`, none of them) qualifies. A path that does
- * contain one is left untouched, so it fails exactly as it did before this normalisation existed
- * (and `errors.ts`'s `isKnownGrammarGap` still suppresses it as a known gap) rather than risk turning
- * an embedded `'` into a premature string terminator by guessing at how to escape it.
+ * The arrow anchor alone looked sufficient for a long time because the other three positions were
+ * quietly absorbed by `errors.ts`'s `isKnownGrammarGap`, which suppresses every `DOUBLE_QUOTED_TEXT`
+ * starting `"$`. What made that stop being true was never the quoting itself — it was where ANTLR's
+ * error recovery lands after the failure, and that only shifts under three conditions together: the
+ * surrounding block is **labelled** (`label: BEGIN`, not a bare `BEGIN`), the path is written with
+ * **double quotes**, and `COLUMNS(...)` declares **two or more columns**. With all three, recovery
+ * moves one token past the guarded string and lands on the second column's data type instead —
+ * a token nothing suppresses, reported as an unrelated-looking error on genuinely valid SQL.
+ *
+ * This walks the fast lexer's tokens rather than the text for the same reason `stripDelimiterDirectives`
+ * cares where a custom delimiter sits: a routine can build a prepared statement whose *string literal*
+ * holds an entire `JSON_TABLE(... PATH "..." ...)`, textually indistinguishable from the real thing.
+ * Rewriting quotes inside it would terminate that string early and turn a clean file into a syntax
+ * error — the opposite failure from the one this function exists to fix, and the same one
+ * `stripDelimiterDirectives`'s own comment warns about. The lexer returns that whole string as one
+ * `str` token, so nothing inside it is ever visited as a separate token; a path written inside a
+ * comment is not a token at all.
+ *
+ * Restricted, as before, to a path holding no quote or backslash character at all — re-escaping one
+ * risks turning an embedded `'` into a premature string terminator, so that case is left exactly as
+ * unparsed as it always was, still suppressed by `isKnownGrammarGap` as a known, narrow gap.
+ *
+ * The one cost is a fast-lexer pass over the file ahead of the ANTLR parse — small next to the parse
+ * itself, which is the actual work here.
+ *
+ * `normalise()` below must run this **before** `blankJsonValueReturning`: that function's own
+ * lookbehind only matches a path already wearing single quotes, which is exactly what this rewrites a
+ * double-quoted `RETURNING` path into. Reorder them and `blankJsonValueReturning` stops seeing the
+ * paths it needs to.
  */
 function normaliseJsonPathQuotes(src: string): string {
-  return src.replace(/(->>?)(\s*)"([^"'\\]*)"/g, (_match, arrow: string, ws: string, path: string) => `${arrow}${ws}'${path}'`);
+  const { tokens } = tokenize(src);
+  let out = src;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    if (!(token.v.startsWith('"$') && token.v.endsWith('"'))) continue;
+    const path = token.v.slice(1, -1);
+    if (/["'\\]/.test(path)) continue;
+    const prev = tokens[i - 1]?.v.toUpperCase() ?? "";
+    const next = tokens[i + 1]?.v.toUpperCase() ?? "";
+    const inPathPosition = prev === "->" || prev === "->>" || prev === "PATH" || (prev === "," && (next === "COLUMNS" || next === "RETURNING"));
+    if (!inPathPosition) continue;
+    out = `${out.slice(0, token.s)}'${path}'${out.slice(token.e)}`;
+  }
+  return out;
 }
 
 /**
