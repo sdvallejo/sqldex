@@ -1769,6 +1769,128 @@ test("a comparison against anything but a literal is not this rule's business", 
   assert.deepEqual(run(literalTypeMismatch, src), []);
 });
 
+test("a numeric parameter's own idiom for 'nothing was passed' also rejects a legitimate zero", () => {
+  const src = [
+    "CREATE PROCEDURE sp_set_pct(p_zone_id int, p_pct decimal(6,2))",
+    "BEGIN",
+    "  IF (p_pct IS NULL OR p_pct = '') THEN",
+    "    SET p_pct = 0;",
+    "  END IF;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, src), [
+    "p_pct is decimal(6,2) and this compares it with '': MySQL reads the string as a number, which is 0 here, so the comparison is not the one written",
+  ]);
+});
+
+test("a numeric variable is judged the same way as a numeric parameter", () => {
+  const src = [
+    "CREATE PROCEDURE sp_check_total()",
+    "BEGIN",
+    "  DECLARE v_total int;",
+    "  IF v_total != 'abc' THEN",
+    "    SET v_total = 0;",
+    "  END IF;",
+    "END;",
+  ].join("\n");
+  assert.equal(run(literalTypeMismatch, src).length, 1);
+});
+
+test("a local shadows a column of another type, and the local wins because that is how the engine reads it", () => {
+  // `customers.label` is a `varchar`, but this routine's own `label` is an `int`: the engine reads
+  // the bare name as the local before it ever looks for a column, so the finding has to be judged
+  // by the local's type, not the column's.
+  const src = [
+    "CREATE PROCEDURE sp_check_label()",
+    "BEGIN",
+    "  DECLARE label int DEFAULT 0;",
+    "  SELECT * FROM customers WHERE label = '';",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, src), [
+    "label is int and this compares it with '': MySQL reads the string as a number, which is 0 here, so the comparison is not the one written",
+  ]);
+});
+
+test("an IN list on a numeric parameter is read the same way", () => {
+  const src = [
+    "CREATE PROCEDURE sp_find_orders(p_id int)",
+    "BEGIN",
+    "  SELECT * FROM orders WHERE p_id IN ('a', 'b');",
+    "END;",
+  ].join("\n");
+  assert.equal(run(literalTypeMismatch, src).length, 1);
+});
+
+test("a text parameter compared with '' is not this rule's business", () => {
+  const src = [
+    "CREATE PROCEDURE sp_set_label(p_label varchar(40))",
+    "BEGIN",
+    "  IF p_label IS NULL OR p_label = '' THEN",
+    "    SET p_label = 'none';",
+    "  END IF;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, src), []);
+});
+
+test("a numeric parameter compared with a numeric string is fine", () => {
+  const src = [
+    "CREATE PROCEDURE sp_set_pct(p_pct decimal(6,2))",
+    "BEGIN",
+    "  IF p_pct = '5' THEN",
+    "    SET p_pct = 0;",
+    "  END IF;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, src), []);
+});
+
+test("the text half is a variable or parameter's own business, not this rule's", () => {
+  // A text column pays for a mismatch with its index; a local has none to lose, so a text local
+  // compared with a number stands down instead of judging it the way a column would be.
+  const src = [
+    "CREATE PROCEDURE sp_set_label()",
+    "BEGIN",
+    "  DECLARE v_label varchar(40);",
+    "  SET v_label = 100;",
+    "  IF v_label = 100 THEN",
+    "    SELECT 1;",
+    "  END IF;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, src), []);
+});
+
+test("a qualified name is read from the column even when a local of the same name exists", () => {
+  const src = [
+    "CREATE PROCEDURE sp_check_label()",
+    "BEGIN",
+    "  DECLARE label int DEFAULT 0;",
+    "  SELECT * FROM customers c WHERE c.label = '';",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, src), []);
+});
+
+test("a name that is neither a local nor a column is not this rule's business", () => {
+  const src = body("  SELECT 1 FROM orders WHERE ghost = '';");
+  assert.deepEqual(run(literalTypeMismatch, src), []);
+});
+
+test("a local shadowing a column of another type still stands down for its own text half", () => {
+  // `orders.order_id` is an `int`, but this routine's own `order_id` is a `varchar`: the local wins
+  // the name, and a text local's own text half is never checked.
+  const src = [
+    "CREATE PROCEDURE sp_check_order_id()",
+    "BEGIN",
+    "  DECLARE order_id varchar(20);",
+    "  SELECT * FROM orders WHERE order_id = 'abc';",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, src), []);
+});
+
 // --------------------------------------------------------- union column count
 
 test("two UNION branches of different widths are reported", () => {
@@ -2331,4 +2453,36 @@ test("evidence from one routine's body does not reach a second one in the same f
 
 test("a loose script has no DECLARE section for a name to be missing from", () => {
   assert.deepEqual(run(undeclaredVariable, "SET v = 1; SELECT v;"), []);
+});
+
+test("a JSON path is what ->> reads, not what the variable is compared with", () => {
+  const src = [
+    "CREATE PROCEDURE sp_find_order(p_order_id int, p_doc json)",
+    "BEGIN",
+    "  IF p_doc->>'$.order_id' = p_order_id THEN SELECT 1; END IF;",
+    "  SELECT order_id FROM orders WHERE p_doc->'$.total' < p_order_id;",
+    "END",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, src), []);
+});
+
+test("a condition that already asks about zero has said what = '' means", () => {
+  const quiet = [
+    "CREATE PROCEDURE sp_log_delay(p_delay_id bigint)",
+    "BEGIN",
+    "  IF (p_delay_id IS NULL OR p_delay_id = '' OR p_delay_id = 0) THEN SELECT 1; END IF;",
+    "  IF (p_delay_id IS NOT NULL AND p_delay_id != '' AND 0 != p_delay_id) THEN SELECT 1; END IF;",
+    "END",
+  ].join("\n");
+  assert.deepEqual(run(literalTypeMismatch, quiet), []);
+
+  // A zero in the body is not part of the condition.
+  const loud = [
+    "CREATE PROCEDURE sp_log_delay(p_delay_id bigint)",
+    "BEGIN",
+    "  IF (p_delay_id IS NULL OR p_delay_id = '') THEN SET p_delay_id = 0; END IF;",
+    "  IF (p_delay_id = '') THEN SELECT order_id FROM orders WHERE p_delay_id = 0; END IF;",
+    "END",
+  ].join("\n");
+  assert.equal(run(literalTypeMismatch, loud).length, 2);
 });
