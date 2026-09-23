@@ -157,6 +157,22 @@ function qualifiedStar(tokens: readonly Token[], item: TokenRange): string | und
 }
 
 /**
+ * The width of a `( SELECT … )` read as a whole — `open` its opening parenthesis, `close` the
+ * matching one, and `tokens[open + 1]` its own `SELECT` — or `undefined` when the schema cannot say.
+ *
+ * `query/scalar-subquery-column-count` is the caller: it needs the subquery's own list, bounded the
+ * same way `selectList` already bounds one for `routine/select-into-arity` and
+ * `query/union-column-count`, so a `WHERE`, a `GROUP BY` or the closing parenthesis itself is never
+ * read as part of it.
+ */
+export function subqueryWidth(ctx: StatementContext, open: number, close: number): number | undefined {
+  const selectIdx = open + 1;
+  const list = selectList(ctx.tokens, selectIdx, close);
+  if (!list) return undefined;
+  return selectWidth(ctx, list, selectIdx, close);
+}
+
+/**
  * How many values the select list produces, or `undefined` when the schema cannot say.
  *
  * `queryFrom`/`queryTo` bound the query whose relations a star expands against, which is **not**

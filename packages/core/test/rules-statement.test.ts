@@ -38,6 +38,7 @@ import {
   nullableScalarSubquery,
   onlyFullGroupBy,
   outArgumentNotVariable,
+  scalarSubqueryColumnCount,
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
@@ -2022,6 +2023,117 @@ test("branches wrapped in their own parentheses are read as branches", () => {
 test("a UNION inside a derived table is compared with its own siblings", () => {
   const src = "SELECT x.n FROM (SELECT order_id FROM orders UNION SELECT order_id, total FROM orders) x;";
   assert.equal(run(unionColumnCount, src).length, 1);
+});
+
+// ------------------------------------------------- scalar subquery column count
+
+test("the right-hand side of a routine's own SET is read as one value", () => {
+  const src = body("  SET p_id = (SELECT SUM(o.total), 0 FROM orders o);");
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), [
+    "this subquery is used as one value but selects 2 columns: MySQL answers error 1241 (MariaDB 4078) when the line runs",
+  ]);
+});
+
+test("an operand of arithmetic is read as one value", () => {
+  const src = "SELECT (SELECT order_id, total FROM orders) + 1;";
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), [
+    "this subquery is used as one value but selects 2 columns: MySQL answers error 1241 (MariaDB 4078) when the line runs",
+  ]);
+});
+
+test("one side of a comparison is read as one value, when the other side is not a row", () => {
+  const src = "SELECT * FROM orders WHERE order_id = (SELECT order_id, total FROM orders);";
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), [
+    "this subquery is used as one value but selects 2 columns: MySQL answers error 1241 (MariaDB 4078) when the line runs",
+  ]);
+});
+
+test("an item of an outer select list is read as one value", () => {
+  const src = "SELECT (SELECT order_id, total FROM orders) AS c FROM customers;";
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), [
+    "this subquery is used as one value but selects 2 columns: MySQL answers error 1241 (MariaDB 4078) when the line runs",
+  ]);
+});
+
+test("a star is counted from the catalog here too", () => {
+  const src = body("  SET p_id = (SELECT * FROM customers);");
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), [
+    "this subquery is used as one value but selects 2 columns: MySQL answers error 1241 (MariaDB 4078) when the line runs",
+  ]);
+});
+
+test("an UPDATE's own SET is read as one value the same way", () => {
+  const src = "UPDATE orders o SET o.total = (SELECT r.order_id, r.amount FROM refunds r) WHERE o.order_id = 1;";
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), [
+    "this subquery is used as one value but selects 2 columns: MySQL answers error 1241 (MariaDB 4078) when the line runs",
+  ]);
+});
+
+test("an argument of a function call is read as one value", () => {
+  const src = "SELECT COALESCE((SELECT order_id, total FROM orders), 0);";
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), [
+    "this subquery is used as one value but selects 2 columns: MySQL answers error 1241 (MariaDB 4078) when the line runs",
+  ]);
+});
+
+test("a row compared with a row is not one value against several", () => {
+  const eq = "SELECT 1 FROM orders WHERE (order_id, total) = (SELECT order_id, total FROM orders);";
+  const inList = "SELECT 1 FROM orders WHERE (order_id, total) IN (SELECT order_id, total FROM orders);";
+  assert.deepEqual(run(scalarSubqueryColumnCount, eq), []);
+  assert.deepEqual(run(scalarSubqueryColumnCount, inList), []);
+});
+
+test("IN and ANY/SOME/ALL are built for several rows, whatever the left side turns out to be", () => {
+  const src = "SELECT 1 FROM orders WHERE order_id IN (SELECT order_id, total FROM orders);";
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), []);
+});
+
+test("EXISTS has an answer for the empty case regardless of the select list", () => {
+  const src = "SELECT 1 FROM orders WHERE EXISTS (SELECT order_id, total FROM orders);";
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), []);
+});
+
+test("a derived table is a query, not a value, here as well", () => {
+  const from = "SELECT d.order_id FROM (SELECT order_id, total FROM orders) d;";
+  const join = "SELECT o.order_id FROM orders o JOIN (SELECT order_id, total FROM orders) d ON d.order_id = o.order_id;";
+  assert.deepEqual(run(scalarSubqueryColumnCount, from), []);
+  assert.deepEqual(run(scalarSubqueryColumnCount, join), []);
+});
+
+test("one column is what this rule is silent about", () => {
+  const src = body("  SET p_id = (SELECT SUM(o.total) FROM orders o);");
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), []);
+});
+
+test("a star the catalog cannot expand leaves the subquery unjudged, here too", () => {
+  const src = body("  SET p_id = (SELECT * FROM tmp_unknown);");
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), []);
+});
+
+test("a UNION inside is the union rule's business, not this one's", () => {
+  const src = body("  SET p_id = (SELECT order_id FROM orders UNION SELECT order_id FROM orders);");
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), []);
+});
+
+test("an INSERT … SELECT reads several columns as the ordinary case", () => {
+  const src = "INSERT INTO aud_orders (order_id, customer_id, status, total) SELECT order_id, customer_id, status, total FROM orders;";
+  assert.deepEqual(run(scalarSubqueryColumnCount, src), []);
+});
+
+test("a subquery whose width is wrong is not also judged for how many rows it might return, or whether it might be NULL", () => {
+  // All three rules see the same SELECT: the row-count rule finds a half-pinned key, the NULL rule
+  // finds an unprotected `*` outside a key lookup, and this one finds the wrong width. The width is
+  // the one thing true on every execution of the line, whatever the data holds, so it is the only
+  // one that gets to speak.
+  const src = "SELECT 1 + (SELECT * FROM order_lines WHERE order_id = 7);";
+  assert.deepEqual(
+    check(
+      new Registry().add(scalarSubqueryColumnCount, scalarSubqueryManyRows, nullableScalarSubquery),
+      { dialect: mysql, catalog: catalogOf(), schemas: new Set(["shop"]), config: defaults },
+      src,
+    ).map((d) => d.code),
+    ["query/scalar-subquery-column-count"],
+  );
 });
 
 // -------------------------------------------------- writes to generated columns

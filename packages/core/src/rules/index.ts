@@ -46,6 +46,7 @@ import { leftJoinArithmetic } from "./query/left-join-arithmetic.ts";
 import { literalTypeMismatch } from "./query/literal-type-mismatch.ts";
 import { nullableScalarSubquery } from "./query/nullable-scalar-subquery.ts";
 import { onlyFullGroupBy } from "./query/only-full-group-by.ts";
+import { scalarSubqueryColumnCount } from "./query/scalar-subquery-column-count.ts";
 import { scalarSubqueryManyRows } from "./query/scalar-subquery-many-rows.ts";
 import { unionColumnCount } from "./query/union-column-count.ts";
 import { unfilteredWrite } from "./query/unfiltered-write.ts";
@@ -158,6 +159,7 @@ export const statementRules = [
   writeTargetInSubquery,
   joinWithoutCondition,
   unionColumnCount,
+  scalarSubqueryColumnCount,
   writeToGeneratedColumn,
   writeValueTooLong,
   writeValueOutOfRange,
@@ -236,6 +238,7 @@ export {
   outParamNeverAssigned,
   redundantIndex,
   unionColumnCount,
+  scalarSubqueryColumnCount,
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
