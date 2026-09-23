@@ -1,5 +1,6 @@
 /** What a NULL does to an expression, and what absorbs it before it gets out. */
 
+import { opensStatement } from "../../syntax/fast/stmt.ts";
 import { punct } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
 
@@ -43,7 +44,11 @@ export function insideNullSafe(tokens: readonly Token[], idx: number): boolean {
     } else if (t.v === "(") {
       if (depth === 0) {
         const name = tokens[i - 1];
-        if (name && name.t === "id" && !name.q && NULL_SAFE.has(name.v.toUpperCase())) return true;
+        // `IF (v + 1 > 10) THEN` is the statement, whose parentheses only group its condition; the
+        // function `IF(c, a, b)` never begins a statement. Taking one for the other made every read
+        // inside a parenthesised `IF` condition look protected.
+        const statementIf = name?.t === "id" && name.v.toUpperCase() === "IF" && opensStatement(tokens, i - 1);
+        if (name && name.t === "id" && !name.q && !statementIf && NULL_SAFE.has(name.v.toUpperCase())) return true;
       } else {
         depth--;
       }

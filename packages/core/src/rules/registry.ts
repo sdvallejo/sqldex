@@ -491,6 +491,7 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
         body,
         statements: () =>
           (bodyStatements ??= statements(tokens).filter((s) => s.from >= body.from && s.to <= body.to)),
+        scopeAt: (index) => build().owner[index],
       };
       for (const entry of routineRules) {
         current = entry;

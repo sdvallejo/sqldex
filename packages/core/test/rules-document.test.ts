@@ -824,6 +824,212 @@ test("wrapping the use in COALESCE is the fix, and it is recognised as one", () 
   assert.deepEqual(run(nullableIntoArithmetic, src), []);
 });
 
+// --------------------------------- the second source: an aggregate or a subquery NULL over no rows
+
+test("SET from an aggregate that is NULL over no rows taints the variable", () => {
+  const src = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SET v_used = (SELECT SUM(total) FROM orders WHERE customer_id = p_order);",
+    "  SELECT v_used + 1;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), [
+    "v_used was set from a SUM that is NULL over no rows; without COALESCE the whole expression is NULL",
+  ]);
+});
+
+test("the parentheses of an IF statement's condition are not the IF() function", () => {
+  // Two variables, not one: the empty-result source is now reported once per variable at its first
+  // read (see the "one finding per variable" tests below), so one variable would only show this once
+  // however many `IF` conditions it sat in — which would not tell the two parenthesised shapes apart.
+  const loud = body(
+    "  DECLARE v_a decimal(10,2);",
+    "  DECLARE v_b decimal(10,2);",
+    "  SET v_a = (SELECT SUM(total) FROM orders WHERE customer_id = p_order);",
+    "  SET v_b = (SELECT SUM(total) FROM orders WHERE customer_id = p_order);",
+    "  IF (v_a + 1 > 100) THEN SELECT 1; END IF;",
+    "  IF v_a > 0 THEN SELECT 2; ELSE IF (v_b * 2 > 5) THEN SELECT 3; END IF; END IF;",
+  );
+  assert.equal(run(nullableIntoArithmetic, loud).length, 2);
+
+  // The function does absorb it: IF(c, a, b) picks a branch, it does not propagate.
+  const quiet = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SET v_used = (SELECT SUM(total) FROM orders WHERE customer_id = p_order);",
+    "  SELECT IF(v_used IS NULL, 0, v_used + 1);",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, quiet), []);
+});
+
+test("an unprotected aggregate slot of a SELECT ... INTO taints its target the same way", () => {
+  const src = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SELECT SUM(total) INTO v_used FROM orders WHERE customer_id = p_order;",
+    "  SELECT v_used * 2;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), [
+    "v_used was set from a SUM that is NULL over no rows; without COALESCE the whole expression is NULL",
+  ]);
+});
+
+test("a column-origin message stays byte-identical next to the new empty-result source", () => {
+  const src = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  DECLARE v_used decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  SET v_used = (SELECT SUM(total) FROM orders WHERE customer_id = p_order);",
+    "  SELECT v_disc * 2, v_used + 1;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), [
+    "v_disc comes from orders.discount, which is nullable; without COALESCE the whole expression is NULL",
+    "v_used was set from a SUM that is NULL over no rows; without COALESCE the whole expression is NULL",
+  ]);
+});
+
+test("an aggregate already wrapped in COALESCE inside the subquery is not a source", () => {
+  const src = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SET v_used = (SELECT COALESCE(SUM(total), 0) FROM orders WHERE customer_id = p_order);",
+    "  SELECT v_used + 1;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), []);
+});
+
+test("COUNT does not turn an empty set into a NULL, so it taints nothing", () => {
+  const src = body(
+    "  DECLARE v_used int;",
+    "  SET v_used = (SELECT COUNT(*) FROM orders WHERE customer_id = p_order);",
+    "  SELECT v_used + 1;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), []);
+});
+
+test("a lookup of one row by its full primary key is not a source", () => {
+  const src = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SET v_used = (SELECT total FROM orders WHERE order_id = p_order);",
+    "  SELECT v_used + 1;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), []);
+});
+
+test("a SELECT with no FROM computes its one row out of nothing, so it is not a source", () => {
+  const src = body(
+    "  DECLARE v_used int;",
+    "  SET v_used = (SELECT 1);",
+    "  SELECT v_used + 1;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), []);
+});
+
+test("a statement that asks about the NULL itself has handled the empty-result source too", () => {
+  // Only `nullableVariableInPredicate` and `nullableVariableInConcat` follow `taintedReads`, and its
+  // `IS NULL` guard, so that is where this belongs: `nullableIntoArithmetic` reads `nullableSources`
+  // directly and has no such guard, the same as it does not for a column-origin taint.
+  const src = body(
+    "  DECLARE v_total decimal(10,2);",
+    "  SET v_total = (SELECT total FROM orders WHERE customer_id = p_order);",
+    "  IF v_total IS NOT NULL AND v_total != 0 THEN SELECT 1; END IF;",
+  );
+  assert.deepEqual(run(nullableVariableInPredicate, src), []);
+});
+
+test("a plain SELECT col INTO v finding nothing leaves v unchanged, not NULL, so it is not a source", () => {
+  const src = body(
+    "  DECLARE v_total decimal(10,2);",
+    "  SELECT total INTO v_total FROM orders WHERE customer_id = p_order;",
+    "  SELECT v_total + 1;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), []);
+});
+
+test("COALESCE around the read is the fix for the empty-result source too", () => {
+  const src = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SET v_used = (SELECT SUM(total) FROM orders WHERE customer_id = p_order);",
+    "  SELECT COALESCE(v_used, 0) + 1;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), []);
+});
+
+// ---------------------------------------- one finding per variable, for the empty-result source
+
+test("an empty-result taint is reported once, at its first read, not at every read", () => {
+  const src = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SET v_used = (SELECT SUM(total) FROM orders WHERE customer_id = p_order);",
+    "  SELECT v_used + 1;",
+    "  SELECT v_used + 2;",
+  );
+  assert.deepEqual(run(nullableIntoArithmetic, src), [
+    "v_used was set from a SUM that is NULL over no rows; without COALESCE the whole expression is NULL",
+  ]);
+});
+
+test("the same variable reaching arithmetic and CONCAT is reported once in each rule", () => {
+  const src = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SET v_used = (SELECT SUM(total) FROM orders WHERE customer_id = p_order);",
+    "  SELECT v_used + 1;",
+    "  SELECT CONCAT('x', v_used);",
+  );
+  // Each rule runs alone and dedups on its own, so the same variable can still be one finding here
+  // and one finding there — it is only within a single rule's own findings that the second read of
+  // the same no-rows source drops out.
+  assert.equal(run(nullableIntoArithmetic, src).length, 1);
+  assert.equal(run(nullableVariableInConcat, src).length, 1);
+});
+
+test("a column-origin taint is still reported at every read, not just the first", () => {
+  const src = body(
+    "  DECLARE v_disc decimal(10,2);",
+    "  SELECT discount INTO v_disc FROM orders WHERE order_id = p_order;",
+    "  SELECT v_disc + 1;",
+    "  SELECT v_disc + 2;",
+  );
+  assert.equal(run(nullableIntoArithmetic, src).length, 2);
+});
+
+// ------------------------------------------------- a to-one join is still a lookup, not a search
+
+/** `orders` gains a declared foreign key onto `customers`' own primary key. */
+const FK_SCHEMA = [
+  "CREATE TABLE orders (",
+  "  order_id int NOT NULL,",
+  "  customer_id int NOT NULL,",
+  "  total decimal(10,2) NOT NULL,",
+  "  discount decimal(10,2) NULL,",
+  "  PRIMARY KEY (order_id),",
+  "  FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+  ");",
+  "CREATE TABLE customers (",
+  "  customer_id int NOT NULL,",
+  "  label varchar(40) NOT NULL,",
+  "  PRIMARY KEY (customer_id)",
+  ");",
+].join("\n");
+
+test("a to-one join through a declared foreign key is still a lookup, so it taints nothing", () => {
+  const src = body(
+    "  DECLARE v_name varchar(40);",
+    "  SET v_name = (SELECT c.label FROM orders o JOIN customers c USING (customer_id) " +
+      "WHERE o.order_id = p_order);",
+    "  SELECT CONCAT('x', v_name);",
+  );
+  assert.deepEqual(run(nullableVariableInConcat, src, FK_SCHEMA), []);
+});
+
+test("the same join without a declared foreign key is a search, and taints the variable", () => {
+  const src = body(
+    "  DECLARE v_name varchar(40);",
+    "  SET v_name = (SELECT c.label FROM orders o JOIN customers c USING (customer_id) " +
+      "WHERE o.order_id = p_order);",
+    "  SELECT CONCAT('x', v_name);",
+  );
+  assert.deepEqual(run(nullableVariableInConcat, src, SCHEMA), [
+    "v_name was set from a subquery that is NULL over no rows; one NULL argument makes the whole CONCAT NULL",
+  ]);
+});
+
 // ------------------------------------------------------------------ ambiguity
 
 test("a bare column two of the query's relations have is an error", () => {
@@ -1001,6 +1207,19 @@ test("a CONCAT is not a predicate, and has a rule of its own", () => {
   assert.deepEqual(run(nullableVariableInPredicate, src), []);
 });
 
+test("a SET from a search rather than a key lookup reaches a negated comparison", () => {
+  // customer_id is not a key of orders, so this is a search, not a lookup of one row.
+  const src = body(
+    "  DECLARE v_total decimal(10,2);",
+    "  SET v_total = (SELECT total FROM orders WHERE customer_id = p_order);",
+    "  IF v_total != 0 THEN SELECT 1; END IF;",
+  );
+  assert.deepEqual(run(nullableVariableInPredicate, src), [
+    'v_total was set from a subquery that is NULL over no rows, and a NULL is not "!=" anything: ' +
+      "MySQL answers unknown, which reads as false",
+  ]);
+});
+
 // ------------------------------------------------ nullable through a variable, into a CONCAT
 
 test("one NULL argument takes the whole CONCAT with it", () => {
@@ -1011,6 +1230,17 @@ test("one NULL argument takes the whole CONCAT with it", () => {
   );
   assert.deepEqual(run(nullableVariableInConcat, src), [
     "v_disc comes from orders.discount, which is nullable; one NULL argument makes the whole CONCAT NULL",
+  ]);
+});
+
+test("a SET from an aggregate that is NULL over no rows reaches a CONCAT", () => {
+  const src = body(
+    "  DECLARE v_used decimal(10,2);",
+    "  SET v_used = (SELECT MAX(total) FROM orders WHERE customer_id = p_order);",
+    "  SELECT CONCAT('total: ', v_used);",
+  );
+  assert.deepEqual(run(nullableVariableInConcat, src), [
+    "v_used was set from a MAX that is NULL over no rows; one NULL argument makes the whole CONCAT NULL",
   ]);
 });
 

@@ -1,159 +1,8 @@
 import { isKeyLookup } from "../shared/keys.ts";
 import { ARITHMETIC } from "../shared/nulls.ts";
-import { kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
-import type { Token } from "../../syntax/types.ts";
+import { aggregatesIn, readSubquery } from "../shared/subqueries.ts";
+import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
 import type { Rule } from "../rule.ts";
-
-/** Words between `SELECT` and the first item, which say nothing about what the item is. */
-const SELECT_MODIFIERS: ReadonlySet<string> = new Set([
-  "ALL",
-  "DISTINCT",
-  "DISTINCTROW",
-  "HIGH_PRIORITY",
-  "STRAIGHT_JOIN",
-  "SQL_SMALL_RESULT",
-  "SQL_BIG_RESULT",
-  "SQL_BUFFER_RESULT",
-  "SQL_NO_CACHE",
-  "SQL_CACHE",
-  "SQL_CALC_FOUND_ROWS",
-]);
-
-/**
- * Aggregates that answer an empty set with NULL.
- *
- * `COUNT` is deliberately not here and that is the whole distinction the rule turns on: over no rows
- * it answers `0`, which is a number, and arithmetic on it is safe. Every other aggregate answers
- * NULL, and the answer looks exactly like the one for "the sum happens to be null".
- */
-const AGGREGATES: ReadonlySet<string> = new Set([
-  "SUM",
-  "AVG",
-  "MIN",
-  "MAX",
-  "GROUP_CONCAT",
-  "STD",
-  "STDDEV",
-  "STDDEV_POP",
-  "STDDEV_SAMP",
-  "VARIANCE",
-  "VAR_POP",
-  "VAR_SAMP",
-]);
-
-/** What turns the NULL back into a value — inside the subquery, where it can still help. */
-const ABSORBING: ReadonlySet<string> = new Set(["COALESCE", "IFNULL"]);
-
-/** Clauses that end the select list, and after which a `GROUP BY` may still show up. */
-const AFTER_ITEM: ReadonlySet<string> = new Set(["FROM", "INTO"]);
-
-interface Range {
-  from: number;
-  to: number;
-}
-
-/**
- * Is this token index inside a `COALESCE` or an `IFNULL`, without leaving `from`?
- *
- * Bounded at the item on purpose: this asks whether the NULL is absorbed *inside the subquery*,
- * which is where absorbing it fixes anything. A `COALESCE` around the whole expression outside is
- * exactly the shape this rule is about, and walking out to it would silence every finding.
- */
-function absorbedWithin(tokens: readonly Token[], idx: number, from: number): boolean {
-  let depth = 0;
-  for (let i = idx - 1; i >= from; i--) {
-    const t = tokens[i]!;
-    if (t.t !== "punct") continue;
-    if (t.v === ")") depth++;
-    else if (t.v === "(") {
-      if (depth > 0) {
-        depth--;
-        continue;
-      }
-      const name = tokens[i - 1];
-      if (name?.t === "id" && !name.q && ABSORBING.has(name.v.toUpperCase())) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * The aggregate calls of a select item, with any nested subquery of its own skipped whole.
- *
- * The skipping is what keeps `SELECT (SELECT SUM(x) FROM y) FROM z` honest: that `SUM` belongs to
- * the inner query and says nothing about whether *this* one returns a row.
- */
-function aggregatesIn(tokens: readonly Token[], range: Range): { any: boolean; unprotected: number[] } {
-  let any = false;
-  const unprotected: number[] = [];
-
-  for (let i = range.from; i <= range.to; i++) {
-    const t = tokens[i]!;
-    if (punct(t, "(") && kw(tokens[i + 1], "SELECT")) {
-      const close = matchingParen(tokens, i);
-      i = close === -1 ? range.to : close;
-      continue;
-    }
-    if (t.t !== "id" || t.q || !punct(tokens[i + 1], "(")) continue;
-
-    const name = t.v.toUpperCase();
-    if (name === "COUNT") any = true;
-    else if (AGGREGATES.has(name)) {
-      any = true;
-      if (!absorbedWithin(tokens, i, range.from)) unprotected.push(i);
-    }
-  }
-  return { any, unprotected };
-}
-
-interface Subquery {
-  /** The single select item, from the first token after `SELECT` up to the `FROM`. */
-  item: Range;
-  /** Whether a `GROUP BY` at its own depth can leave it with no row at all. */
-  grouped: boolean;
-}
-
-/**
- * What the rule needs to know about a `( SELECT … )`, or `undefined` when it is not its business.
- *
- * Two shapes come back undefined and neither is a defect: a select list of several items is not a
- * scalar at all — MySQL rejects it in this position — and a `SELECT` with no `FROM` computes its one
- * row out of thin air, so "no rows matched" cannot happen to it.
- */
-function readSubquery(tokens: readonly Token[], open: number, close: number): Subquery | undefined {
-  let i = open + 2;
-  while (kwAny(tokens[i], SELECT_MODIFIERS) !== undefined) i++;
-
-  let depth = 0;
-  let end = -1;
-  for (let j = i; j < close; j++) {
-    const t = tokens[j]!;
-    if (punct(t, "(")) depth++;
-    else if (punct(t, ")")) depth--;
-    else if (depth !== 0) continue;
-    // A comma at the item's own depth is a second item, so this was never a scalar.
-    else if (punct(t, ",")) return undefined;
-    else if (kwAny(t, AFTER_ITEM) !== undefined) {
-      end = j;
-      break;
-    }
-  }
-  if (end === -1 || end === i) return undefined;
-
-  let grouped = false;
-  depth = 0;
-  for (let j = end + 1; j < close; j++) {
-    const t = tokens[j]!;
-    if (punct(t, "(")) depth++;
-    else if (punct(t, ")")) depth--;
-    else if (depth === 0 && kw(t, "GROUP") && kw(tokens[j + 1], "BY")) {
-      grouped = true;
-      break;
-    }
-  }
-
-  return { item: { from: i, to: end - 1 }, grouped };
-}
 
 export const nullableScalarSubquery: Rule = {
   id: "query/nullable-scalar-subquery",
@@ -188,7 +37,11 @@ What it deliberately leaves alone:
     query. A search is the opposite: a range of dates, a status that is not one value, a join that
     can eliminate the row. Finding nothing is one of a search's ordinary outcomes, and that is
     exactly when this happens. **The catalog is what tells the two apart**, and nothing else can:
-    the same \`WHERE\` is a lookup against one table and a search against another.
+    the same \`WHERE\` is a lookup against one table and a search against another. A join to another
+    table through a \`NOT NULL\` foreign key onto that table's whole primary key keeps it a lookup —
+    the schema itself guarantees the joined row is there — while a join the catalog cannot vouch for,
+    an undeclared foreign key, a nullable one, a join to a column that is not the other table's key,
+    is still a search.
   - **\`COUNT\`**, the one aggregate an empty set does not turn into a NULL.
   - **An aggregate already wrapped** in \`COALESCE\` or \`IFNULL\` inside the subquery, which is the fix.
     Each aggregate is judged on its own: \`COALESCE(SUM(a), 0) - COALESCE(SUM(b), 0)\` is covered, and
@@ -197,7 +50,10 @@ What it deliberately leaves alone:
     result for it to fall into.
   - **A subquery that is not an operand of arithmetic.** \`IN (SELECT …)\` and \`EXISTS (SELECT …)\` have
     an answer for the empty case, and an assignment straight from a subquery — \`SET v = (SELECT …)\` —
-    leaves the NULL visible in \`v\` instead of folding it into a number.`,
+    leaves the NULL visible in \`v\` instead of folding it into a number. That NULL is not left
+    unwatched: \`routine/nullable-into-arithmetic\` and its two siblings follow it out of \`v\`, the same
+    way they follow one out of a nullable column, to wherever the variable next reaches arithmetic, a
+    negated comparison, or a \`CONCAT\`.`,
 
   check(ctx) {
     const { tokens, dialect } = ctx;

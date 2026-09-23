@@ -1,5 +1,5 @@
 import { branchGuards, ifStatements } from "./branches.ts";
-import { nullableSources } from "./taint.ts";
+import { nullableSources, type Origin } from "./taint.ts";
 import { assignmentTargets } from "./writes.ts";
 import { kw, punct } from "../../syntax/fast/tok.ts";
 import type { Token, TokenRange } from "../../syntax/types.ts";
@@ -74,8 +74,8 @@ function nullTested(ctx: RoutineContext): Map<number, Set<string>> {
 export interface TaintedRead {
   readonly token: Token;
   readonly index: number;
-  /** `table.column` the variable was filled from. */
-  readonly origin: string;
+  /** Why the variable may hold a NULL. */
+  readonly origin: Origin;
   /** Set when the nearest opinionated call around the read is a `CONCAT`. */
   readonly wrapper: "concat" | undefined;
 }

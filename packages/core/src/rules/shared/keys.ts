@@ -6,11 +6,21 @@
  * asked in different places.
  */
 
+import type { Relation } from "../../model/query.ts";
 import type { Table } from "../../model/table.ts";
-import { kw, kwAny, matchingParen, punct } from "../../syntax/fast/tok.ts";
+import { kw, kwAny, matchingParen, punct, splitCommas } from "../../syntax/fast/tok.ts";
 import type { Token } from "../../syntax/types.ts";
-import type { StatementContext } from "../rule.ts";
+import type { BaseContext, ScopeInfo } from "../rule.ts";
 import { foldsToOneRow, limitsToOne } from "./rows.ts";
+
+/**
+ * What `singleTableQuery`/`isKeyLookup` need of a context: the scope lookup, not a whole statement.
+ *
+ * `StatementContext` satisfies this structurally, and so does `RoutineContext` now that it carries
+ * the same `scopeAt` — which is what lets the taint of `SET v = (SELECT …)` ask the same "is this a
+ * key lookup" question from routine scope that a statement rule asks from its own.
+ */
+export type ScopedContext = BaseContext & { scopeAt(index: number): ScopeInfo | undefined };
 
 /**
  * Is `wanted` the leftmost prefix of `columns`, position by position?
@@ -145,7 +155,7 @@ export interface SingleTableQuery {
  * what the callers of this are trying to rule out.
  */
 export function singleTableQuery(
-  ctx: StatementContext,
+  ctx: ScopedContext,
   sel: number,
   close: number,
 ): SingleTableQuery | undefined {
@@ -168,6 +178,277 @@ export function singleTableQuery(
 }
 
 /**
+ * One equality an `ON`/`USING` condition asserts, as read off the tokens rather than resolved yet
+ * against either side of the join: `qualifier` is empty for a `USING (col)` name, which stands for
+ * both tables at once.
+ */
+interface JoinEquality {
+  a: { qualifier: string; column: string };
+  b: { qualifier: string; column: string };
+}
+
+/** What `USING`/`ON` say about a join to one relation, or `undefined` when there is nothing to read. */
+interface JoinCondition {
+  using: boolean;
+  equalities: readonly JoinEquality[];
+}
+
+type JoinKind = "base" | "comma" | "cross" | "right" | "left" | "inner";
+
+/** Keywords that end a join condition or a `FROM` clause's own list of relations. */
+const JOIN_CLAUSE_BOUNDARY: ReadonlySet<string> = new Set([
+  "JOIN",
+  "STRAIGHT_JOIN",
+  "LEFT",
+  "RIGHT",
+  "INNER",
+  "CROSS",
+  "FULL",
+  "NATURAL",
+  "WHERE",
+  "GROUP",
+  "ORDER",
+  "HAVING",
+  "LIMIT",
+  "SET",
+  "UNION",
+  "INTO",
+]);
+
+/** The token index whose own span starts exactly at `offset`, within `[from, to]`, or `-1`. */
+function indexAtOffset(tokens: readonly Token[], from: number, to: number, offset: number): number {
+  for (let i = from; i <= to; i++) if (tokens[i]!.s === offset) return i;
+  return -1;
+}
+
+/** Reads a qualified `id . id` starting at `base`, or `undefined` when that is not what is there. */
+function qualifiedAt(tokens: readonly Token[], base: number): { qualifier: string; column: string } | undefined {
+  const q = tokens[base];
+  if (q?.t !== "id" || !punct(tokens[base + 1], ".") || tokens[base + 2]?.t !== "id") return undefined;
+  return { qualifier: q.v, column: tokens[base + 2]!.v };
+}
+
+/**
+ * The `qualifier.column = qualifier.column` equalities an `ON` condition asserts at its own depth.
+ *
+ * A top-level `OR` makes the whole condition unreadable as a set of equalities — the same reason
+ * `pinnedByWhere` stands down on one — so it comes back empty rather than guessing which half holds.
+ * Anything that is not a qualified equality (a literal comparison, a function call) is passed over
+ * rather than failing the whole read: an extra predicate only narrows what the join can match.
+ */
+function equalitiesIn(tokens: readonly Token[], from: number, to: number): JoinEquality[] {
+  const pairs: JoinEquality[] = [];
+  for (let i = from; i <= to; i++) {
+    const t = tokens[i]!;
+    if (punct(t, "(")) {
+      const close = matchingParen(tokens, i);
+      i = close === -1 ? to : close;
+      continue;
+    }
+    if (kw(t, "OR")) return [];
+    if (punct(t, "=")) {
+      const a = qualifiedAt(tokens, i - 3);
+      const b = qualifiedAt(tokens, i + 1);
+      if (a && b) pairs.push({ a, b });
+    }
+  }
+  return pairs;
+}
+
+/** Where the condition after an `ON` ends: the next join keyword, clause boundary, or `;`. */
+function conditionEnd(tokens: readonly Token[], from: number, to: number): number {
+  for (let i = from; i <= to; i++) {
+    const t = tokens[i]!;
+    if (punct(t, "(")) {
+      const close = matchingParen(tokens, i);
+      i = close === -1 ? to : close;
+      continue;
+    }
+    if (kwAny(t, JOIN_CLAUSE_BOUNDARY) !== undefined || punct(t, ";")) return i - 1;
+  }
+  return to;
+}
+
+/**
+ * How `rel` entered the scope — a comma, a plain `JOIN`, a `LEFT`/`RIGHT`/`CROSS` one, or the first
+ * relation after `FROM` — and what its own `ON`/`USING` says, read straight from the tokens: neither
+ * is on `Relation` itself, and re-deriving them here is cheaper than widening that model for the one
+ * caller that needs them.
+ */
+function joinInfo(tokens: readonly Token[], scope: { from: number; to: number }, rel: Relation): {
+  kind: JoinKind;
+  condition?: JoinCondition;
+} {
+  const nameIdx = indexAtOffset(tokens, scope.from, scope.to, rel.offset);
+  if (nameIdx === -1) return { kind: "comma" };
+
+  // Step back over an explicit schema: `db . table`.
+  let k = nameIdx;
+  if (punct(tokens[k - 1], ".") && tokens[k - 2]?.t === "id") k -= 2;
+  const before = tokens[k - 1];
+
+  let kind: JoinKind;
+  if (kw(before, "FROM")) kind = "base";
+  else if (punct(before, ",")) kind = "comma";
+  else if (kw(before, "STRAIGHT_JOIN")) kind = "inner";
+  else if (kw(before, "JOIN")) {
+    let m = k - 2;
+    if (kw(tokens[m], "OUTER")) m--;
+    if (kw(tokens[m], "LEFT")) kind = "left";
+    else if (kw(tokens[m], "RIGHT")) kind = "right";
+    else if (kw(tokens[m], "CROSS") || kw(tokens[m], "NATURAL")) kind = "cross";
+    else kind = "inner";
+  } else return { kind: "comma" }; // Not a shape this reads; treated the same as no condition at all.
+
+  if (kind === "base" || kind === "comma" || kind === "cross" || kind === "right") return { kind };
+
+  // Past the optional alias, to reach `ON`/`USING`.
+  let j = nameIdx + 1;
+  if (kw(tokens[j], "AS")) j++;
+  if (tokens[j]?.t === "id" && kwAny(tokens[j], JOIN_CLAUSE_BOUNDARY) === undefined) j++;
+
+  if (kw(tokens[j], "USING") && punct(tokens[j + 1], "(")) {
+    const close = matchingParen(tokens, j + 1);
+    if (close === -1) return { kind };
+    const equalities: JoinEquality[] = [];
+    for (const span of splitCommas(tokens, j + 2, close - 1)) {
+      if (span.from !== span.to || tokens[span.from]?.t !== "id") continue;
+      const column = tokens[span.from]!.v;
+      equalities.push({ a: { qualifier: "", column }, b: { qualifier: "", column } });
+    }
+    return { kind, condition: { using: true, equalities } };
+  }
+
+  if (kw(tokens[j], "ON")) {
+    const end = conditionEnd(tokens, j + 1, scope.to);
+    return { kind, condition: { using: false, equalities: equalitiesIn(tokens, j + 1, end) } };
+  }
+
+  return { kind };
+}
+
+/**
+ * Is `rel` joined to `anchor` in a way that can add at most the one row a foreign key guarantees,
+ * and — for anything but a `LEFT JOIN` — never removes `anchor`'s own?
+ *
+ * The join's own `USING`/`ON` — `USING (col)` reads as both tables holding that column, `ON` reads
+ * only its `qualifier.column = qualifier.column` equalities, in either orientation — has to equate a
+ * column of `anchor` with **all** of `rel`'s primary key, and `anchor` has to declare a `FOREIGN KEY`
+ * on exactly that column referencing `rel`'s primary key. Outside a `LEFT JOIN`, that column also has
+ * to be `NOT NULL`: an `INNER JOIN` drops `anchor`'s row when it is NULL, which is a claim about the
+ * data rather than the schema; a `LEFT JOIN` never drops it either way.
+ *
+ * Only one level: a table joined to `rel` rather than to `anchor` is a chain, and chains are not
+ * read here — this asks only about `rel` and `anchor`, which is what keeps it simple.
+ */
+function isToOneJoin(
+  fold: (name: string) => string,
+  tokens: readonly Token[],
+  scope: { from: number; to: number },
+  anchor: Relation,
+  anchorTable: Table,
+  rel: Relation,
+  relTable: Table,
+): boolean {
+  const info = joinInfo(tokens, scope, rel);
+  if (info.kind !== "inner" && info.kind !== "left") return false;
+  if (!info.condition || info.condition.equalities.length === 0) return false;
+
+  const anchorLabel = fold(anchor.alias ?? anchor.name!);
+  const relLabel = fold(rel.alias ?? rel.name!);
+
+  const relCols = new Set<string>();
+  // `rel`'s folded column -> the `anchor` column it is equated with.
+  const byRelColumn = new Map<string, string>();
+
+  for (const { a, b } of info.condition.equalities) {
+    if (!a.qualifier && !b.qualifier) {
+      // A `USING (col)` name: the same column, read on both sides.
+      const col = fold(a.column);
+      relCols.add(col);
+      byRelColumn.set(col, col);
+      continue;
+    }
+    const aAnchor = fold(a.qualifier) === anchorLabel;
+    const aRel = fold(a.qualifier) === relLabel;
+    const bAnchor = fold(b.qualifier) === anchorLabel;
+    const bRel = fold(b.qualifier) === relLabel;
+
+    if (aAnchor && bRel) {
+      relCols.add(fold(b.column));
+      byRelColumn.set(fold(b.column), fold(a.column));
+    } else if (bAnchor && aRel) {
+      relCols.add(fold(a.column));
+      byRelColumn.set(fold(a.column), fold(b.column));
+    }
+    // A qualifier that names neither table — a self-join alias, or an equality against a literal
+    // that happened to parse the same way — says nothing about the two tables and is left out.
+  }
+
+  const relKey = relTable.primaryKey.map(fold);
+  if (relKey.length === 0 || !relKey.every((col) => relCols.has(col))) return false;
+
+  const anchorSide = relKey.map((col) => byRelColumn.get(col));
+  if (anchorSide.some((col) => col === undefined)) return false;
+  const anchorSideSet = new Set(anchorSide as string[]);
+
+  const fk = anchorTable.foreignKeys.find((candidate) => {
+    if (candidate.refTable === undefined || fold(candidate.refTable) !== fold(rel.name!)) return false;
+    if (candidate.columns.length !== anchorSideSet.size) return false;
+    if (!candidate.columns.every((c) => anchorSideSet.has(fold(c)))) return false;
+    const refCols = candidate.refColumns.map(fold);
+    return refCols.length === relKey.length && relKey.every((c) => refCols.includes(c));
+  });
+  if (!fk) return false;
+
+  if (info.kind === "left") return true;
+  // An `INNER JOIN`: the row only survives when the column that points at it cannot be NULL.
+  return fk.columns.every((c) => anchorTable.byName.get(fold(c))?.nullable === false);
+}
+
+/**
+ * The join-aware half of `isKeyLookup`: a scope with more than one relation, where exactly one of
+ * them — the anchor — has its own whole primary key or unique index pinned by the `WHERE`, and every
+ * other relation reaches it by a to-one join (`isToOneJoin`). `singleTableQuery` already covers the
+ * one-relation case; this is what a join adds to it.
+ */
+function isToOneJoinLookup(ctx: ScopedContext, sel: number, close: number): boolean {
+  const scope = ctx.scopeAt(sel);
+  if (!scope || scope.to > close || scope.relations.length < 2) return false;
+
+  const fold = (name: string): string => ctx.dialect.foldIdentifier(name, false);
+
+  const tables = new Map<Relation, Table>();
+  for (const rel of scope.relations) {
+    if (!rel.name || rel.cte || rel.derived) return false;
+    const table = ctx.catalog.table(rel.name);
+    if (!table) return false;
+    tables.set(rel, table);
+  }
+
+  let anchor: Relation | undefined;
+  for (const rel of scope.relations) {
+    const table = tables.get(rel)!;
+    const label = fold(rel.alias ?? rel.name!);
+    const pinned = pinnedByWhere(ctx.tokens, scope, fold, label, false).filter((name) =>
+      table.byName.has(fold(name)),
+    );
+    if (coversUniqueKey(fold, table, pinned)) {
+      if (anchor) return false; // More than one candidate: which row is being looked up is ambiguous.
+      anchor = rel;
+    }
+  }
+  if (!anchor) return false;
+  const anchorTable = tables.get(anchor)!;
+
+  for (const rel of scope.relations) {
+    if (rel === anchor) continue;
+    if (!isToOneJoin(fold, ctx.tokens, scope, anchor, anchorTable, rel, tables.get(rel)!)) return false;
+  }
+  return true;
+}
+
+/**
  * Is this subquery a **lookup** of a row rather than a search that may find none?
  *
  * One table, and a `WHERE` that fixes a whole primary key or unique index of it: `SELECT Valor FROM
@@ -176,11 +457,18 @@ export function singleTableQuery(
  * dates, a status that is not one value, a join to another table — is the opposite: finding nothing
  * is one of its ordinary outcomes.
  *
+ * **A join is not automatically a search.** A join to another table through a `NOT NULL` foreign key
+ * onto that table's whole primary key keeps it a lookup: the schema itself guarantees the joined row
+ * is there, which is exactly the guarantee a `WHERE` on one table's own key makes. A join the catalog
+ * cannot vouch for — no declared foreign key, a nullable foreign key column joined with `INNER`, a
+ * join to a column that is not the other table's key — is still a search, for the same reason a
+ * search of one table is: nothing says the row is there.
+ *
  * The catalog is what tells the two apart, and nothing else can: the same `WHERE` shape is a lookup
  * against one table and a search against another, and only the keys say which.
  */
-export function isKeyLookup(ctx: StatementContext, sel: number, close: number): boolean {
+export function isKeyLookup(ctx: ScopedContext, sel: number, close: number): boolean {
   const query = singleTableQuery(ctx, sel, close);
-  if (!query) return false;
-  return coversUniqueKey((name) => ctx.dialect.foldIdentifier(name, false), query.table, query.pinned);
+  if (query) return coversUniqueKey((name) => ctx.dialect.foldIdentifier(name, false), query.table, query.pinned);
+  return isToOneJoinLookup(ctx, sel, close);
 }

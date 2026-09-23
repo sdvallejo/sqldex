@@ -239,6 +239,15 @@ export interface RoutineContext extends BaseContext {
   readonly body: TokenRange;
   /** The body's statements, computed on first call and kept. */
   statements(): readonly TokenRange[];
+  /**
+   * The innermost scope covering a token index, the same lookup `StatementContext` gives.
+   *
+   * Here so `shared/keys.ts`'s `isKeyLookup` works unchanged from routine scope: the taint that
+   * follows `SET v = (SELECT …)` and an aggregate `SELECT … INTO` out to
+   * `routine/nullable-into-arithmetic` and its siblings has to ask the same "is this a lookup or a
+   * search" question `query/nullable-scalar-subquery` asks from a statement.
+   */
+  scopeAt(index: number): ScopeInfo | undefined;
 }
 
 export interface TableContext extends BaseContext {

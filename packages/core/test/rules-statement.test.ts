@@ -208,9 +208,16 @@ const TEMP: TempTableEntry = {
   columns: ["batch_id", "total"],
 };
 
-function catalogOf(): RuleCatalog {
+/**
+ * @param extra DDL appended after `SCHEMA`, for the one-off case a test needs a table `SCHEMA`
+ * itself does not declare. A table of the same name redefines it — later wins, since both are read
+ * into the same map in order — which is how a handful of join-lookup tests give `orders` a foreign
+ * key without one every other test in this file has to read around.
+ */
+function catalogOf(extra = ""): RuleCatalog {
+  const src = extra ? `${SCHEMA}\n${extra}` : SCHEMA;
   const tables = new Map<string, Table>();
-  for (const table of parseDDL(mysql, SCHEMA, tokenize(SCHEMA)).tables) {
+  for (const table of parseDDL(mysql, src, tokenize(src)).tables) {
     if (!table.temporary) tables.set(table.name.toLowerCase(), table);
   }
   const routines = new Map<string, Routine>();
@@ -227,10 +234,10 @@ function catalogOf(): RuleCatalog {
   };
 }
 
-function run(rule: Rule, src: string): string[] {
+function run(rule: Rule, src: string, extraSchema = ""): string[] {
   return check(
     new Registry().add(rule),
-    { dialect: mysql, catalog: catalogOf(), schemas: new Set(["shop"]), config: defaults },
+    { dialect: mysql, catalog: catalogOf(extraSchema), schemas: new Set(["shop"]), config: defaults },
     src,
   ).map((d) => d.message);
 }
@@ -1216,6 +1223,93 @@ test("a join can eliminate the row the key found, so it is no longer a lookup", 
     ).length,
     1,
   );
+});
+
+// --------------------------------------------- a to-one join is still a lookup, not a search
+
+/** `orders` redefined with a declared foreign key onto `customers`' own primary key. */
+const FK_SCHEMA = [
+  "CREATE TABLE orders (",
+  "  order_id int NOT NULL,",
+  "  customer_id int NOT NULL,",
+  "  status char(1) NOT NULL,",
+  "  total decimal(10,2) NOT NULL,",
+  "  PRIMARY KEY (order_id),",
+  "  FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+  ");",
+].join("\n");
+
+/** The same, with the foreign key column nullable: a `LEFT JOIN` still reads as a lookup over it. */
+const FK_NULLABLE_SCHEMA = [
+  "CREATE TABLE orders (",
+  "  order_id int NOT NULL,",
+  "  customer_id int NULL,",
+  "  status char(1) NOT NULL,",
+  "  total decimal(10,2) NOT NULL,",
+  "  PRIMARY KEY (order_id),",
+  "  FOREIGN KEY (customer_id) REFERENCES customers (customer_id)",
+  ");",
+].join("\n");
+
+/** `customers` gains a foreign key of its own, for the chain case: joined through, not to. */
+const CHAIN_SCHEMA = [
+  FK_SCHEMA,
+  "CREATE TABLE regions (region_id int NOT NULL, name varchar(40) NOT NULL, PRIMARY KEY (region_id));",
+  "CREATE TABLE customers (",
+  "  customer_id int NOT NULL,",
+  "  label varchar(40) NOT NULL,",
+  "  region_id int NOT NULL,",
+  "  PRIMARY KEY (customer_id),",
+  "  FOREIGN KEY (region_id) REFERENCES regions (region_id)",
+  ");",
+].join("\n");
+
+test("a join to another table through a NOT NULL foreign key onto its whole primary key is a lookup", () => {
+  const using = "SELECT 1 + (SELECT c.label FROM orders o JOIN customers c USING (customer_id) WHERE o.order_id = 7);";
+  const on = "SELECT 1 + (SELECT c.label FROM orders o JOIN customers c ON o.customer_id = c.customer_id WHERE o.order_id = 7);";
+  const reversed =
+    "SELECT 1 + (SELECT c.label FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_id = 7);";
+  assert.deepEqual(run(nullableScalarSubquery, using, FK_SCHEMA), []);
+  assert.deepEqual(run(nullableScalarSubquery, on, FK_SCHEMA), []);
+  assert.deepEqual(run(nullableScalarSubquery, reversed, FK_SCHEMA), []);
+});
+
+test("a LEFT JOIN through a nullable foreign key is still a lookup: it never drops the anchor row", () => {
+  const src =
+    "SELECT 1 + (SELECT c.label FROM orders o LEFT JOIN customers c ON o.customer_id = c.customer_id " +
+    "WHERE o.order_id = 7);";
+  assert.deepEqual(run(nullableScalarSubquery, src, FK_NULLABLE_SCHEMA), []);
+});
+
+test("the same nullable foreign key with an INNER JOIN is a search: the row can be dropped", () => {
+  const src =
+    "SELECT 1 + (SELECT c.label FROM orders o JOIN customers c ON o.customer_id = c.customer_id " +
+    "WHERE o.order_id = 7);";
+  assert.equal(run(nullableScalarSubquery, src, FK_NULLABLE_SCHEMA).length, 1);
+});
+
+test("a join with no declared foreign key is a search, whatever columns it equates", () => {
+  const src = "SELECT 1 + (SELECT c.label FROM orders o JOIN customers c USING (customer_id) WHERE o.order_id = 7);";
+  assert.equal(run(nullableScalarSubquery, src).length, 1);
+});
+
+test("a join to a column that is not the other table's key is a search", () => {
+  const src =
+    "SELECT 1 + (SELECT c.label FROM orders o JOIN customers c ON o.customer_id = c.label WHERE o.order_id = 7);";
+  assert.equal(run(nullableScalarSubquery, src, FK_SCHEMA).length, 1);
+});
+
+test("a WHERE that does not pin the anchor's own key leaves no anchor to vouch for the join", () => {
+  const src =
+    "SELECT 1 + (SELECT c.label FROM orders o JOIN customers c USING (customer_id) WHERE o.status = 'A');";
+  assert.equal(run(nullableScalarSubquery, src, FK_SCHEMA).length, 1);
+});
+
+test("a chain — joined through a table rather than to it — is not read: only one level", () => {
+  const src =
+    "SELECT 1 + (SELECT r.name FROM orders o JOIN customers c ON o.customer_id = c.customer_id " +
+    "JOIN regions r ON c.region_id = r.region_id WHERE o.order_id = 7);";
+  assert.equal(run(nullableScalarSubquery, src, CHAIN_SCHEMA).length, 1);
 });
 
 test("a GROUP BY can leave an aggregate with no group to answer for", () => {
