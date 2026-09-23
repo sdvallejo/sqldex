@@ -1,9 +1,10 @@
 /** Which mentions of a name write it rather than read it. */
 
 import type { Routine } from "../../model/routine.ts";
-import type { Token } from "../../syntax/types.ts";
+import type { Token, TokenRange } from "../../syntax/types.ts";
 import { opensStatement } from "../../syntax/fast/stmt.ts";
 import { kw, matchingParen, punct, qualifiedName, splitCommas } from "../../syntax/fast/tok.ts";
+import { intoAt, intoList, selectList } from "./selects.ts";
 import type { BaseContext } from "../rule.ts";
 
 export interface AssignmentTargets {
@@ -136,7 +137,8 @@ export function assignmentTargets(ctx: BaseContext): AssignmentTargets {
  * A statement's own `SET` is what this tells apart from the `SET` clause of an `UPDATE`/`INSERT`/
  * `SIGNAL`: only one that opens a statement of its own is read at all. Shared by
  * `compat/user-variable-in-expression`, which further keeps only a user variable among what comes
- * back, and `routine/undeclared-variable`, which keeps only a bare name.
+ * back, `routine/undeclared-variable`, which keeps only a bare name, and `selfAssignments` below,
+ * which pairs a target against its own right-hand side.
  */
 export function statementSetTargets(tokens: readonly Token[], from: number, to: number): Set<number> {
   const targets = new Set<number>();
@@ -160,4 +162,90 @@ export function statementSetTargets(tokens: readonly Token[], from: number, to: 
     }
   }
   return targets;
+}
+
+/** Is there a `UNION` at this range's own depth? Its branches are two lists checked against each
+ * other by the engine, not one list matched against itself. */
+function hasUnion(tokens: readonly Token[], from: number, to: number): boolean {
+  let depth = 0;
+  for (let i = from; i <= to; i++) {
+    if (punct(tokens[i], "(")) depth++;
+    else if (punct(tokens[i], ")")) depth--;
+    else if (depth === 0 && kw(tokens[i], "UNION")) return true;
+  }
+  return false;
+}
+
+/** One local read straight back into itself, and where to point at it. */
+export interface SelfAssignment {
+  /**
+   * The expression side: the select-list item of a `SELECT … INTO`, or the right-hand side of a
+   * `SET v = v`. What `routine/select-into-self` reports — the token that, read carefully, says
+   * nothing at all.
+   */
+  readonly value: number;
+  /** The destination side: the `INTO` target, or the `SET`'s left-hand side. */
+  readonly target: number;
+  readonly form: "into" | "set";
+}
+
+/**
+ * A local read back into itself — `SELECT … v … INTO … v …` at matching positions, or
+ * `SET v = v` — in one statement.
+ *
+ * Inside a routine a bare name resolves to the local before any column, backquoted or not, so
+ * `SELECT v INTO v` and `SET v = v` leave the variable exactly as it was. Neither half of the pair
+ * is a real write or a meaningful read, which is what `variable-never-assigned` needs this for:
+ * counting the `INTO v` half as the write that clears its warning would hide that the variable was
+ * never actually assigned anything.
+ *
+ * Only a lone, unqualified identifier on either side counts, and only one that is a declared local —
+ * a qualified `t.v` is the column. A `SELECT … INTO` whose column count does not match its variables
+ * is left alone, the same way `routine/select-into-arity` is: that is its error to report, and
+ * pairing positions that do not line up would be a guess.
+ */
+export function selfAssignments(ctx: BaseContext, stmt: TokenRange): readonly SelfAssignment[] {
+  const { tokens, dialect, locals } = ctx;
+  const pairs: SelfAssignment[] = [];
+
+  const key = (t: Token): string => dialect.foldIdentifier(t.v, t.q === true);
+  const isLocal = (t: Token | undefined): t is Token => {
+    if (t === undefined || t.t !== "id") return false;
+    const local = locals.byName.get(key(t));
+    return local?.kind === "variable" || local?.kind === "param";
+  };
+  const same = (a: Token, b: Token): boolean => isLocal(a) && isLocal(b) && key(a) === key(b);
+
+  if (kw(tokens[stmt.from], "SELECT") && !hasUnion(tokens, stmt.from, stmt.to)) {
+    const into = intoAt(tokens, stmt.from, stmt.to);
+    const list = into === -1 ? undefined : selectList(tokens, stmt.from, stmt.to);
+    const targets = into === -1 ? undefined : intoList(tokens, into, stmt.to);
+    if (!list || !targets) return pairs;
+
+    const items = splitCommas(tokens, list.from, list.to);
+    const vars = splitCommas(tokens, targets.from, targets.to);
+    // A width mismatch is `select-into-arity`'s error, not this rule's to guess a pairing for.
+    if (items.length !== vars.length) return pairs;
+
+    items.forEach((item, k) => {
+      const target = vars[k]!;
+      if (item.from !== item.to || target.from !== target.to) return;
+      if (same(tokens[item.from]!, tokens[target.from]!)) {
+        pairs.push({ value: item.from, target: target.from, form: "into" });
+      }
+    });
+  } else if (kw(tokens[stmt.from], "SET")) {
+    for (const idx of statementSetTargets(tokens, stmt.from, stmt.to)) {
+      if (!punct(tokens[idx + 1], "=")) continue;
+      const lhs = tokens[idx];
+      const rhs = tokens[idx + 2];
+      const after = tokens[idx + 3];
+      if (!lhs || !rhs) continue;
+      // The right-hand side has to be exactly one token: `SET v = v + 1` reads v, it does not
+      // hand it straight back.
+      if (idx + 3 <= stmt.to && !(after === undefined || punct(after, ",") || punct(after, ";"))) continue;
+      if (same(lhs, rhs)) pairs.push({ value: idx + 2, target: idx, form: "set" });
+    }
+  }
+  return pairs;
 }

@@ -60,6 +60,7 @@ import { outParamNeverAssigned } from "./routine/out-param-never-assigned.ts";
 import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
 import { selectIntoArity } from "./routine/select-into-arity.ts";
 import { selectIntoManyRows } from "./routine/select-into-many-rows.ts";
+import { selectIntoSelf } from "./routine/select-into-self.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
 import { deadCoalesceDefault } from "./routine/dead-coalesce-default.ts";
@@ -144,6 +145,7 @@ export const statementRules = [
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
+  selectIntoSelf,
   undeclaredVariable,
   nullableScalarSubquery,
   onlyFullGroupBy,
@@ -237,6 +239,7 @@ export {
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
+  selectIntoSelf,
   shadowedParameter,
   undeclaredVariable,
   unfilteredWrite,

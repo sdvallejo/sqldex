@@ -41,6 +41,7 @@ import {
   scalarSubqueryManyRows,
   selectIntoArity,
   selectIntoManyRows,
+  selectIntoSelf,
   undeclaredVariable,
   unfilteredWrite,
   unionColumnCount,
@@ -1452,6 +1453,74 @@ test("a statement that cannot run is not also reported for how many rows it woul
     ).map((d) => d.code),
     ["routine/select-into-arity"],
   );
+});
+
+// ------------------------------------------ a local read straight back into itself
+
+test("a select item folds to the same name as its own INTO target", () => {
+  const src = body(
+    "  DECLARE v_customer_id int;",
+    "  SELECT order_id, v_customer_id INTO p_id, v_customer_id FROM orders WHERE order_id = p_id;",
+  );
+  assert.deepEqual(run(selectIntoSelf, src), [
+    "`v_customer_id` is selected into itself, so it keeps the value it had; qualify it if a column was meant",
+  ]);
+});
+
+test("the trailing INTO spelling is read the same way", () => {
+  const src = body(
+    "  DECLARE v_customer_id int;",
+    "  SELECT order_id, v_customer_id FROM orders WHERE order_id = p_id INTO p_id, v_customer_id;",
+  );
+  assert.deepEqual(run(selectIntoSelf, src), [
+    "`v_customer_id` is selected into itself, so it keeps the value it had; qualify it if a column was meant",
+  ]);
+});
+
+test("SET v = v is the same mistake without a SELECT", () => {
+  const src = body("  DECLARE v_customer_id int;", "  SET v_customer_id = v_customer_id;");
+  assert.deepEqual(run(selectIntoSelf, src), [
+    "`v_customer_id` is set to itself, so it keeps the value it had",
+  ]);
+});
+
+test("a qualified select item names a column on purpose, not the variable", () => {
+  const src = body(
+    "  DECLARE v_customer_id int;",
+    "  SELECT o.v_customer_id INTO v_customer_id FROM orders o WHERE o.order_id = p_id;",
+  );
+  assert.deepEqual(run(selectIntoSelf, src), []);
+});
+
+test("a backquoted select item is still the variable, and is reported", () => {
+  const src = body(
+    "  DECLARE v_customer_id int;",
+    "  SELECT `v_customer_id` INTO v_customer_id FROM orders WHERE order_id = p_id;",
+  );
+  assert.equal(run(selectIntoSelf, src).length, 1);
+});
+
+test("a name that declares no local is a column, not a self-reference", () => {
+  const src = body("  SELECT customer_id INTO customer_id FROM orders WHERE order_id = p_id;");
+  assert.deepEqual(run(selectIntoSelf, src), []);
+});
+
+test("SET v = v + 1 reads v, it does not hand it straight back", () => {
+  const src = body("  DECLARE v_customer_id int;", "  SET v_customer_id = v_customer_id + 1;");
+  assert.deepEqual(run(selectIntoSelf, src), []);
+});
+
+test("a UNION statement is left alone entirely", () => {
+  const src = body("  DECLARE v_customer_id int;", "  SELECT 1 UNION SELECT v_customer_id INTO v_customer_id;");
+  assert.deepEqual(run(selectIntoSelf, src), []);
+});
+
+test("a width mismatch is select-into-arity's error, not a guess about pairing", () => {
+  const src = body(
+    "  DECLARE v_customer_id int;",
+    "  SELECT order_id, v_customer_id, status INTO p_id, v_customer_id FROM orders WHERE order_id = p_id;",
+  );
+  assert.deepEqual(run(selectIntoSelf, src), []);
 });
 
 // ------------------------------------------ a SELECT … INTO that can match twice

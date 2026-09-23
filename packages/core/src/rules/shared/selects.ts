@@ -97,6 +97,26 @@ export function intoAt(tokens: readonly Token[], from: number, to: number): numb
 }
 
 /**
+ * Where the `INTO` list ends: at the `FROM` that follows it, or at the end of the statement.
+ *
+ * `SELECT a INTO v FROM t` and `SELECT a FROM t INTO v` are both MySQL, and only in the first does a
+ * `FROM` come after the variables. Looking for one either way is what handles both without asking
+ * which spelling this is.
+ */
+export function intoList(tokens: readonly Token[], into: number, to: number): TokenRange | undefined {
+  let depth = 0;
+  for (let i = into + 1; i <= to; i++) {
+    const t = tokens[i]!;
+    if (punct(t, "(")) depth++;
+    else if (punct(t, ")")) depth--;
+    else if (depth === 0 && (kw(t, "FROM") || punct(t, ";"))) {
+      return i > into + 1 ? { from: into + 1, to: i - 1 } : undefined;
+    }
+  }
+  return to > into ? { from: into + 1, to } : undefined;
+}
+
+/**
  * The items of the select list opened at `selectIdx`, or `undefined` when there are none to read.
  *
  * Ends at the first depth-zero word that starts another clause, at a `;`, or at the parenthesis that

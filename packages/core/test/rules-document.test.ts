@@ -356,6 +356,40 @@ test("passing it to an IN parameter is not a write", () => {
   ]);
 });
 
+test("a self-INTO is not a write, so a later read still reads NULL", () => {
+  // `routine/select-into-self` reports the copy-pasted line itself; this rule reports what it
+  // leaves behind, on the read that actually uses the value.
+  const src = body(
+    "  DECLARE v_customer_id int;",
+    "  SELECT order_id, v_customer_id INTO p_order, v_customer_id FROM orders WHERE customer_id = p_order;",
+    "  SELECT total FROM orders WHERE customer_id != v_customer_id;",
+  );
+  assert.deepEqual(run(variableNeverAssigned, src), [
+    "v_customer_id is never assigned, so this reads NULL",
+  ]);
+});
+
+test("SET v = v is not a write either", () => {
+  const src = body(
+    "  DECLARE v_customer_id int;",
+    "  SET v_customer_id = v_customer_id;",
+    "  SELECT total FROM orders WHERE customer_id != v_customer_id;",
+  );
+  assert.deepEqual(run(variableNeverAssigned, src), [
+    "v_customer_id is never assigned, so this reads NULL",
+  ]);
+});
+
+test("a genuine assignment elsewhere still clears it, self-INTO or not", () => {
+  const src = body(
+    "  DECLARE v_customer_id int;",
+    "  SELECT order_id, v_customer_id INTO p_order, v_customer_id FROM orders WHERE customer_id = p_order;",
+    "  SET v_customer_id = p_order;",
+    "  SELECT total FROM orders WHERE customer_id != v_customer_id;",
+  );
+  assert.deepEqual(run(variableNeverAssigned, src), []);
+});
+
 // ------------------------------------------------- dead COALESCE/IFNULL defaults
 
 test("a never-assigned variable as a bare COALESCE argument is a dead default", () => {

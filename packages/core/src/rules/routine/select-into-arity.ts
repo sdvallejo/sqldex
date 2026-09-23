@@ -1,27 +1,6 @@
-import { intoAt, selectList, selectWidth } from "../shared/selects.ts";
-import { kw, punct, splitCommas } from "../../syntax/fast/tok.ts";
-import type { Token, TokenRange } from "../../syntax/types.ts";
+import { intoAt, intoList, selectList, selectWidth } from "../shared/selects.ts";
+import { kw, splitCommas } from "../../syntax/fast/tok.ts";
 import type { Rule } from "../rule.ts";
-
-/**
- * Where the `INTO` list ends: at the `FROM` that follows it, or at the end of the statement.
- *
- * `SELECT a INTO v FROM t` and `SELECT a FROM t INTO v` are both MySQL, and only in the first does a
- * `FROM` come after the variables. Looking for one either way is what handles both without asking
- * which spelling this is.
- */
-function intoList(tokens: readonly Token[], into: number, to: number): TokenRange | undefined {
-  let depth = 0;
-  for (let i = into + 1; i <= to; i++) {
-    const t = tokens[i]!;
-    if (punct(t, "(")) depth++;
-    else if (punct(t, ")")) depth--;
-    else if (depth === 0 && (kw(t, "FROM") || punct(t, ";"))) {
-      return i > into + 1 ? { from: into + 1, to: i - 1 } : undefined;
-    }
-  }
-  return to > into ? { from: into + 1, to } : undefined;
-}
 
 export const selectIntoArity: Rule = {
   id: "routine/select-into-arity",

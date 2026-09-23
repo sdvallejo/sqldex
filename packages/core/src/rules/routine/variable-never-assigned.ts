@@ -1,5 +1,5 @@
 import { insideNullSafe } from "../shared/nulls.ts";
-import { assignmentTargets } from "../shared/writes.ts";
+import { assignmentTargets, selfAssignments } from "../shared/writes.ts";
 import type { Local } from "../../model/locals.ts";
 import type { Token } from "../../syntax/types.ts";
 import type { Rule } from "../rule.ts";
@@ -38,6 +38,13 @@ deliberate, and correct.
 An \`OUT\` argument of a \`CALL\` counts as a write, because the callee fills it in — so what follows is
 not a read of NULL.
 
+**A self-assignment is not an assignment.** \`SELECT … v … INTO … v …\` at matching positions, and
+\`SET v = v\`, leave the variable exactly as it was — inside a routine the \`v\` in the select list is
+the variable, not a column of that name — so neither counts as the write that clears this warning,
+and the \`v\` handed back is not counted as a read. The first read that uses the value, such as
+\`WHERE customer_id != v\`, is what gets reported; \`routine/select-into-self\` reports the line
+itself.
+
 Reported on the **first unprotected read**, not on the \`DECLARE\`: that is where the wrong answer is
 produced, and the declaration on its own looks perfectly fine.
 
@@ -57,12 +64,23 @@ to start empty.`,
 
     const { written, callOuts } = assignmentTargets(ctx);
 
+    // Neither half of `SELECT … v … INTO … v …` or `SET v = v` is a write or a real read: the
+    // variable comes back exactly as it went in.
+    const selfTokens = new Set<number>();
+    for (const stmt of ctx.statements()) {
+      for (const pair of selfAssignments(ctx, stmt)) {
+        selfTokens.add(pair.value);
+        selfTokens.add(pair.target);
+      }
+    }
+
     ctx.tokens.forEach((t, i) => {
       // Only this routine's body: a file can hold two, and one's variables are not the other's.
       if (i < ctx.body.from || i > ctx.body.to) return;
       if (t.t !== "id" || t.q) return;
       const entry = declared.get(ctx.dialect.foldIdentifier(t.v, false));
       if (!entry || t.s === entry.item.nameSpan.s) return;
+      if (selfTokens.has(i)) return;
       if (written.has(i) || callOuts.has(i)) entry.written = true;
       else if (!insideNullSafe(ctx.tokens, i)) entry.reads.push(t);
     });
