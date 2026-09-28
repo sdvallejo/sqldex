@@ -248,6 +248,44 @@ END;`),
   assert.doesNotMatch(text, /Created in/);
 });
 
+/** A temporary table filled from a `JSON_TABLE` column it recomputes under the same name. */
+const recomputed = (alias: string, inner = "doc") => `CREATE PROCEDURE \`sp_scratch\`(IN p_items json)
+BEGIN
+  CREATE TEMPORARY TABLE tmp_orders
+  SELECT n, JSON_SET(${inner}, '$.id', n) ${alias}
+  FROM JSON_TABLE(p_items, '$[*]' COLUMNS(n FOR ORDINALITY, doc json PATH '$')) AS j;
+END;`;
+
+test("the alias that fills a temporary table's column declares that column, not the one it is computed from", () => {
+  for (const alias of ["do|c", "AS do|c"]) {
+    const text = markdown(hover(cursor(recomputed(alias))));
+    assert.match(text, /`doc` — column of temporary table `tmp_orders`/, alias);
+    assert.match(text, /JSON_SET\(doc, '\$\.id', n\)/, alias);
+    assert.doesNotMatch(text, /JSON_TABLE/, alias);
+  }
+});
+
+test("the same name inside the expression is still the column the FROM gives it", () => {
+  const text = markdown(hover(cursor(recomputed("doc", "do|c"))));
+  assert.match(text, /`doc json` — `JSON_TABLE` column \(alias `j`\)/);
+});
+
+test("an expression split over several lines is shown as one block", () => {
+  const text = markdown(
+    hover(
+      cursor(`CREATE PROCEDURE \`sp_scratch\`(IN pDoc json)
+BEGIN
+  CREATE TEMPORARY TABLE tmp_orders
+  SELECT JSON_SET(pDoc, '$.id', order_id,
+\t\t        '$.total', total) doc
+  FROM orders;
+  SELECT |doc FROM tmp_orders;
+END;`),
+    ),
+  );
+  assert.match(text, /JSON_SET\(pDoc, '\$\.id', order_id,\n {2}'\$\.total', total\)/);
+});
+
 // ------------------------------------------------- an alias wins over another file's temp table
 
 test("a JSON_TABLE alias wins over another file's temporary table of the same name", () => {

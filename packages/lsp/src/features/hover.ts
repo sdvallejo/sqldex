@@ -13,7 +13,7 @@
  * to go searching the project for, even when the far-away one happens to share the spelling.
  */
 
-import { identifierAt, jsonTableColumns, lineIndex, punct, qualifier, relation, tempTable } from "@sqldex/core";
+import { identifierAt, jsonTableColumns, kw, lineIndex, punct, qualifier, relation, tempTable } from "@sqldex/core";
 import { basename } from "node:path";
 import type { Hover } from "vscode-languageserver";
 
@@ -71,10 +71,31 @@ export function hover(at: At): Hover | undefined {
     if (local?.kind === "temp_table" && local.columnOrigins !== undefined) {
       const idx = local.columns?.findIndex((c) => fold(c) === fold(columnName)) ?? -1;
       const span = idx >= 0 ? local.columnOrigins[idx] : undefined;
-      if (span !== undefined) return sqlBlock(at.text.slice(span.s, span.e));
+      if (span !== undefined) return sqlBlock(dedent(at.text.slice(span.s, span.e)));
     }
     const file = createdIn(tempName);
     return file === undefined ? undefined : `Created in \`${file}\``;
+  };
+
+  /**
+   * The temporary table whose column this token *declares*: the alias closing an item of the
+   * `SELECT` that fills a `CREATE TEMPORARY TABLE`, as in `JSON_SET(doc, ...) doc`. Written there,
+   * the same spelling inside the expression is still whatever the `FROM` gives it — which is exactly
+   * why the alias needs telling apart: it is the new column, not the old one it is computed from.
+   */
+  const declaredTempColumn = (): string | undefined => {
+    const tokens = at.lexed.tokens;
+    let before = found.idx - 1;
+    if (kw(tokens[before], "AS")) before--;
+    const end = tokens[before]?.e;
+    if (end === undefined) return undefined;
+
+    for (const item of scope.items) {
+      if (item.kind !== "temp_table" || item.columnOrigins === undefined) continue;
+      const idx = item.columns?.findIndex((c) => fold(c) === key) ?? -1;
+      if (idx >= 0 && item.columnOrigins[idx]?.e === end) return item.name;
+    }
+    return undefined;
   };
 
   // Written `x.y`, so the answer can only be about `y` as something belonging to `x`. If `x` does
@@ -117,6 +138,10 @@ export function hover(at: At): Hover | undefined {
     const asFunction = builtin();
     if (asFunction) return asFunction;
   }
+
+  // Where the token sits already says what it is, so nothing a name lookup could find outranks it.
+  const declaredIn = declaredTempColumn();
+  if (declaredIn !== undefined) return answer(tempColumnDoc(declaredIn, name, columnOrigin(declaredIn, name)));
 
   const local = scope.byName.get(key);
   if (local && local.kind !== "temp_table") {
@@ -191,4 +216,18 @@ export function hover(at: At): Hover | undefined {
   // everything else so that a column or an alias in this statement beats a word that merely happens
   // to be a function's name.
   return builtin();
+}
+
+/**
+ * An expression cut out of the middle of a statement: its first line starts where the expression
+ * does, but every later one still carries the indentation of the file it came from. The common
+ * leading whitespace of those later lines comes off and two spaces go on, so a call split over
+ * several lines reads as one block rather than as a line followed by a staircase.
+ */
+function dedent(text: string): string {
+  const [first, ...rest] = text.split("\n");
+  const indents = rest.filter((line) => line.trim() !== "").map((line) => /^[ \t]*/.exec(line)![0].length);
+  if (indents.length === 0) return text;
+  const common = Math.min(...indents);
+  return [first, ...rest.map((line) => `  ${line.slice(common)}`)].join("\n");
 }
