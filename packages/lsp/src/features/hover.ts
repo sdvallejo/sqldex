@@ -6,15 +6,32 @@
  * or a built-in function, and several of those can be true of the same spelling at once. What
  * decides is how *near* the answer is: something declared in this routine beats something in the
  * catalog, and something in the catalog beats a word that merely happens to also be a function.
+ *
+ * An alias declared in the statement under the cursor is nearer than anything the catalog knows by
+ * the same spelling — including another file's temporary table of that name — so it is checked
+ * before the catalog gets a say: a name you can see declared three lines up beats one you would have
+ * to go searching the project for, even when the far-away one happens to share the spelling.
  */
 
-import { identifierAt, lineIndex, punct, qualifier, relation, tempTable } from "@sqldex/core";
+import { identifierAt, jsonTableColumns, lineIndex, punct, qualifier, relation, tempTable } from "@sqldex/core";
 import { basename } from "node:path";
 import type { Hover } from "vscode-languageserver";
 
 import { rangeOf } from "../convert.ts";
 import type { At } from "../documents.ts";
-import { builtinDoc, columnDoc, localDetail, routineDoc, sqlBlock, tableDoc, triggerDoc } from "../render.ts";
+import {
+  builtinDoc,
+  columnDoc,
+  jsonTableColumnDoc,
+  jsonTableDoc,
+  localDetail,
+  routineDoc,
+  sqlBlock,
+  tableDoc,
+  tempColumnDoc,
+  tempTableDoc,
+  triggerDoc,
+} from "../render.ts";
 
 export function hover(at: At): Hover | undefined {
   const found = identifierAt(at.lexed, at.offset);
@@ -32,6 +49,34 @@ export function hover(at: At): Hover | undefined {
   const name = found.token.v;
   const key = fold(name);
 
+  /**
+   * The basename of the file a temporary table was created in, when that is not this one. A table
+   * this file creates itself is never "created in" another file that happens to create one with the
+   * same name — the catalog keeps one entry per name, and it need not be this file's.
+   */
+  const createdIn = (tempName: string): string | undefined => {
+    if (scope.byName.get(fold(tempName))?.kind === "temp_table") return undefined;
+    const entry = catalog.tempTable(tempName);
+    return entry?.file !== undefined && entry.file !== at.path ? basename(entry.file) : undefined;
+  };
+
+  /**
+   * Where a temporary table's column gets its value: the expression that fills it, when it is this
+   * file's own temporary table and the `SELECT` that built it could be read for it; failing that,
+   * the file it was created in, when that is a different one. The catalog keeps offsets but not the
+   * text of other files, so an expression is only ever shown for a table declared right here.
+   */
+  const columnOrigin = (tempName: string, columnName: string): string | undefined => {
+    const local = scope.byName.get(fold(tempName));
+    if (local?.kind === "temp_table" && local.columnOrigins !== undefined) {
+      const idx = local.columns?.findIndex((c) => fold(c) === fold(columnName)) ?? -1;
+      const span = idx >= 0 ? local.columnOrigins[idx] : undefined;
+      if (span !== undefined) return sqlBlock(at.text.slice(span.s, span.e));
+    }
+    const file = createdIn(tempName);
+    return file === undefined ? undefined : `Created in \`${file}\``;
+  };
+
   // Written `x.y`, so the answer can only be about `y` as something belonging to `x`. If `x` does
   // not resolve there is nothing to say — offering the catalog's `y` instead would be answering a
   // question nobody asked.
@@ -39,11 +84,22 @@ export function hover(at: At): Hover | undefined {
     const resolved = qualifier(at.resolve, analysis, scope, found.qualifier, at.lexed.tokens);
     const column = resolved?.table?.byName.get(key);
     if (resolved?.table && column) return answer(columnDoc(workspace, resolved.table, column));
+
     if (resolved?.kind === "temp_table") {
-      return answer(`\`${resolved.name}.${name}\` — column of a temporary table`);
+      return answer(tempColumnDoc(resolved.name, name, columnOrigin(resolved.name, name)));
     }
-    if (resolved?.kind === "derived" && resolved.columns?.some((column) => fold(column) === key)) {
-      return answer(`\`${resolved.name}.${name}\` — column of a derived table`);
+
+    if (resolved?.kind === "derived") {
+      // The qualifier's own relation, so a `JSON_TABLE(...)` answers with what its `COLUMNS(...)`
+      // says about this one rather than the generic "column of a derived table".
+      const qualified = analysis.byAlias.get(fold(found.qualifier));
+      const jsonTable = qualified ? jsonTableColumns(at.lexed.tokens, qualified) : undefined;
+      const jsonColumn = jsonTable?.columns.find((c) => fold(c.name) === key);
+      if (jsonColumn) return answer(jsonTableColumnDoc(found.qualifier, jsonColumn, jsonTable!));
+
+      if (resolved.columns?.some((column) => fold(column) === key)) {
+        return answer(`\`${resolved.name}.${name}\` — column of a derived table`);
+      }
     }
     return undefined;
   }
@@ -67,26 +123,18 @@ export function hover(at: At): Hover | undefined {
     return answer(sqlBlock(`${local.name} ${localDetail(local)}`));
   }
 
-  // A temporary table, whether this file creates it or another one in the project does.
-  const temp = tempTable(at.resolve, scope, name);
-  if (temp) {
-    const columns = temp.columns ?? [];
-    const parts = [sqlBlock(`${temp.name}  — temporary table, ${columns.length} columns`)];
-    if (columns.length > 0) parts.push(columns.join(", "));
-
-    const entry = catalog.tempTable(name);
-    // Where it was created is the thing you cannot find by searching, because the name is written
-    // in every file that touches it and declared in exactly one.
-    if (entry?.file !== undefined && entry.file !== at.path) parts.push(`Created in \`${basename(entry.file)}\``);
-    return answer(parts.join("\n\n"));
-  }
-
-  // Hovering an alias shows the table it stands for: precisely the thing you cannot remember.
+  // Hovering an alias shows what it stands for. This runs *before* the catalog is asked whether
+  // this spelling is a temporary table of its own, so that a project-wide name does not upstage an
+  // alias declared in the very statement being read — see the file's own doc comment.
   const aliased = analysis.byAlias.get(key);
 
-  // A derived table has no `CREATE TABLE` to show, so what it stands for is the columns its query
-  // produces — and, when some item could not be named, a word that the list is not the whole of it.
+  // A derived table — a real subquery, or a `JSON_TABLE(...)`, which shares its shape — has no
+  // `CREATE TABLE` to show, so what it stands for is the columns its query (or its own
+  // `COLUMNS(...)`) produces.
   if (aliased?.derived !== undefined && aliased.name === undefined) {
+    const jsonTable = jsonTableColumns(at.lexed.tokens, aliased);
+    if (jsonTable) return answer(jsonTableDoc(name, jsonTable));
+
     const resolved = relation(at.resolve, scope, aliased, at.lexed.tokens);
     if (resolved?.columns !== undefined) {
       const columns = resolved.columns;
@@ -97,10 +145,21 @@ export function hover(at: At): Hover | undefined {
     }
   }
 
+  // An alias of a real name: a temporary table — this file's own, or another's — before a catalog
+  // table, since a temporary table shadows a real one of the same name for as long as the routine
+  // that declared it runs.
   if (aliased?.name !== undefined && fold(aliased.name) !== key) {
+    const aliasedTemp = tempTable(at.resolve, scope, aliased.name);
+    if (aliasedTemp) return answer(tempTableDoc(aliasedTemp, name, true, createdIn(aliasedTemp.name)));
+
     const table = catalog.table(aliased.name);
     if (table) return answer(tableDoc(workspace, table));
   }
+
+  // A temporary table, whether this file creates it or another one in the project does — reached
+  // only once it is settled that this spelling was not somebody else's alias in this statement.
+  const temp = tempTable(at.resolve, scope, name);
+  if (temp) return answer(tempTableDoc(temp, name, false, createdIn(temp.name)));
 
   const table = catalog.table(name);
   if (table) return answer(tableDoc(workspace, table));
@@ -113,9 +172,19 @@ export function hover(at: At): Hover | undefined {
 
   // An unqualified column: the first relation in the statement that has one by this name.
   for (const candidate of analysis.relations) {
-    const resolved = relation(at.resolve, scope, candidate);
+    const resolved = relation(at.resolve, scope, candidate, at.lexed.tokens);
     const column = resolved?.table?.byName.get(key);
     if (resolved?.table && column) return answer(columnDoc(workspace, resolved.table, column));
+
+    if (resolved?.kind === "temp_table" && resolved.columns?.some((c) => fold(c) === key)) {
+      return answer(tempColumnDoc(resolved.name, name, columnOrigin(resolved.name, name)));
+    }
+
+    // A `JSON_TABLE(...)` column, referenced bare or hovered right on its own declaration inside
+    // `COLUMNS(...)` — both are just this same identifier sitting somewhere in the statement.
+    const jsonTable = jsonTableColumns(at.lexed.tokens, candidate);
+    const jsonColumn = jsonTable?.columns.find((c) => fold(c.name) === key);
+    if (jsonColumn) return answer(jsonTableColumnDoc(candidate.alias, jsonColumn, jsonTable!));
   }
 
   // Last: functions written without parentheses, such as `CURRENT_TIMESTAMP`. It comes after

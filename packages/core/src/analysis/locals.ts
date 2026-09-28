@@ -13,8 +13,8 @@ import type { Routine } from "../model/routine.ts";
 import type { Relation } from "../model/query.ts";
 import { EXPECTS_TABLE, relations } from "../syntax/fast/stmt.ts";
 import { kw, kwAny, matchingParen, objectAfterCreate, punct, qualifiedName, splitCommas, unquote } from "../syntax/fast/tok.ts";
-import { readType, typeExtent } from "../syntax/fast/type.ts";
-import type { Token } from "../syntax/types.ts";
+import { readType, TYPE_SUFFIXES, typeExtent } from "../syntax/fast/type.ts";
+import type { Span, Token, TokenRange } from "../syntax/types.ts";
 
 const HANDLER_STARTERS: ReadonlySet<string> = new Set(["CONTINUE", "EXIT", "UNDO"]);
 
@@ -52,6 +52,12 @@ export interface SelectListColumns {
    * name of its own yet is not missing anything.
    */
   unnamed: number;
+  /**
+   * The span of the expression each name of `names` came from, when it is one an item computes
+   * rather than merely references — `undefined` for `Col` or `t.Col`, which name something that
+   * already exists rather than filling anything in. Parallel to `names`.
+   */
+  origins: (Span | undefined)[];
 }
 
 /**
@@ -102,7 +108,14 @@ export function selectListColumns(
   const names: string[] = [];
   const stars: string[] = [];
   const definedAt = new Set<number>();
+  const origins: (Span | undefined)[] = [];
   let unnamed = 0;
+
+  /** Span of `part.from .. before` — the expression an alias sits after — or `undefined` if empty. */
+  const expressionBefore = (part: TokenRange, before: number): Span | undefined => {
+    if (before < part.from) return undefined;
+    return { s: tokens[part.from]!.s, e: tokens[before]!.e };
+  };
 
   for (const part of splitCommas(tokens, selectIdx + 1, stop)) {
     const last = tokens[part.to];
@@ -123,6 +136,7 @@ export function selectListColumns(
 
     // An explicit alias overrides everything else.
     let aliasIdx = -1;
+    let asIdx = -1;
     let partDepth = 0;
     for (let i = part.from; i <= part.to; i++) {
       const t = tokens[i]!;
@@ -131,17 +145,20 @@ export function selectListColumns(
         else if (t.v === ")") partDepth--;
       } else if (partDepth === 0 && kw(t, "AS") && tokens[i + 1]?.t === "id") {
         aliasIdx = i + 1;
+        asIdx = i;
       }
     }
 
     if (aliasIdx !== -1) {
       names.push(tokens[aliasIdx]!.v);
       definedAt.add(aliasIdx);
+      origins.push(expressionBefore(part, asIdx - 1));
       named = true;
     } else if (last && last.t === "str" && part.to > part.from) {
       // MySQL accepts a literal as an alias: `ROUND(a + b, 2) 'net_total'`, which is common
       // enough to matter. If the literal is the item's only content it is a value, not an alias.
       names.push(unquote(last.v));
+      origins.push(expressionBefore(part, part.to - 1));
       named = true;
     } else if (last && last.t === "id" && !kwAny(last, SELECT_NOISE)) {
       // Without `AS`, it can only be named if the item ends in an identifier: `Col`, or the `Col`
@@ -151,7 +168,10 @@ export function selectListColumns(
       // and `t.Col` only reference a column that already exists. The distinction matters for the
       // diagnostics, which would otherwise accept any name appearing in a SELECT.
       const definesName = part.to > part.from && !punct(tokens[part.to - 1], ".");
-      if (!aliasesOnly || definesName) names.push(last.v);
+      if (!aliasesOnly || definesName) {
+        names.push(last.v);
+        origins.push(definesName ? expressionBefore(part, part.to - 1) : undefined);
+      }
       if (definesName) definedAt.add(part.to);
       named = true;
     }
@@ -159,7 +179,7 @@ export function selectListColumns(
     if (!named) unnamed++;
   }
 
-  return { names, stars, definedAt, unnamed };
+  return { names, stars, definedAt, unnamed, origins };
 }
 
 /**
@@ -177,6 +197,12 @@ export interface ResolvedSelect {
    * to exactly one relation, no nested derived subquery that was itself incomplete.
    */
   complete: boolean;
+  /**
+   * Parallel to `names`: the span of the expression that computes each one, for the names this
+   * branch's own list defines directly. A name absorbed from a `*` — this branch's own or a nested
+   * subquery's — carries no span of its own here, since it was not this list that wrote it.
+   */
+  origins: (Span | undefined)[];
 }
 
 /** The columns a `SELECT` produces, descending into derived subqueries. */
@@ -204,7 +230,7 @@ function resolveSelect(
     }
   }
 
-  const { names, stars, unnamed } = selectListColumns(tokens, selectIdx, branchLimit);
+  const { names, stars, unnamed, origins } = selectListColumns(tokens, selectIdx, branchLimit);
   const sources: string[] = [];
   let complete = unnamed === 0;
 
@@ -212,7 +238,7 @@ function resolveSelect(
     // Depth exceeded with stars still unresolved is not the same as none: the list stops being
     // complete right there, even though nothing further can be read to prove it.
     if (stars.length > 0 && depth > MAX_DERIVED_DEPTH) complete = false;
-    return { names, sources, complete };
+    return { names, sources, complete, origins };
   }
 
   const found = relations(dialect, tokens, selectIdx, branchLimit);
@@ -241,6 +267,7 @@ function resolveSelect(
       if (kw(tokens[i], "SELECT")) {
         const inner = resolveSelect(dialect, tokens, i, relation.derived.to - 1, depth + 1);
         names.push(...inner.names);
+        origins.push(...inner.names.map(() => undefined));
         sources.push(...inner.sources);
         if (!inner.complete) complete = false;
         return;
@@ -261,7 +288,164 @@ function resolveSelect(
     }
   }
 
-  return { names, sources, complete };
+  return { names, sources, complete, origins };
+}
+
+export interface JsonTableColumn {
+  name: string;
+  /** Absent for `FOR ORDINALITY`, which has no type of its own — it is always the row number. */
+  type?: string;
+  /** The `PATH` string, unquoted. Absent for `FOR ORDINALITY`. */
+  path?: string;
+  ordinality: boolean;
+  nameSpan: Span;
+}
+
+export interface JsonTableColumns {
+  columns: JsonTableColumn[];
+  /** The first argument's text, when it is a single identifier — `p_items` in `JSON_TABLE(p_items, ...)`. */
+  source?: string;
+  /** The second argument, unquoted — the row path every column's own `PATH` is relative to. */
+  rootPath?: string;
+  /** Whether every item of `COLUMNS(...)` was in a shape this function reads. */
+  complete: boolean;
+}
+
+/** `{NULL | DEFAULT json_string | ERROR} ON {EMPTY | ERROR}`, read after a column's `PATH`. */
+function skipOnClauses(tokens: readonly Token[], from: number, to: number): number | undefined {
+  let i = from;
+  while (i <= to) {
+    if (kw(tokens[i], "NULL") || kw(tokens[i], "ERROR")) {
+      i++;
+    } else if (kw(tokens[i], "DEFAULT")) {
+      i++;
+      if (tokens[i]?.t !== "str" && tokens[i]?.t !== "num") return undefined;
+      i++;
+    } else {
+      return undefined;
+    }
+    if (!kw(tokens[i], "ON") || !(kw(tokens[i + 1], "EMPTY") || kw(tokens[i + 1], "ERROR"))) return undefined;
+    i += 2;
+  }
+  return i;
+}
+
+/** A column's type, reconstructed from its tokens — name plus any parenthesised arguments. */
+function jsonColumnType(tokens: readonly Token[], typeIdx: number, limit: number): { text: string; last: number } {
+  const last = typeExtent(tokens, typeIdx, limit);
+  let text = tokens[typeIdx]!.v;
+  if (punct(tokens[typeIdx + 1], "(")) {
+    const close = matchingParen(tokens, typeIdx + 1);
+    if (close !== -1 && close <= last) {
+      const args = splitCommas(tokens, typeIdx + 2, close - 1).map((part) =>
+        tokens
+          .slice(part.from, part.to + 1)
+          .map((t) => t.v)
+          .join(""),
+      );
+      text += `(${args.join(",")})`;
+    }
+  }
+  for (let i = typeIdx + 1; i <= last; i++) {
+    const suffix = kwAny(tokens[i], TYPE_SUFFIXES);
+    if (suffix) text += ` ${suffix}`;
+  }
+  return { text, last };
+}
+
+/**
+ * One item of a `COLUMNS(...)` list, appended to `out`. `false` when its shape is not one of the
+ * three this reads: `name FOR ORDINALITY`, `name type [EXISTS] PATH 'p' [empty/error clauses]`, or
+ * `NESTED [PATH] 'p' COLUMNS(...)`.
+ */
+function readJsonTableColumn(tokens: readonly Token[], from: number, to: number, out: JsonTableColumn[]): boolean {
+  if (kw(tokens[from], "NESTED")) {
+    // `NESTED [PATH] 'p' COLUMNS(...)` names nothing on its own: it is flattened into `out`, which
+    // is exactly how MySQL itself exposes the nested columns to the surrounding query.
+    let i = from + 1;
+    if (kw(tokens[i], "PATH")) i++;
+    if (tokens[i]?.t !== "str") return false;
+    i++;
+    if (!kw(tokens[i], "COLUMNS") || !punct(tokens[i + 1], "(")) return false;
+    const closeIdx = matchingParen(tokens, i + 1);
+    if (closeIdx !== to) return false;
+    return readJsonTableColumnList(tokens, i + 1, closeIdx, out);
+  }
+
+  const nameToken = tokens[from];
+  if (!nameToken || nameToken.t !== "id") return false;
+  const nameSpan: Span = { s: nameToken.s, e: nameToken.e };
+
+  if (kw(tokens[from + 1], "FOR") && kw(tokens[from + 2], "ORDINALITY")) {
+    if (from + 2 !== to) return false;
+    out.push({ name: nameToken.v, ordinality: true, nameSpan });
+    return true;
+  }
+
+  if (!tokens[from + 1] || tokens[from + 1]!.t !== "id") return false;
+  const { text, last } = jsonColumnType(tokens, from + 1, to);
+  let i = last + 1;
+  if (kw(tokens[i], "EXISTS")) i++;
+  if (!kw(tokens[i], "PATH") || tokens[i + 1]?.t !== "str") return false;
+  const path = unquote(tokens[i + 1]!.v);
+  i += 2;
+
+  if (i <= to && skipOnClauses(tokens, i, to) !== to + 1) return false;
+
+  out.push({ name: nameToken.v, type: text, path, ordinality: false, nameSpan });
+  return true;
+}
+
+/** A whole `COLUMNS(...)` body: every item split on its own depth-zero commas. */
+function readJsonTableColumnList(
+  tokens: readonly Token[],
+  openIdx: number,
+  closeIdx: number,
+  out: JsonTableColumn[],
+): boolean {
+  let complete = true;
+  for (const part of splitCommas(tokens, openIdx + 1, closeIdx - 1)) {
+    if (!readJsonTableColumn(tokens, part.from, part.to, out)) complete = false;
+  }
+  return complete;
+}
+
+/**
+ * `JSON_TABLE(source, '$path' COLUMNS(...))`'s own columns, when `relation` is one — `undefined`
+ * for anything else, including a table function this does not recognise by name.
+ *
+ * `complete` is `false` for any item whose shape is not one `readJsonTableColumn` reads: this
+ * stands down on that item rather than guessing at a name or a type it cannot see. `columns` still
+ * carries whatever it did read, the same best-effort contract `derivedColumns` keeps.
+ */
+export function jsonTableColumns(tokens: readonly Token[], relation: Relation): JsonTableColumns | undefined {
+  const derived = relation.derived;
+  if (!derived) return undefined;
+  if (!kw(tokens[derived.from - 1], "JSON_TABLE")) return undefined;
+
+  // `JSON_TABLE(expr, path_expr COLUMNS(...))`: only one comma, between the source and everything
+  // else — the row path and `COLUMNS(...)` are not comma-separated from each other.
+  const args = splitCommas(tokens, derived.from + 1, derived.to - 1);
+  if (args.length !== 2) return { columns: [], complete: false };
+
+  let source: string | undefined;
+  const sourceArg = args[0]!;
+  if (sourceArg.from === sourceArg.to && tokens[sourceArg.from]?.t === "id") source = tokens[sourceArg.from]!.v;
+
+  const rest = args[1]!;
+  if (tokens[rest.from]?.t !== "str") return { columns: [], source, complete: false };
+  const rootPath = unquote(tokens[rest.from]!.v);
+
+  const columnsIdx = rest.from + 1;
+  if (!kw(tokens[columnsIdx], "COLUMNS") || !punct(tokens[columnsIdx + 1], "(")) {
+    return { columns: [], source, rootPath, complete: false };
+  }
+  const closeIdx = matchingParen(tokens, columnsIdx + 1);
+  if (closeIdx === -1 || closeIdx !== rest.to) return { columns: [], source, rootPath, complete: false };
+
+  const columns: JsonTableColumn[] = [];
+  const complete = readJsonTableColumnList(tokens, columnsIdx + 1, closeIdx, columns);
+  return { columns, source, rootPath, complete };
 }
 
 /**
@@ -269,12 +453,14 @@ function resolveSelect(
  * shaped the same as.
  *
  * `complete` says whether every column is known: it is `false` when the relation is a table
- * function rather than a real subquery (nothing here reads `JSON_TABLE`'s own column syntax), when
- * what is inside the parentheses is not a `SELECT` (a `VALUES` row constructor, say), when the
- * alias carries its own column list (`(SELECT ...) t (a, b)` renames the output past what the
- * query itself calls it), or when the query's own first branch left something unnamed. `names` is
- * still returned in every case — best-effort — so a caller only after completion candidates is not
- * left with nothing just because one item could not be named.
+ * function rather than a real subquery — a table function's `names` comes from `jsonTableColumns`
+ * when it recognises one, best-effort like everything else here, but nothing here treats a table
+ * function's columns as the *whole* answer the way a real subquery's can be — when what is inside
+ * the parentheses is not a `SELECT` (a `VALUES` row constructor, say), when the alias carries its
+ * own column list (`(SELECT ...) t (a, b)` renames the output past what the query itself calls
+ * it), or when the query's own first branch left something unnamed. `names` is still returned in
+ * every case — best-effort — so a caller only after completion candidates is not left with nothing
+ * just because one item could not be named.
  */
 export function derivedColumns(
   dialect: Dialect,
@@ -291,6 +477,15 @@ export function derivedColumns(
   const before = tokens[derived.from - 1];
   const isTableFunction = before !== undefined && before.t === "id" && !kwAny(before, EXPECTS_TABLE);
 
+  if (isTableFunction) {
+    // Whatever `jsonTableColumns` could read is offered as names, but `complete` stays `false`
+    // regardless: rules like `names/unknown-column` stand down on a table function on purpose (see
+    // its own `docs`), and that decision is not this function's to revisit.
+    const found = jsonTableColumns(tokens, relation);
+    const names = found ? found.columns.map((column) => column.name) : [];
+    return { names, sources: [], complete: false, origins: names.map(() => undefined) };
+  }
+
   // The alias carries its own column list, which renames the output past what this function reads.
   let after = derived.to + 1;
   if (kw(tokens[after], "AS")) after++;
@@ -303,7 +498,7 @@ export function derivedColumns(
   while (punct(tokens[i], "(")) i++;
   const isSelect = kw(tokens[i], "SELECT");
 
-  if (isTableFunction || !isSelect) return { names: [], sources: [], complete: false };
+  if (!isSelect) return { names: [], sources: [], complete: false, origins: [] };
 
   const resolved = resolveSelect(dialect, tokens, i, derived.to - 1, 0);
   return { ...resolved, complete: resolved.complete && !hasColumnList };
@@ -403,6 +598,10 @@ function readTempTable(
   }
 
   let sources: string[] | undefined;
+  // The span of the expression that fills each column, when it came off the `SELECT` rather than
+  // an explicit column list — `undefined` here means this table declared its own columns, not that
+  // none of them have an origin. `hover` tells the two apart by whether this is `undefined` at all.
+  let columnOrigins: (Span | undefined)[] | undefined;
   if (columns.length === 0) {
     // Find the `SELECT` feeding the table, within the same statement.
     for (let j = iAfter; j <= Math.min(iAfter + 40, tokens.length - 1); j++) {
@@ -421,6 +620,7 @@ function readTempTable(
         const resolved = resolveSelect(dialect, tokens, j, stmtEnd, 0);
         columns = resolved.names;
         sources = resolved.sources;
+        columnOrigins = resolved.origins;
         break;
       }
     }
@@ -432,6 +632,7 @@ function readTempTable(
     kind: "temp_table",
     columns,
     sources,
+    columnOrigins,
     nameSpan: { s: nameToken.s, e: nameToken.e },
   });
   return iAfter;

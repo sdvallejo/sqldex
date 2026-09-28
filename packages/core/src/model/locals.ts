@@ -19,6 +19,15 @@ export interface Local {
    */
   sources?: string[];
   /**
+   * For `temp_table` only, and only when its columns were inferred from a `SELECT` (never from an
+   * explicit column list): the span of the expression that fills each one, parallel to `columns`.
+   * `JSON_SET(doc, '$.id', COALESCE(order_id,0)) doc` records the span of the `JSON_SET`
+   * call, which is what makes "where does this column's value come from" answerable by hover
+   * rather than only "which temporary table is it a column of". Absent for a column the list could
+   * not name an expression for (`Col`, `t.Col` — a plain reference, not something being computed).
+   */
+  columnOrigins?: (Span | undefined)[];
+  /**
    * `DECLARE v INT DEFAULT 0`. For `variable` only. Without a `DEFAULT` the variable starts as
    * NULL, which is what the "read before it is ever assigned" check needs to know.
    */

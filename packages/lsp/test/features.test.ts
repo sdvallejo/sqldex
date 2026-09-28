@@ -37,6 +37,23 @@ function cursor(source: string, file = "sps/sp_scratch.sql"): At {
   return at(workspace, new Analysed(document), document.positionAt(offset));
 }
 
+// `shadow` has a procedure, `sp_stage_items`, that creates a temporary table `tmp_items` in its
+// own file — the shape hover needs to tell a same-spelled *alias*, declared right in the statement
+// under the cursor, apart from that far-away table. `shop` has no such collision, hence a second
+// project rather than a second file dropped into the first one.
+const SHADOW = join(import.meta.dirname, "fixtures", "shadow");
+const shadow = new Workspace(SHADOW);
+
+/** Like `cursor`, but against `shadow`. */
+function shadowCursor(source: string, file = "sps/sp_scratch.sql"): At {
+  const offset = source.indexOf("|");
+  assert.notEqual(offset, -1, "the source has no | marking the cursor");
+
+  const text = source.slice(0, offset) + source.slice(offset + 1);
+  const document = TextDocument.create(pathToFileURL(join(SHADOW, file)).toString(), "sql", 1, text);
+  return at(shadow, new Analysed(document), document.positionAt(offset));
+}
+
 function markdown(result: Hover | undefined): string {
   assert.ok(result, "nothing was said about this position");
   return (result.contents as MarkupContent).value;
@@ -149,6 +166,132 @@ END;`),
 test("an unqualified column resolves against the statement's own tables", () => {
   const text = markdown(hover(cursor("SELECT ema|il FROM customers;")));
   assert.match(text, /customers\.email {2}varchar\(120\) NOT NULL/);
+});
+
+// ------------------------------------------------------------------ JSON_TABLE columns
+
+const JSON_TABLE_ITEMS =
+  "JSON_TABLE(p_items, '$[*]' COLUMNS(n FOR ORDINALITY, doc json PATH '$')) AS j";
+
+test("a JSON_TABLE column says its own type and path, unqualified", () => {
+  const text = markdown(hover(cursor(`SELECT |doc FROM ${JSON_TABLE_ITEMS};`)));
+  assert.match(text, /`doc json` — `JSON_TABLE` column \(alias `j`\), path `\$` over `p_items` \(row path `\$\[\*\]`\)/);
+});
+
+test("a JSON_TABLE's FOR ORDINALITY column says it is a row number", () => {
+  const text = markdown(hover(cursor(`SELECT |n FROM ${JSON_TABLE_ITEMS};`)));
+  assert.match(text, /`n` — `JSON_TABLE` column \(alias `j`\), row number \(FOR ORDINALITY\)/);
+});
+
+test("a JSON_TABLE column reads the same qualified", () => {
+  const text = markdown(hover(cursor(`SELECT j.d|oc FROM ${JSON_TABLE_ITEMS};`)));
+  assert.match(text, /`doc json` — `JSON_TABLE` column \(alias `j`\), path `\$` over `p_items` \(row path `\$\[\*\]`\)/);
+});
+
+test("hovering a JSON_TABLE column's own declaration says the same thing", () => {
+  const text = markdown(
+    hover(cursor("SELECT j.doc FROM JSON_TABLE(p_items, '$[*]' COLUMNS(n FOR ORDINALITY, d|oc json PATH '$')) AS j;")),
+  );
+  assert.match(text, /`doc json` — `JSON_TABLE` column \(alias `j`\), path `\$` over `p_items` \(row path `\$\[\*\]`\)/);
+});
+
+test("hovering a JSON_TABLE's own alias shows its columns, source and row path", () => {
+  const text = markdown(
+    hover(cursor("SELECT * FROM JSON_TABLE(p_items, '$[*]' COLUMNS(n FOR ORDINALITY, doc json PATH '$')) AS |j;")),
+  );
+  assert.match(text, /j {2}— JSON_TABLE, 2 columns over `p_items` \(row path `\$\[\*\]`\)/);
+  assert.match(text, /n, doc/);
+});
+
+// ------------------------------------------------------------ temporary table column origins
+
+test("a temporary table's inferred column shows the expression that fills it", () => {
+  const text = markdown(
+    hover(
+      cursor(`CREATE PROCEDURE \`sp_scratch\`(IN pDoc json)
+BEGIN
+  CREATE TEMPORARY TABLE tmp_orders SELECT order_id, JSON_SET(pDoc, '$.id', order_id) doc FROM orders;
+  SELECT |doc FROM tmp_orders;
+END;`),
+    ),
+  );
+  assert.match(text, /`doc` — column of temporary table `tmp_orders`/);
+  assert.match(text, /```sql\nJSON_SET\(pDoc, '\$\.id', order_id\)\n```/);
+});
+
+test("a temporary table's column reads the same qualified", () => {
+  const text = markdown(
+    hover(
+      cursor(`CREATE PROCEDURE \`sp_scratch\`(IN pDoc json)
+BEGIN
+  CREATE TEMPORARY TABLE tmp_orders SELECT order_id, JSON_SET(pDoc, '$.id', order_id) doc FROM orders;
+  SELECT tmp_orders.d|oc FROM tmp_orders;
+END;`),
+    ),
+  );
+  assert.match(text, /`doc` — column of temporary table `tmp_orders`/);
+  assert.match(text, /JSON_SET\(pDoc, '\$\.id', order_id\)/);
+});
+
+test("a temporary table's column that only references an existing one has nothing more to say", () => {
+  const text = markdown(
+    hover(
+      cursor(`CREATE PROCEDURE \`sp_scratch\`()
+BEGIN
+  CREATE TEMPORARY TABLE tmp_orders SELECT order_id, total FROM orders;
+  SELECT |order_id FROM tmp_orders;
+END;`),
+    ),
+  );
+  assert.match(text, /`order_id` — column of temporary table `tmp_orders`/);
+  assert.doesNotMatch(text, /```sql/);
+  assert.doesNotMatch(text, /Created in/);
+});
+
+// ------------------------------------------------- an alias wins over another file's temp table
+
+test("a JSON_TABLE alias wins over another file's temporary table of the same name", () => {
+  // `shadow`'s `sp_stage_items` creates a project-wide `tmp_items` — a name this statement also
+  // happens to alias its own JSON_TABLE as. The alias, declared right here, must be what answers.
+  const text = markdown(
+    hover(
+      shadowCursor(
+        "SELECT * FROM JSON_TABLE(p_items, '$[*]' COLUMNS(n FOR ORDINALITY, doc json PATH '$')) AS tmp_it|ems;",
+      ),
+    ),
+  );
+  assert.match(text, /tmp_items {2}— JSON_TABLE, 2 columns over `p_items` \(row path `\$\[\*\]`\)/);
+  assert.doesNotMatch(text, /alias of temporary table/);
+  assert.doesNotMatch(text, /Created in/);
+});
+
+test("a local temporary table's alias wins over another file's table of the same name", () => {
+  const text = markdown(
+    hover(
+      shadowCursor(`CREATE PROCEDURE \`sp_scratch\`()
+BEGIN
+  CREATE TEMPORARY TABLE tmp_local (id int, total decimal(10,2));
+  SELECT * FROM tmp_local AS tmp_it|ems;
+END;`),
+    ),
+  );
+  assert.match(text, /tmp_items {2}— alias of temporary table tmp_local, 2 columns/);
+  assert.match(text, /id, total/);
+  assert.doesNotMatch(text, /Created in/);
+});
+
+test("a temporary table this file creates is not said to be created in another that shares its name", () => {
+  const text = markdown(
+    hover(
+      shadowCursor(`CREATE PROCEDURE \`sp_scratch\`()
+BEGIN
+  CREATE TEMPORARY TABLE tmp_items (id int);
+  SELECT * FROM tmp_it|ems;
+END;`),
+    ),
+  );
+  assert.match(text, /tmp_items {2}— temporary table, 1 columns/);
+  assert.doesNotMatch(text, /Created in/);
 });
 
 // --------------------------------------------------------------- signature help
