@@ -387,8 +387,48 @@ test("a * over the file's own temporary table reads that one, not another proced
   assert.deepEqual(run(unknownColumn, src), []);
 });
 
-test("JSON_TABLE shares the derived table's own shape, but not a query this rule can read", () => {
+test("a JSON_TABLE's columns are the ones its COLUMNS declares, and a missing one sounds", () => {
   const src = "SELECT jt.whatever FROM JSON_TABLE(orders.total, '$[*]' COLUMNS (v INT PATH '$')) jt;";
+  assert.deepEqual(run(unknownColumn, src), ["derived table jt has no column whatever"]);
+});
+
+test("the declared JSON_TABLE column is quiet, in any letter case", () => {
+  const src = "SELECT jt.v, jt.V FROM JSON_TABLE(orders.total, '$[*]' COLUMNS (v INT PATH '$')) jt;";
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("a JSON_TABLE with an ordinality column and a NESTED PATH group still reports a missing column", () => {
+  const src =
+    "SELECT jt.whatever FROM JSON_TABLE(orders.total, '$[*]' COLUMNS (n FOR ORDINALITY, " +
+    "v INT PATH '$.v', NESTED PATH '$.tags[*]' COLUMNS (tag VARCHAR(20) PATH '$'))) jt;";
+  assert.deepEqual(run(unknownColumn, src), ["derived table jt has no column whatever"]);
+});
+
+test("the ordinality column and a NESTED PATH group's column are both the JSON_TABLE's own", () => {
+  const src =
+    "SELECT jt.n, jt.v, jt.tag FROM JSON_TABLE(orders.total, '$[*]' COLUMNS (n FOR ORDINALITY, " +
+    "v INT PATH '$.v', NESTED PATH '$.tags[*]' COLUMNS (tag VARCHAR(20) PATH '$'))) jt;";
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("a COLUMNS item this does not read stands the JSON_TABLE down", () => {
+  const src = "SELECT jt.whatever FROM JSON_TABLE(orders.total, '$[*]' COLUMNS (v INT PATH '$', w SOMETHING WEIRD)) jt;";
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("a table function other than JSON_TABLE is not read", () => {
+  const src = "SELECT jt.whatever FROM SOME_TABLE_FN(orders.total, '$[*]' COLUMNS (v INT PATH '$')) jt;";
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("a JSON_TABLE row path that is not a string literal stands it down", () => {
+  const src = "SELECT jt.whatever FROM JSON_TABLE(orders.total, p_path COLUMNS (v INT PATH '$')) jt;";
+  assert.deepEqual(run(unknownColumn, src), []);
+});
+
+test("a derived table that selects * from a JSON_TABLE stays stood down", () => {
+  const src =
+    "SELECT x.whatever FROM (SELECT * FROM JSON_TABLE(orders.total, '$[*]' COLUMNS (v INT PATH '$')) jt) x;";
   assert.deepEqual(run(unknownColumn, src), []);
 });
 

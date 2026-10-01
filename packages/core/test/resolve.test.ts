@@ -144,6 +144,25 @@ test("an unaliased expression in a derived table's query leaves it incomplete", 
   assert.equal(resolved?.complete, false);
 });
 
+test("a JSON_TABLE whose COLUMNS list was read in full is a complete derived table", () => {
+  const ctx = contextFor(SCHEMA);
+  const sql = "SELECT j. FROM JSON_TABLE('[]', '$[*]' COLUMNS (v INT PATH '$', n FOR ORDINALITY)) j";
+  const tokens = tokenize(sql).tokens;
+  const resolved = qualifier(ctx, analyze(mysql, sql, tokens, sql.length), EMPTY_SCOPE, "j", tokens);
+  assert.equal(resolved?.kind, "derived");
+  assert.equal(resolved?.complete, true);
+  assert.deepEqual(columnNames(resolved), ["v", "n"]);
+});
+
+test("a JSON_TABLE with a COLUMNS item that was not read is incomplete", () => {
+  const ctx = contextFor(SCHEMA);
+  const sql = "SELECT j. FROM JSON_TABLE('[]', '$[*]' COLUMNS (v INT PATH '$', w SOMETHING WEIRD)) j";
+  const tokens = tokenize(sql).tokens;
+  const resolved = qualifier(ctx, analyze(mysql, sql, tokens, sql.length), EMPTY_SCOPE, "j", tokens);
+  assert.equal(resolved?.kind, "derived");
+  assert.equal(resolved?.complete, false);
+});
+
 test("TRIM's own FROM does not name a relation", () => {
   const sql = "SELECT TRIM(BOTH ' ' FROM c) FROM orders o";
   const tokens = tokenize(sql).tokens;

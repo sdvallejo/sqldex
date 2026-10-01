@@ -452,15 +452,16 @@ export function jsonTableColumns(tokens: readonly Token[], relation: Relation): 
  * A derived table's output columns: `FROM (SELECT ...) t` or the `JSON_TABLE(...)` a relation is
  * shaped the same as.
  *
- * `complete` says whether every column is known: it is `false` when the relation is a table
- * function rather than a real subquery — a table function's `names` comes from `jsonTableColumns`
- * when it recognises one, best-effort like everything else here, but nothing here treats a table
- * function's columns as the *whole* answer the way a real subquery's can be — when what is inside
- * the parentheses is not a `SELECT` (a `VALUES` row constructor, say), when the alias carries its
- * own column list (`(SELECT ...) t (a, b)` renames the output past what the query itself calls
- * it), or when the query's own first branch left something unnamed. `names` is still returned in
- * every case — best-effort — so a caller only after completion candidates is not left with nothing
- * just because one item could not be named.
+ * `complete` says whether every column is known. For a real subquery it is `false` when what is
+ * inside the parentheses is not a `SELECT` (a `VALUES` row constructor, say), when the alias carries
+ * its own column list (`(SELECT ...) t (a, b)` renames the output past what the query itself calls
+ * it), or when the query's own first branch left something unnamed. For a `JSON_TABLE` it is `true`
+ * only when `jsonTableColumns` read the whole `COLUMNS(...)` list (an item in a shape it does not
+ * read could be a column it missed), the list named at least one column (an empty list is more
+ * likely a miss than a declaration), and the alias carries no column list of its own; any other
+ * table function is never complete, since nothing here knows what it returns. `names` is still
+ * returned in every case — best-effort — so a caller only after completion candidates is not left
+ * with nothing just because one item could not be named.
  */
 export function derivedColumns(
   dialect: Dialect,
@@ -477,20 +478,21 @@ export function derivedColumns(
   const before = tokens[derived.from - 1];
   const isTableFunction = before !== undefined && before.t === "id" && !kwAny(before, EXPECTS_TABLE);
 
-  if (isTableFunction) {
-    // Whatever `jsonTableColumns` could read is offered as names, but `complete` stays `false`
-    // regardless: rules like `names/unknown-column` stand down on a table function on purpose (see
-    // its own `docs`), and that decision is not this function's to revisit.
-    const found = jsonTableColumns(tokens, relation);
-    const names = found ? found.columns.map((column) => column.name) : [];
-    return { names, sources: [], complete: false, origins: names.map(() => undefined) };
-  }
-
   // The alias carries its own column list, which renames the output past what this function reads.
   let after = derived.to + 1;
   if (kw(tokens[after], "AS")) after++;
   if (relation.alias !== undefined) after++;
   const hasColumnList = punct(tokens[after], "(");
+
+  if (isTableFunction) {
+    // Whatever `jsonTableColumns` could read is offered as names. They are the whole answer only
+    // for a `JSON_TABLE` whose list was read to the end and named something, under an alias that
+    // does not rename it; every other table function stays incomplete.
+    const found = jsonTableColumns(tokens, relation);
+    const names = found ? found.columns.map((column) => column.name) : [];
+    const complete = found !== undefined && found.complete && found.columns.length > 0 && !hasColumnList;
+    return { names, sources: [], complete, origins: names.map(() => undefined) };
+  }
 
   // What is inside the parentheses has to be a `SELECT`; nested `((SELECT ...))` is followed
   // through, anything else is not something this function reads.

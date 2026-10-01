@@ -16,9 +16,16 @@ because they are different mistakes with different fixes — a stale alias again
 A derived table's columns are known when every item in its query's first branch has a name — under a
 \`UNION\` the first branch is what names the result — and reported against exactly like a real table's.
 The rule stands down on one instead: an item that is an unaliased expression, a \`*\` that could not be
-traced to exactly one relation or that reads a temporary table, a relation that is a table function such as \`JSON_TABLE\`, an alias that
-carries its own column list, or a common table expression, whose columns come out of a query this rule
-does not read either.
+traced to exactly one relation or that reads a temporary table, an alias that carries its own column
+list, or a common table expression, whose columns come out of a query this rule does not read either.
+
+A \`JSON_TABLE\`'s columns are the ones its \`COLUMNS(...)\` declares — a \`NESTED PATH\` group's columns and
+a \`FOR ORDINALITY\` column included, all addressed through the same alias — and are checked like a derived
+table's. The rule stands down when an item of \`COLUMNS(...)\` is in a shape it does not read, when the
+relation is some other table function, and when a derived table selects \`*\` from a \`JSON_TABLE\`. A
+reference to a column the \`JSON_TABLE\` does not declare is error 1054, but inside a stored routine that
+error only comes when the routine is called: \`CREATE PROCEDURE\` accepts it, which is what makes the
+mistake worth catching here.
 
 A temporary table's columns may not have been inferable, and a relation that failed to resolve has none
 to compare against; both are left alone rather than guessed at, which is what keeps flagging a reference

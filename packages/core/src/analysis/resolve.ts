@@ -30,7 +30,8 @@ export interface Resolved {
    * Whether `columns` is the whole answer. Only set for `derived`: a temporary table's `columns`
    * has always been a best effort, but a derived table's completeness is exactly what tells
    * `names/unknown-column` whether a name missing from `columns` is worth reporting or just
-   * something this pass could not follow.
+   * something this pass could not follow. A `JSON_TABLE` counts as derived here, complete when its
+   * `COLUMNS(...)` list was read in full.
    */
   complete?: boolean;
   name: string;
