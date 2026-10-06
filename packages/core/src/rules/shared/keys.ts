@@ -472,3 +472,20 @@ export function isKeyLookup(ctx: ScopedContext, sel: number, close: number): boo
   if (query) return coversUniqueKey((name) => ctx.dialect.foldIdentifier(name, false), query.table, query.pinned);
   return isToOneJoinLookup(ctx, sel, close);
 }
+
+/**
+ * Does the catalog know every table this query reads?
+ *
+ * The question `isKeyLookup` cannot answer for itself: it says `false` both for a search the schema
+ * has looked at and found unpinned, and for one it could not look at, a temporary table, a derived
+ * table or a name the repo does not define. A rule that reports on the first and must stay silent on
+ * the second needs to tell them apart, and this is how — every relation of the query's own scope is a
+ * plain name the catalog holds, and there is at least one.
+ */
+export function readsKnownTables(ctx: ScopedContext, sel: number, close: number): boolean {
+  const scope = ctx.scopeAt(sel);
+  if (!scope || scope.to > close || scope.relations.length === 0) return false;
+  return scope.relations.every(
+    (rel) => rel.name !== undefined && !rel.cte && !rel.derived && ctx.catalog.table(rel.name) !== undefined,
+  );
+}

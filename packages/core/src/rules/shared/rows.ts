@@ -66,20 +66,50 @@ export function foldsToOneRow(tokens: readonly Token[], from: number, to: number
   return aggregate;
 }
 
-/** `LIMIT 1`, in either of its two spellings, at the query's own depth. */
-export function limitsToOne(tokens: readonly Token[], from: number, to: number): boolean {
+/** What a `LIMIT` asks for, read off its tokens. */
+export interface LimitClause {
+  /** The `LIMIT` token itself. */
+  index: number;
+  /** The count, when it is a literal: `undefined` for a parameter, a variable or a `?`. */
+  count: number | undefined;
+  /** Whether rows are skipped: an offset in either spelling, other than a literal `0`. */
+  offset: boolean;
+}
+
+/**
+ * The `LIMIT` at `index`, in any of its three spellings: `LIMIT n`, `LIMIT m, n` and `LIMIT n OFFSET m`.
+ *
+ * The count is the number after the comma in the second and the one right after `LIMIT` in the other
+ * two, which is the only thing that differs between them.
+ */
+export function limitAt(tokens: readonly Token[], index: number): LimitClause {
+  const comma = punct(tokens[index + 2], ",");
+  const count = comma ? tokens[index + 3] : tokens[index + 1];
+  const offset = comma ? tokens[index + 1] : kw(tokens[index + 2], "OFFSET") ? tokens[index + 3] : undefined;
+  return {
+    index,
+    count: count?.t === "num" ? Number(count.v) : undefined,
+    // `LIMIT 0, 1` skips nothing: it is `LIMIT 1` written the long way.
+    offset: offset !== undefined && !(offset.t === "num" && Number(offset.v) === 0),
+  };
+}
+
+/** The first `LIMIT` at the range's own depth, or `undefined`. */
+export function readLimit(tokens: readonly Token[], from: number, to: number): LimitClause | undefined {
   let depth = 0;
   for (let i = from; i <= to; i++) {
     const t = tokens[i]!;
     if (punct(t, "(")) depth++;
     else if (punct(t, ")")) depth--;
-    else if (depth === 0 && kw(t, "LIMIT")) {
-      // `LIMIT 1` and `LIMIT 0, 1` both take one row; the count is the last number either way.
-      const count = punct(tokens[i + 2], ",") ? tokens[i + 3] : tokens[i + 1];
-      return count?.t === "num" && Number(count.v) === 1;
-    }
+    else if (depth === 0 && kw(t, "LIMIT")) return limitAt(tokens, i);
   }
-  return false;
+  return undefined;
+}
+
+/** `LIMIT 1`, in any of its spellings, at the query's own depth. */
+export function limitsToOne(tokens: readonly Token[], from: number, to: number): boolean {
+  // `LIMIT 1` and `LIMIT 0, 1` both take one row; the count is what matters, not the offset.
+  return readLimit(tokens, from, to)?.count === 1;
 }
 
 /** A unique key the `WHERE` starts and does not finish, with the columns it left free. */

@@ -19,7 +19,8 @@ somebody adds the second row.
 **It is the same defect as \`query/scalar-subquery-many-rows\`, in the other place a routine reads a
 single value**, and it is checked by the same three questions, answered by the same code: does the
 \`WHERE\` fix a whole primary key or unique index of the one table read, does an aggregate fold the
-rows into one, is there a \`LIMIT 1\`. Any of them is enough for silence.
+rows into one, is there a \`LIMIT 1\`. Any of them is enough for silence. A \`LIMIT 1\` ends the
+error 1172, not the question of *which* row it returns, which is \`query/limit-without-order-by\`'s.
 
 What it reports is the search that **starts a unique key and abandons it**: some columns of a
 declared key fixed, the rest left free. That is not a hypothesis about the data — it is the schema

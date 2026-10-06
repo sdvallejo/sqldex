@@ -43,6 +43,8 @@ import { insertValueCount } from "./query/insert-value-count.ts";
 import { joinMultipliesAggregate } from "./query/join-multiplies-aggregate.ts";
 import { joinWithoutCondition } from "./query/join-without-condition.ts";
 import { leftJoinArithmetic } from "./query/left-join-arithmetic.ts";
+import { limitOffsetWithoutOrderBy } from "./query/limit-offset-without-order-by.ts";
+import { limitWithoutOrderBy } from "./query/limit-without-order-by.ts";
 import { literalTypeMismatch } from "./query/literal-type-mismatch.ts";
 import { nullableScalarSubquery } from "./query/nullable-scalar-subquery.ts";
 import { onlyFullGroupBy } from "./query/only-full-group-by.ts";
@@ -144,6 +146,8 @@ export const statementRules = [
   leftJoinArithmetic,
   joinMultipliesAggregate,
   scalarSubqueryManyRows,
+  limitOffsetWithoutOrderBy,
+  limitWithoutOrderBy,
   selectIntoArity,
   selectIntoManyRows,
   selectIntoSelf,
@@ -227,6 +231,8 @@ export {
   joinMultipliesAggregate,
   joinWithoutCondition,
   leftJoinArithmetic,
+  limitOffsetWithoutOrderBy,
+  limitWithoutOrderBy,
   literalTypeMismatch,
   noPrimaryKey,
   nullableIntoArithmetic,

@@ -34,6 +34,8 @@ import {
   aggregateWithoutGroupBy,
   distinctOrderByHiddenColumn,
   leftJoinArithmetic,
+  limitOffsetWithoutOrderBy,
+  limitWithoutOrderBy,
   literalTypeMismatch,
   nullableScalarSubquery,
   onlyFullGroupBy,
@@ -2731,4 +2733,152 @@ test("a condition that already asks about zero has said what = '' means", () => 
     "END",
   ].join("\n");
   assert.equal(run(literalTypeMismatch, loud).length, 2);
+});
+
+// ------------------------------------------------------ a LIMIT with no ORDER BY beside it
+
+/** How many of the two `LIMIT` rules speak of one source: they are never both about the same token. */
+function limitFindings(src: string): { warn: number; hint: number } {
+  return { warn: run(limitOffsetWithoutOrderBy, src).length, hint: run(limitWithoutOrderBy, src).length };
+}
+
+test("an offset with no order is a warning, in each spelling of it", () => {
+  for (const limit of ["LIMIT 20, 10", "LIMIT 10 OFFSET 20", "LIMIT 1 OFFSET 20", "LIMIT 20, 1"]) {
+    assert.deepEqual(limitFindings(`SELECT order_id FROM orders ${limit};`), { warn: 1, hint: 0 }, limit);
+  }
+  assert.deepEqual(limitFindings(body("  SELECT order_id FROM orders LIMIT p_id, 1;")), { warn: 1, hint: 0 });
+  // Over a table the catalog does not have, too: the offset says it by itself.
+  assert.deepEqual(limitFindings("SELECT total FROM tmp_from_other_sp LIMIT 20, 10;"), { warn: 1, hint: 0 });
+});
+
+test("the same offset with an order is quiet", () => {
+  for (const limit of ["LIMIT 20, 10", "LIMIT 10 OFFSET 20", "LIMIT p_id, 1"]) {
+    const src = body(`  SELECT order_id FROM orders ORDER BY order_id ${limit};`);
+    assert.deepEqual(limitFindings(src), { warn: 0, hint: 0 }, limit);
+  }
+});
+
+test("a count with no offset and no order is a hint, with an order it is quiet", () => {
+  assert.deepEqual(limitFindings("SELECT order_id FROM orders LIMIT 10;"), { warn: 0, hint: 1 });
+  assert.deepEqual(limitFindings(body("  SELECT order_id FROM orders LIMIT p_id;")), { warn: 0, hint: 1 });
+  assert.deepEqual(limitFindings("SELECT order_id FROM orders LIMIT ?;"), { warn: 0, hint: 1 });
+  assert.deepEqual(limitFindings("SELECT order_id FROM orders ORDER BY order_id LIMIT 10;"), { warn: 0, hint: 0 });
+});
+
+test("a finding sits on the LIMIT itself", () => {
+  const src = "SELECT order_id FROM orders LIMIT 20, 10;";
+  const [diagnostic] = check(
+    new Registry().add(limitOffsetWithoutOrderBy),
+    { dialect: mysql, catalog: catalogOf(), schemas: new Set(["shop"]), config: defaults },
+    src,
+  );
+  assert.equal(diagnostic?.code, "query/limit-offset-without-order-by");
+  assert.equal(src.slice(diagnostic!.span.s, diagnostic!.span.e), "LIMIT");
+});
+
+test("a LIMIT over a search the key does not finish is a hint, over the whole key it is quiet", () => {
+  const half = "SELECT amount FROM order_lines WHERE order_id = 7";
+  const whole = "SELECT amount FROM order_lines WHERE order_id = 7 AND line_no = 1";
+  for (const limit of ["LIMIT 1", "LIMIT 5"]) {
+    assert.deepEqual(limitFindings(`${half} ${limit};`), { warn: 0, hint: 1 }, limit);
+    assert.deepEqual(limitFindings(`${whole} ${limit};`), { warn: 0, hint: 0 }, limit);
+  }
+  // An offset of zero skips nothing, so both spellings of it are a plain `LIMIT 1`.
+  for (const limit of ["LIMIT 1 OFFSET 0", "LIMIT 0, 1"]) {
+    assert.deepEqual(limitFindings(`${half} ${limit};`), { warn: 0, hint: 1 }, limit);
+  }
+});
+
+test("a LIMIT that reads back only what the WHERE fixed is quiet, one more column and it is a hint", () => {
+  const probe = "SELECT order_id FROM order_lines WHERE order_id = 7 LIMIT 1;";
+  const qualified = "SELECT l.order_id FROM order_lines l WHERE l.order_id = 7 LIMIT 1;";
+  const reads = "SELECT order_id, amount FROM order_lines WHERE order_id = 7 LIMIT 1;";
+  assert.deepEqual(run(limitWithoutOrderBy, probe), []);
+  assert.deepEqual(run(limitWithoutOrderBy, qualified), []);
+  assert.equal(run(limitWithoutOrderBy, reads).length, 1);
+});
+
+test("a LIMIT 1 over a table the catalog cannot speak about stays quiet, a larger count does not", () => {
+  const derived = "SELECT x.amount FROM (SELECT amount FROM order_lines WHERE order_id = 7) x";
+  for (const query of ["SELECT total FROM tmp_from_other_sp", "SELECT total FROM somewhere_else", derived]) {
+    assert.deepEqual(limitFindings(`${query} LIMIT 1;`), { warn: 0, hint: 0 }, query);
+    assert.deepEqual(limitFindings(`${query} LIMIT 5;`), { warn: 0, hint: 1 }, query);
+  }
+});
+
+test("a join the foreign key vouches for is a lookup, one it does not is a hint", () => {
+  const fk = "CREATE TABLE refunds (refund_id int NOT NULL, order_id int NOT NULL, PRIMARY KEY (refund_id), " +
+    "FOREIGN KEY (order_id) REFERENCES orders (order_id));";
+  const toOne = "SELECT r.refund_id FROM refunds r JOIN orders o ON o.order_id = r.order_id WHERE r.refund_id = 3 LIMIT 1;";
+  assert.deepEqual(run(limitWithoutOrderBy, toOne, fk), []);
+  // Without the declared key the join may multiply the row, so nothing guarantees one.
+  assert.equal(run(limitWithoutOrderBy, toOne).length, 1);
+});
+
+test("an EXISTS only asks whether there is a row", () => {
+  const exists = "SELECT 1 + (SELECT 1 FROM orders o WHERE EXISTS (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 LIMIT 5));";
+  const scalar = "SELECT 1 + (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 LIMIT 5);";
+  assert.deepEqual(limitFindings(exists), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings(scalar), { warn: 0, hint: 1 });
+  const existsPage = "SELECT order_id FROM orders o WHERE NOT EXISTS (SELECT l.amount FROM order_lines l WHERE l.order_id = 7 LIMIT 2, 1) ORDER BY 1;";
+  assert.deepEqual(limitFindings(existsPage), { warn: 0, hint: 0 });
+});
+
+test("a select list of nothing but literals returns the same row whichever it is", () => {
+  assert.deepEqual(limitFindings("SELECT 1 FROM order_lines WHERE order_id = 7 LIMIT 1;"), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings("SELECT 1, 'x', NULL FROM orders LIMIT 5, 5;"), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings("SELECT order_id, 1 FROM orders LIMIT 5, 5;"), { warn: 1, hint: 0 });
+});
+
+test("a LIMIT 0 keeps no rows", () => {
+  assert.deepEqual(limitFindings("SELECT order_id FROM orders LIMIT 0;"), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings("SELECT order_id FROM orders LIMIT 5, 0;"), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings("SELECT order_id FROM orders LIMIT 1;"), { warn: 0, hint: 1 });
+});
+
+test("an aggregate with no GROUP BY is one row, with one it is not", () => {
+  assert.deepEqual(limitFindings("SELECT SUM(amount) FROM order_lines LIMIT 5;"), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings("SELECT SUM(amount) FROM order_lines GROUP BY order_id LIMIT 5;"), { warn: 0, hint: 1 });
+  assert.deepEqual(limitFindings("SELECT SUM(amount) FROM order_lines GROUP BY order_id LIMIT 5, 5;"), { warn: 1, hint: 0 });
+});
+
+test("a subquery is judged by its own ORDER BY and not by its parent's", () => {
+  // The parent orders its own rows; the inner LIMIT is still free to pick any.
+  const parentOrdered =
+    "SELECT o.order_id FROM orders o WHERE o.order_id IN (SELECT l.order_id FROM order_lines l LIMIT 5, 5) ORDER BY o.order_id;";
+  const innerOrdered =
+    "SELECT o.order_id FROM orders o WHERE o.order_id IN (SELECT l.order_id FROM order_lines l ORDER BY l.line_no LIMIT 5, 5);";
+  assert.deepEqual(limitFindings(parentOrdered), { warn: 1, hint: 0 });
+  assert.deepEqual(limitFindings(innerOrdered), { warn: 0, hint: 0 });
+
+  // And the other way round: the subquery's order does not order the parent's LIMIT.
+  const outerLimited =
+    "SELECT o.order_id FROM orders o WHERE o.order_id IN (SELECT l.order_id FROM order_lines l ORDER BY l.line_no) LIMIT 5;";
+  assert.deepEqual(limitFindings(outerLimited), { warn: 0, hint: 1 });
+});
+
+test("a DELETE with a LIMIT is out of scope, a SELECT inside it is not", () => {
+  assert.deepEqual(limitFindings("DELETE FROM orders WHERE status = 'X' LIMIT 100;"), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings("UPDATE orders SET status = 'X' WHERE status = 'A' LIMIT 100;"), { warn: 0, hint: 0 });
+  assert.deepEqual(
+    limitFindings("DELETE FROM orders WHERE order_id IN (SELECT order_id FROM refunds LIMIT 100);"),
+    { warn: 0, hint: 1 },
+  );
+});
+
+test("a UNION is ordered by an ORDER BY anywhere at its depth", () => {
+  const union = "SELECT order_id FROM orders UNION SELECT refund_id FROM refunds";
+  assert.deepEqual(limitFindings(`${union} ORDER BY 1 LIMIT 10;`), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings(`${union} ORDER BY 1 LIMIT 10, 10;`), { warn: 0, hint: 0 });
+  assert.deepEqual(limitFindings(`${union} LIMIT 10;`), { warn: 0, hint: 1 });
+  assert.deepEqual(limitFindings(`${union} LIMIT 10, 10;`), { warn: 1, hint: 0 });
+  // Its branches are not judged one by one, so the one count that keys decide stays quiet.
+  assert.deepEqual(limitFindings(`${union} LIMIT 1;`), { warn: 0, hint: 0 });
+});
+
+test("the two LIMIT rules are never both about one LIMIT", () => {
+  for (const limit of ["LIMIT 1", "LIMIT 2", "LIMIT 1 OFFSET 3", "LIMIT 3, 1", "LIMIT 0", "LIMIT 0, 1"]) {
+    const { warn, hint } = limitFindings(`SELECT amount FROM order_lines WHERE order_id = 7 ${limit};`);
+    assert.equal(warn + hint, limit === "LIMIT 0" ? 0 : 1, limit);
+  }
 });

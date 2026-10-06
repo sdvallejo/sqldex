@@ -66,7 +66,8 @@ Three shapes make one row certain, and any of them is enough for silence:
     spelled differently. A list of literals is not: there, several is what \`IN\` is for.
   - **An aggregate**, which folds a group into one row — but not with a \`GROUP BY\`, which hands back
     one row *per group* and is as free to return several as no aggregate at all.
-  - **\`LIMIT 1\`**, which is the author saying *any one of them will do*.
+  - **\`LIMIT 1\`**, which is the author saying *any one of them will do*. That ends the error, not the
+    question of *which* row: that is \`query/limit-without-order-by\`'s.
 
 What it deliberately leaves alone:
 
