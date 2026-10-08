@@ -1,84 +1,6 @@
 import { bareColumnCandidate, joinNames } from "../shared/names.ts";
-import { columnNames, relation as resolveRelation } from "../../analysis/resolve.ts";
-import { selectListColumns } from "../../analysis/locals.ts";
-import { kw, matchingParen, punct } from "../../syntax/fast/tok.ts";
+import { describe, type Described } from "../../analysis/owners.ts";
 import type { DocumentContext, Rule, ScopeInfo } from "../rule.ts";
-
-/** What a scope resolves a bare name against, worked out once per scope. */
-interface Described {
-  /** Which relations hold each name — the names, not a count. */
-  holders: Map<string, string[]>;
-  /** Names a `USING (...)` merged into one column, so they are no longer ambiguous. */
-  merged: Set<string>;
-  /** A `NATURAL JOIN` merges every shared name, without saying which. */
-  natural: boolean;
-  /** Names the `SELECT` list produces. */
-  output: Set<string>;
-  /** Token indexes where the list *defines* a name rather than reading a column. */
-  defines: Set<number>;
-  /** Where `GROUP BY` / `ORDER BY` / `HAVING` begins, past which the output names are visible. */
-  tail: number;
-}
-
-function describe(ctx: DocumentContext, scope: ScopeInfo): Described {
-  const { tokens, dialect } = ctx;
-  const fold = (name: string): string => dialect.foldIdentifier(name, false);
-
-  const holders = new Map<string, string[]>();
-  for (const relation of scope.relations) {
-    // The row alias of an `INSERT … ON DUPLICATE KEY UPDATE` names the same columns as the target it
-    // sits beside, so counting both would make every assignment in the clause look ambiguous. MySQL
-    // reads the bare name there as the table's, always.
-    if (relation.rowAlias) continue;
-    const label = relation.alias ?? relation.name;
-    if (!label) continue;
-    const resolved = resolveRelation({ dialect, catalog: ctx.catalog, schemas: ctx.schemas }, ctx.locals, relation);
-    for (const name of columnNames(resolved)) {
-      const key = fold(name);
-      const list = holders.get(key);
-      if (list) list.push(label);
-      else holders.set(key, [label]);
-    }
-  }
-
-  const merged = new Set<string>();
-  let natural = false;
-  let depth = 0;
-  for (let i = scope.from; i <= scope.to; i++) {
-    const t = tokens[i]!;
-    if (punct(t, "(")) depth++;
-    else if (punct(t, ")")) depth--;
-    else if (depth === 0 && kw(t, "NATURAL")) natural = true;
-    else if (depth === 0 && kw(t, "USING") && punct(tokens[i + 1], "(")) {
-      const close = matchingParen(tokens, i + 1);
-      for (let j = i + 2; j <= (close === -1 ? i + 1 : close) - 1; j++) {
-        if (tokens[j]!.t === "id") merged.add(fold(tokens[j]!.v));
-      }
-    }
-  }
-
-  const output = new Set<string>();
-  let defines = new Set<number>();
-  let tail = Number.POSITIVE_INFINITY;
-  if (kw(tokens[scope.from], "SELECT")) {
-    const list = selectListColumns(tokens, scope.from, scope.to);
-    for (const name of list.names) output.add(fold(name));
-    defines = list.definedAt;
-
-    depth = 0;
-    for (let i = scope.from; i <= scope.to; i++) {
-      const t = tokens[i]!;
-      if (punct(t, "(")) depth++;
-      else if (punct(t, ")")) depth--;
-      else if (depth === 0 && (kw(t, "GROUP") || kw(t, "ORDER") || kw(t, "HAVING"))) {
-        tail = i;
-        break;
-      }
-    }
-  }
-
-  return { holders, merged, natural, output, defines, tail };
-}
 
 export const ambiguousColumn: Rule = {
   id: "names/ambiguous-column",
@@ -123,7 +45,7 @@ one and never looks further out.`,
     const described = new Map<ScopeInfo, Described>();
     const of = (scope: ScopeInfo): Described => {
       let hit = described.get(scope);
-      if (!hit) described.set(scope, (hit = describe(ctx, scope)));
+      if (!hit) described.set(scope, (hit = describe({ dialect: ctx.dialect, catalog: ctx.catalog, schemas: ctx.schemas }, ctx.locals, ctx.tokens, scope)));
       return hit;
     };
 
@@ -153,7 +75,7 @@ one and never looks further out.`,
           if (holders.length > 1 && !mergedAway) {
             ctx.report(
               token,
-              `${token.v} is ambiguous: ${joinNames(holders)} ${holders.length === 2 ? "both" : "all"} have it`,
+              `${token.v} is ambiguous: ${joinNames(holders.map((holder) => holder.label))} ${holders.length === 2 ? "both" : "all"} have it`,
             );
           }
           return;

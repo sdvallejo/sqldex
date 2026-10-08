@@ -19,11 +19,11 @@
  * repository of a few thousand files takes the scan from every file down to a few hundred.
  */
 
-import type { Dialect } from "../dialects/dialect.ts";
 import { tokenize } from "../syntax/fast/lexer.ts";
-import { relations, statements } from "../syntax/fast/stmt.ts";
 import { punct } from "../syntax/fast/tok.ts";
 import type { Span } from "../syntax/types.ts";
+import { OwnerSource } from "./owners.ts";
+import type { ResolveContext } from "./resolve.ts";
 
 export interface RefTarget {
   /** The identifier being looked for. */
@@ -73,20 +73,34 @@ export function mentions(lowered: string, needle: string): boolean {
  * Every occurrence of the name in one source, as whole identifiers.
  *
  * With `target.owner` set the name is treated as a column of that table, and the hits are narrowed
- * to the ones that really refer to **its** column:
+ * to the ones that really refer to **its** column. That is `columnOwners`' question — whose column
+ * is this token — asked of every token that spells the name, so the answer is the one the editor and
+ * the diagnostics give rather than a second opinion:
  *
- *   - `o.status` counts only when `o` names or aliases the owning table in that statement.
- *   - a bare `status` counts only when the statement involves the owning table **and** that table
- *     actually has the column.
+ *   - `o.status` counts when `o` resolves to the owning table where it is written: an alias of it, a
+ *     `NEW`/`OLD` in a trigger on it, or its own name — and not when a temporary table, a `WITH`
+ *     name or a derived table of that name stands in the way.
+ *   - a bare `status` counts when the innermost query that has a column of that name has it from the
+ *     owning table. The same word in the other half of a join, in a subquery over another table, on
+ *     the `SELECT` side of an `INSERT … SELECT`, as a local of the same name or as an output alias is
+ *     somebody else's.
+ *   - inside a `CREATE TABLE`, an `ALTER TABLE` or a `CREATE INDEX` every bare name is the table's
+ *     own, except the list after `REFERENCES u`, which is `u`'s. The declaration is part of the
+ *     answer: it is the one place a column is defined rather than used, and a rename that skipped
+ *     it would leave the schema disagreeing with its own queries.
  *
- * The second half of that last condition is not belt and braces. Asking for a column its table
- * does not have — `orders.status`, when the column is on `customers` — otherwise returns every
- * bare `status` of every other table joined alongside it, which is a wrong answer rather than a
- * broad one.
+ * A bare use also needs `ownerHasColumn`. Asking for a column its table does not have — `orders.status`,
+ * when the column is on `customers` — would otherwise return every bare `status` in `orders`' own
+ * DDL, where every name is the table's, which is a wrong answer rather than a broad one. Qualified
+ * uses do not need it: somebody writing `o.status` means that column whether or not it exists.
+ *
+ * Owners are compared by the table's folded name, because the catalog's tables are whatever the
+ * files defined and the owner arrives as the text the caller read out of one.
  */
-export function find(dialect: Dialect, src: string, target: RefTarget): Reference[] {
-  const tokens = tokenize(src).tokens;
-  const fold = (name: string, quoted = false): string => dialect.foldIdentifier(name, quoted);
+export function find(ctx: ResolveContext, src: string, target: RefTarget): Reference[] {
+  const lexed = tokenize(src);
+  const tokens = lexed.tokens;
+  const fold = (name: string, quoted = false): string => ctx.dialect.foldIdentifier(name, quoted);
   const needle = fold(target.name);
   const out: Reference[] = [];
 
@@ -107,30 +121,12 @@ export function find(dialect: Dialect, src: string, target: RefTarget): Referenc
   }
 
   const owner = fold(target.owner);
-  for (const statement of statements(tokens)) {
-    // Which names stand for the owning table inside this statement.
-    const aliases = new Set<string>();
-    let involves = false;
-    for (const item of relations(dialect, tokens, statement.from, statement.to)) {
-      if (item.name === undefined || fold(item.name, item.quoted === true) !== owner) continue;
-      involves = true;
-      aliases.add(
-        item.alias === undefined
-          ? fold(item.name, item.quoted === true)
-          : fold(item.alias, item.aliasQuoted === true),
-      );
-    }
-    if (!involves) continue;
-
-    for (let i = statement.from; i <= statement.to; i++) {
-      if (!isNeedle(i)) continue;
-      const qualifier = punct(tokens[i - 1], ".") ? tokens[i - 2] : undefined;
-      if (qualifier !== undefined && qualifier.t === "id") {
-        if (aliases.has(fold(qualifier.v, qualifier.q === true))) keep(i);
-      } else if (target.ownerHasColumn) {
-        keep(i);
-      }
-    }
+  const source = new OwnerSource(ctx, src, lexed);
+  for (let i = 0; i < tokens.length; i++) {
+    if (!isNeedle(i)) continue;
+    if (!punct(tokens[i - 1], ".") && !target.ownerHasColumn) continue;
+    const owners = source.columnOwners(i);
+    if (owners?.some((table) => fold(table.name) === owner)) keep(i);
   }
 
   return out;
@@ -144,7 +140,7 @@ export function find(dialect: Dialect, src: string, target: RefTarget): Referenc
  * the file twice: turning an offset into a line and a column needs the same text the scan just had.
  */
 export function scan(
-  dialect: Dialect,
+  ctx: ResolveContext,
   sources: Iterable<FileSource>,
   target: RefTarget,
 ): FileReferences[] {
@@ -159,7 +155,7 @@ export function scan(
     if (!mentions(lowered, needle)) continue;
     if (owner !== undefined && !mentions(lowered, owner)) continue;
 
-    const refs = find(dialect, src, target);
+    const refs = find(ctx, src, target);
     if (refs.length > 0) found.push({ path, src, refs });
   }
 

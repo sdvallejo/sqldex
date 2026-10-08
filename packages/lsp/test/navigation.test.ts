@@ -191,12 +191,41 @@ test("a table's uses are found in files nobody opened", () => {
 
 test("a column is looked for only where its own table is", () => {
   // `total` on its own would also mean the `pTotal` of a procedure and any other table's column
-  // by that name. Scoped to `orders`, it is the two places that really read it.
+  // by that name. Scoped to `orders`, it is the places that really read it, and the column where
+  // `orders` declares it.
   assert.deepEqual(byFile(references(cursor("SELECT o.tot|al FROM orders o;"))), {
+    "orders.sql": 1,
     "sp_customer_report.sql": 1,
     "sp_settle_orders.sql": 1,
     "sp_scratch.sql": 1,
   });
+});
+
+/** A fixture file's own text with the cursor put `into` the first `word` it contains. */
+function fixtureCursor(file: string, word: string, into: number): At {
+  const text = readFileSync(join(SHOP, file), "utf8");
+  const start = text.indexOf(word);
+  assert.notEqual(start, -1, `${file} has no ${word}`);
+  const split = start + into;
+  return cursor(text.slice(0, split) + "|" + text.slice(split), file);
+}
+
+test("a column asked from its declaration is that table's and not the same name on another", () => {
+  // `customer_id` is on `orders` and on `customers`. The cursor is on the one in `orders.sql`, so the
+  // answer is the key and foreign key that name it there and the uses that mean `orders`' — and the
+  // `customers` list the foreign key points at is not among them.
+  const here = fixtureCursor("tables/orders.sql", "`customer_id`", 4);
+  assert.deepEqual(byFile(references(here)), {
+    "orders.sql": 3,
+    "sp_customer_report.sql": 2,
+    "sp_settle_orders.sql": 1,
+  });
+});
+
+test("the declaration of the other table's column does not answer for this one", () => {
+  const there = fixtureCursor("tables/customers.sql", "`customer_id`", 4);
+  // The declaration and the primary key there, and the foreign key's `REFERENCES` list in `orders.sql`.
+  assert.deepEqual(byFile(references(there)), { "customers.sql": 2, "orders.sql": 1 });
 });
 
 test("a parameter is looked for inside its own file and nowhere else", () => {
@@ -249,6 +278,37 @@ test("a rename reaches every file that uses the name", () => {
     ["orders.sql", "shipments.sql", "sp_customer_report.sql", "sp_scratch.sql", "sp_settle_orders.sql"],
   );
   assert.equal(edits(edit).length, 6);
+});
+
+/** A workspace edit as the places it writes, which is what two renames are compared by. */
+function places(edit: { changes?: Record<string, TextEdit[]> } | undefined): string[] {
+  assert.ok(edit?.changes, "no edit was produced");
+  return Object.entries(edit.changes)
+    .flatMap(([uri, list]) =>
+      list.map((one) => `${basename(fileURLToPath(uri))}:${one.range.start.line}:${one.range.start.character}`),
+    )
+    .sort();
+}
+
+test("a column rename is the same from its declaration as from a use", () => {
+  const fromDeclaration = rename(fixtureCursor("tables/orders.sql", "`customer_id`", 4), "buyer_id");
+  const fromUse = rename(fixtureCursor("sps/sp_customer_report.sql", "o.customer_id", 4), "buyer_id");
+  assert.deepEqual(places(fromDeclaration), places(fromUse));
+});
+
+test("a column rename leaves the other table's column of that name alone", () => {
+  const edit = rename(fixtureCursor("tables/orders.sql", "`customer_id`", 4), "buyer_id");
+  const written = places(edit);
+  assert.ok(written.length > 0);
+  assert.ok(!written.some((place) => place.startsWith("customers.sql")), "customers.sql was edited");
+  // `orders.sql` mentions it three times of its own and a fourth time as `customers`' column, on the
+  // same line as the foreign key's own: only the one before `REFERENCES` is written.
+  const inOrders = written.filter((place) => place.startsWith("orders.sql"));
+  assert.equal(inOrders.length, 3);
+  const line = readFileSync(join(SHOP, "tables/orders.sql"), "utf8").split("\n")[6]!;
+  const onLine = inOrders.filter((place) => place.startsWith("orders.sql:6:"));
+  assert.equal(onLine.length, 1);
+  assert.ok(Number(onLine[0]!.split(":")[2]) < line.indexOf("REFERENCES"), "the REFERENCES list was edited");
 });
 
 test("a use that had backticks keeps them", () => {

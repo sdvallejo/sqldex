@@ -189,7 +189,7 @@ export function incomingCalls(
   if (!routine) return undefined;
 
   const found = new ByRoutine(workspace);
-  for (const file of scanReferences(workspace.dialect, projectSources(workspace), { name: routine.name })) {
+  for (const file of scanReferences(workspace.resolveContext, projectSources(workspace), { name: routine.name })) {
     const starts = lineIndex(file.src);
     for (const call of callsTo(workspace, file.src, routine.name)) {
       // A `CALL` outside any routine — a migration script, a scheduled event — has no caller to

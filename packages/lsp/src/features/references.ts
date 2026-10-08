@@ -12,11 +12,11 @@
  */
 
 import {
+  columnOwners,
   findReferences,
   identifierAt,
   lineIndex,
-  qualifier,
-  relation,
+  OwnerSource,
   scanReferences,
   type FileReferences,
   type FileSource,
@@ -91,17 +91,22 @@ export function targetAt(at: At): Target | undefined {
 
   const project = (target: RefTarget): Target => ({ target, documentOnly: false, token });
 
+  // Whose column a token is gets decided in the engine, and by the same function the sweep uses to
+  // decide it for every other token it meets. Asking it here too is what guarantees the token under
+  // the cursor is among its own results: a second opinion on the qualifier is how it would not be.
+  const owners = new OwnerSource(at.resolve, at.text, at.lexed);
+
   // `o.status`: a column of whatever `o` turns out to be. If the qualifier resolves to nothing
   // there is nothing to look for — searching the catalog's `status` instead would answer a
   // question nobody asked, the same way hover refuses to.
   if (found.qualifier !== undefined) {
-    const resolved = qualifier(at.resolve, analysis, scope, found.qualifier);
-    if (!resolved?.table) return undefined;
-    const column = resolved.table.byName.get(key);
+    const owner = columnOwners(owners, found.idx)?.[0];
+    if (!owner) return undefined;
+    const column = owner.byName.get(key);
     return project({
       // The catalog's spelling, so the placeholder a rename offers is the real one.
       name: column?.name ?? name,
-      owner: resolved.table.name,
+      owner: owner.name,
       // Someone writing `o.status` means that column whether or not it exists, and being told
       // where they wrote it is the point when the answer is "nowhere, it is called state".
       ownerHasColumn: column !== undefined,
@@ -130,16 +135,15 @@ export function targetAt(at: At): Target | undefined {
   const trigger = catalog.trigger(name);
   if (trigger) return project({ name: trigger.name });
 
-  // A bare column, resolved against the statement's own tables the way hover does it. If more than
-  // one has it the first wins: the target needs a single owner, and a name sitting in two joined
-  // tables is what `names/ambiguous-column` reports anyway.
-  for (const candidate of analysis.relations) {
-    const resolved = relation(at.resolve, scope, candidate);
-    const column = resolved?.table?.byName.get(key);
-    if (resolved?.table && column) {
-      return project({ name: column.name, owner: resolved.table.name, ownerHasColumn: true });
-    }
-  }
+  // A bare column: the column of the innermost query that has it, or of the table whose `CREATE`,
+  // `ALTER` or `CREATE INDEX` the cursor is in. If several tables have it — a `USING` column, or one
+  // that is ambiguous and MySQL would refuse — the first holder of that innermost scope is taken:
+  // the target needs a single owner, and a sweep for it finds every holder's use of the name anyway
+  // wherever the two are joined. A name the owner's catalog entry does not carry (a column typed
+  // into a file that has not been saved) falls through to the search by name below.
+  const owner = columnOwners(owners, found.idx)?.[0];
+  const column = owner?.byName.get(key);
+  if (owner && column) return project({ name: column.name, owner: owner.name, ownerHasColumn: true });
 
   // Not in the catalog: still worth answering by name alone. It is what you want for a temporary
   // table, and it is never wrong, only broad.
@@ -149,11 +153,11 @@ export function targetAt(at: At): Target | undefined {
 /** The files a target's uses have to be looked for in, already narrowed to the ones that have any. */
 export function hits(at: At, found: Target): FileReferences[] {
   if (found.documentOnly) {
-    const refs = findReferences(at.workspace.dialect, at.text, found.target);
+    const refs = findReferences(at.resolve, at.text, found.target);
     return refs.length > 0 ? [{ path: at.path, src: at.text, refs }] : [];
   }
   const sources = projectSources(at.workspace, { path: at.path, src: at.text });
-  return scanReferences(at.workspace.dialect, sources, found.target);
+  return scanReferences(at.resolve, sources, found.target);
 }
 
 /**
@@ -162,7 +166,9 @@ export function hits(at: At, found: Target): FileReferences[] {
  * `context.includeDeclaration` is not honoured, and the definition is always included. Splitting
  * the two would mean deciding which of the hits *is* the declaration, and for a column that is a
  * line inside a `CREATE TABLE` which the scan reports like any other use — so the flag could only
- * be obeyed by dropping something at random.
+ * be obeyed by dropping something at random. A column's declaration, and every other mention of it
+ * in DDL (a key, a foreign key on either side, an `ALTER TABLE`, a `CREATE INDEX`), is part of the
+ * answer on the same terms as a query's: they are all places that break when it changes.
  */
 export function references(at: At): Location[] | undefined {
   const found = targetAt(at);

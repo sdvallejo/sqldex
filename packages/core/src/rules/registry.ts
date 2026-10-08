@@ -26,15 +26,21 @@ import type { Config } from "../config/config.ts";
 import type { Diagnostic, DiagnosticTag, Severity } from "../diagnostics.ts";
 import type { Dialect } from "../dialects/dialect.ts";
 import type { Locals } from "../model/locals.ts";
-import type { QueryScope, Relation } from "../model/query.ts";
-import type { Routine } from "../model/routine.ts";
+import type { Relation } from "../model/query.ts";
 import type { Table } from "../model/table.ts";
 import { collect } from "../analysis/locals.ts";
 import { relation as resolveRelation } from "../analysis/resolve.ts";
+import {
+  buildScopes,
+  routineBodies,
+  triggerBodies,
+  type BodyScope,
+  type RoutineScope,
+} from "../analysis/scopes.ts";
 import { parseDDL } from "../syntax/fast/ddl.ts";
 import { lineCol, lineIndex, tokenize } from "../syntax/fast/lexer.ts";
 import { parseRoutines } from "../syntax/fast/routine.ts";
-import { cteNames, queryScopes, relations as statementRelations, statements } from "../syntax/fast/stmt.ts";
+import { relations as statementRelations, statements } from "../syntax/fast/stmt.ts";
 import { kw, kwAny } from "../syntax/fast/tok.ts";
 import type { Span, Token, TokenRange } from "../syntax/types.ts";
 import type {
@@ -97,24 +103,6 @@ function holdsDDL(src: string): boolean {
 const HOLDS_TRIGGER = /trigger/i;
 
 /**
- * A body a statement can sit inside, and the locals that body gives it.
- *
- * The file's own locals are not those of anything in particular: `collect` reads the whole file, so
- * its `routine` is whichever one comes last and its `triggerTable` is whichever trigger comes last.
- * A statement has to be resolved against the body it is actually in, or a second routine in the file
- * makes the first one's parameters look like columns nothing declares.
- */
-interface BodyScope {
-  body: TokenRange;
-  locals: Locals;
-}
-
-/** A `BodyScope` that is a routine, which the routine traversal also needs the routine itself for. */
-interface RoutineScope extends BodyScope {
-  routine: Routine;
-}
-
-/**
  * `group/name`, lower case, with the name in kebab-case.
  *
  * Checked rather than assumed because the `id` is public and permanent: a typo found by whoever
@@ -166,68 +154,6 @@ export class Registry {
   all(): Rule[] {
     return this.inOrder().sort((a, b) => a.id.localeCompare(b.id));
   }
-}
-
-/**
- * The file's query scopes, each with its relations, plus which scope owns each token.
- *
- * Two things here are decisions rather than plumbing:
- *
- *   - **Common table expressions are collected over the whole file, not per scope.** A `WITH` sits
- *     outside the scopes nested inside its body, so a per-range search would miss it there and the
- *     name would resolve against a catalog table that happens to share it. Wrong answer, and a
- *     confidently wrong one.
- *   - **Relations are taken at the scope's own depth** (`shallow`). A scope that reached into its
- *     subqueries would claim their tables as its own, which is the difference between "which
- *     relations could this name belong to" and "which relations appear anywhere below here".
- */
-function buildScopes(
-  dialect: Dialect,
-  tokens: readonly Token[],
-): { infos: ScopeInfo[]; owner: (ScopeInfo | undefined)[] } {
-  const ctes = tokens.length > 0 ? cteNames(dialect, tokens, 0, tokens.length - 1) : new Set<string>();
-  const raw = queryScopes(tokens);
-
-  const infos: ScopeInfo[] = [];
-  const byRaw = new Map<QueryScope, ScopeInfo>();
-  for (const scope of raw) {
-    const rels = statementRelations(dialect, tokens, scope.from, scope.to, true);
-    const byAlias = new Map<string, Relation>();
-    for (const rel of rels) {
-      if (rel.name && !rel.schema && ctes.has(dialect.foldIdentifier(rel.name, rel.quoted === true))) {
-        rel.cte = true;
-      }
-      if (rel.name) byAlias.set(dialect.foldIdentifier(rel.name, rel.quoted === true), rel);
-    }
-    for (const rel of rels) {
-      if (rel.alias) byAlias.set(dialect.foldIdentifier(rel.alias, rel.aliasQuoted === true), rel);
-    }
-    const info: ScopeInfo = {
-      from: scope.from,
-      to: scope.to,
-      depth: scope.depth,
-      relations: rels,
-      byAlias,
-    };
-    byRaw.set(scope, info);
-    infos.push(info);
-  }
-
-  // The parent links, once every info exists.
-  raw.forEach((scope, i) => {
-    if (!scope.parent) return;
-    const parent = byRaw.get(scope.parent);
-    if (parent) (infos[i] as { parent?: ScopeInfo }).parent = parent;
-  });
-
-  // In source order, so a nested scope overwrites its parent's claim on the tokens it covers: a
-  // bare name resolves in the innermost scope that has it, the way the engine resolves it.
-  const owner: (ScopeInfo | undefined)[] = new Array(tokens.length);
-  infos.forEach((info) => {
-    for (let i = info.from; i <= info.to; i++) owner[i] = info;
-  });
-
-  return { infos, owner };
 }
 
 /** What a rule reports at here, or `undefined` when it is silenced. */
@@ -417,50 +343,15 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
 
   // One routine's body, with the locals that belong to it and nothing else.
   let builtRoutineScopes: RoutineScope[] | undefined;
-  const routineScopes = (): RoutineScope[] => {
-    if (builtRoutineScopes) return builtRoutineScopes;
-    const found = parsedRoutines.routines;
-    const out: RoutineScope[] = [];
-    // One routine's body runs from the end of its header to the start of the next one's name, which
-    // is the bound `collect` already uses to decide which routine an offset belongs to.
-    for (const [at, routine] of found.entries()) {
-      const endOffset = found[at + 1]?.nameSpan.s ?? src.length;
-      let from = 0;
-      while (from < tokens.length && tokens[from]!.s < routine.headerEnd) from++;
-      let to = from;
-      while (to + 1 < tokens.length && tokens[to + 1]!.s < endOffset) to++;
-      if (to < from) continue;
-      out.push({
-        routine,
-        body: { from, to },
-        // This routine's own locals: its parameters, and the declarations inside its body — not the
-        // ones a routine above it in the same file made.
-        locals: collect(dialect, src, tokens, endOffset, found, routine.headerEnd),
-      });
-    }
-    return (builtRoutineScopes = out);
-  };
+  const routineScopes = (): RoutineScope[] =>
+    (builtRoutineScopes ??= routineBodies(dialect, src, tokens, parsedRoutines.routines));
 
-  // A trigger's body is the other place a statement sits inside something that gives it names —
-  // `NEW` and `OLD` — and a file with two triggers has two different tables behind them.
+  // A trigger's body is the other place a statement sits inside something that gives it names.
   let builtTriggerScopes: BodyScope[] | undefined;
   const triggerScopes = (): BodyScope[] => {
     if (builtTriggerScopes) return builtTriggerScopes;
-    const out: BodyScope[] = [];
-    if (!HOLDS_TRIGGER.test(src)) return (builtTriggerScopes = out);
-    for (const trigger of ddlOf().triggers) {
-      const first = tokens[trigger.body.from];
-      const last = tokens[trigger.body.to];
-      if (!first || !last) continue;
-      out.push({
-        body: trigger.body,
-        // No routines are passed, because a trigger has no parameters, and `triggerTable` is taken
-        // from the parsed trigger rather than re-derived: the walk starts inside the body, past the
-        // `ON` clause it would have had to read.
-        locals: { ...collect(dialect, src, tokens, last.e, [], first.s), triggerTable: trigger.table },
-      });
-    }
-    return (builtTriggerScopes = out);
+    if (!HOLDS_TRIGGER.test(src)) return (builtTriggerScopes = []);
+    return (builtTriggerScopes = triggerBodies(dialect, src, tokens, ddlOf().triggers));
   };
 
   // Both kinds together, in source order, which is the order the statements come in.

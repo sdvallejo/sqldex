@@ -10,6 +10,7 @@ export {
 } from "./analysis/audit.ts";
 export type { JsonTableColumn, JsonTableColumns, ResolvedSelect, SelectListColumns } from "./analysis/locals.ts";
 export { collect, derivedColumns, jsonTableColumns, selectListColumns } from "./analysis/locals.ts";
+export { columnOwners, OwnerSource } from "./analysis/owners.ts";
 export type {
   FileReferences,
   FileSource,
