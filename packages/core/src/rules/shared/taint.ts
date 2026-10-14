@@ -13,6 +13,7 @@
  *     shape reaches arithmetic directly, left instead in a variable for these rules to follow.
  */
 
+import { clearedByExit } from "./exits.ts";
 import { isKeyLookup } from "./keys.ts";
 import { aggregatesIn, readSubquery } from "./subqueries.ts";
 import { statementSetTargets } from "./writes.ts";
@@ -24,6 +25,7 @@ import type { Token, TokenRange } from "../../syntax/types.ts";
 
 /** What this needs of a context: the tokens, the catalog, the statements, and the scopes. */
 type WithStatements = BaseContext & {
+  readonly body: TokenRange;
   statements(): readonly TokenRange[];
   scopeAt(index: number): ScopeInfo | undefined;
 };
@@ -94,6 +96,9 @@ function hasGroupBy(tokens: readonly Token[], from: number, to: number): boolean
 /**
  * The tainted variables, folded, each with the `Origin` that explains why it may hold a NULL.
  *
+ * A variable is left out when every place that fills it is followed, in its own block and before
+ * anything reads it, by an `IF v IS NULL` whose arm always leaves the routine: see `exits.ts`.
+ *
  * `SELECT … INTO`'s list is matched against the `INTO` list **by position**, which is how MySQL
  * assigns them. A slot holding an expression, or a column from a relation that did not resolve,
  * taints nothing — the one exception being an unprotected aggregate, which taints on its own terms,
@@ -101,6 +106,14 @@ function hasGroupBy(tokens: readonly Token[], from: number, to: number): boolean
  */
 export function nullableSources(ctx: WithStatements): Map<string, Origin> {
   const tainted = new Map<string, Origin>();
+  // Every place a tainted variable is filled from a source of NULL, by token index of the target,
+  // kept beside the map so a NULL check that leaves can be matched to the source it follows.
+  const sites = new Map<string, number[]>();
+  const site = (name: string, at: number): void => {
+    const list = sites.get(name);
+    if (list) list.push(at);
+    else sites.set(name, [at]);
+  };
   const { tokens, dialect } = ctx;
 
   for (const statement of ctx.statements()) {
@@ -122,6 +135,7 @@ export function nullableSources(ctx: WithStatements): Map<string, Origin> {
 
       const origin = emptyResultOrigin(ctx, open, close);
       // A column origin already names the stronger fact; the message it gave stays the one given.
+      if (origin) site(name, idx);
       if (origin && tainted.get(name)?.kind !== "column") tainted.set(name, origin);
     }
 
@@ -139,8 +153,10 @@ export function nullableSources(ctx: WithStatements): Map<string, Origin> {
     if (into === undefined || into <= statement.from + 1) continue;
 
     const targets: string[] = [];
+    const targetAt: number[] = [];
     let j = into + 1;
     while (tokens[j]?.t === "id") {
+      targetAt.push(j);
       targets.push(dialect.foldIdentifier(tokens[j]!.v, tokens[j]!.q ?? false));
       if (punct(tokens[j + 1], ",")) j += 2;
       else break;
@@ -184,6 +200,7 @@ export function nullableSources(ctx: WithStatements): Map<string, Origin> {
       }
 
       if (table && column?.nullable) {
+        site(target, targetAt[slot]!);
         tainted.set(target, { kind: "column", column: `${table.name}.${column.name}` });
         return;
       }
@@ -193,12 +210,17 @@ export function nullableSources(ctx: WithStatements): Map<string, Origin> {
       const aggregate = aggregatesIn(tokens, span);
       if (aggregate.any && !grouped) {
         const at = aggregate.unprotected[0];
+        if (at !== undefined) site(target, targetAt[slot]!);
         if (at !== undefined && tainted.get(target)?.kind !== "column") {
           tainted.set(target, { kind: "empty", what: tokens[at]!.v.toUpperCase() });
         }
       }
     });
   }
+
+  // A variable whose every source is followed by a NULL check that leaves the routine cannot be NULL
+  // below it. See `exits.ts` for exactly what counts.
+  for (const name of clearedByExit(ctx, sites)) tainted.delete(name);
 
   return tainted;
 }

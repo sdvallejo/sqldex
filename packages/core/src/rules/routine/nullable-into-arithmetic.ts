@@ -28,6 +28,13 @@ by \`SET v = (SELECT …)\` or an aggregate slot of a \`SELECT … INTO\` with n
 \`SELECT col INTO v\` that matches nothing leaves \`v\` **unchanged**, not NULL, so that shape alone
 taints nothing.
 
+**A NULL check that leaves clears the variable.** When every place that fills \`v\` is followed, in
+its own block and before anything reads it, by \`IF v IS NULL THEN SIGNAL …; END IF\` — an arm ending
+in \`SIGNAL\`, \`RESIGNAL\`, \`RETURN\` or a \`LEAVE\` of the outermost block's label — nothing below
+it can see a NULL in \`v\`, however far away or however deep it is read. \`ITERATE\` and a \`LEAVE\` of
+an inner loop do not count, nor does a \`SIGNAL\` that a \`CONTINUE\` handler for \`SQLEXCEPTION\` or
+the same \`SQLSTATE\` catches: execution resumes right after it.
+
 **What it does not model:** a later assignment from a source that cannot be NULL does not clear the
 taint, because that needs the flow analysis \`routine/variable-never-assigned\` deliberately stops
 short of. The exchange is worth naming — the rule can be wrong about a variable that was tainted and

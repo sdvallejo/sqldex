@@ -35,6 +35,16 @@ What it deliberately leaves alone:
     the same thing: an arm that asked and got *yes* — \`IF v IS NULL THEN … CONCAT('x', v)\` — is left
     alone too, because telling which arm knows which answer is a parse this backend does not do, and
     being wrong about it would mean arguing with the author's own guard.
+  - **A variable whose every source is followed by a NULL check that leaves.** \`SET v = (SELECT …)\`
+    and then, in the same block and before anything reads \`v\`, \`IF v IS NULL THEN SIGNAL …; END IF\`:
+    the only way past that line with a NULL in \`v\` was through an arm that did not return, so no read
+    below it, however far or however deep, can see one. The arm has to end in \`SIGNAL\`, \`RESIGNAL\`,
+    \`RETURN\`, or a \`LEAVE\` of the routine's outermost block label — \`ITERATE\`, or a \`LEAVE\` of an
+    inner loop, only leaves the loop, and \`v\` can still be NULL after it. The condition has to hold for
+    every NULL: \`v IS NULL OR …\` does, \`v IS NULL AND …\` does not. Where the routine declares a
+    \`CONTINUE\` handler that catches the \`SIGNAL\` (for \`SQLEXCEPTION\`, or for the same
+    \`SQLSTATE\`), execution resumes right after it, so that \`SIGNAL\` leaves nothing and the check
+    does not count. A second source of \`v\` that no such check follows keeps it tainted.
 
 **What it does not model**, and this it shares with the arithmetic rule: a later assignment from a
 source that cannot be NULL does not clear the taint. That needs flow analysis this backend does not

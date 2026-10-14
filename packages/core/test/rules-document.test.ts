@@ -1220,6 +1220,135 @@ test("a SET from a search rather than a key lookup reaches a negated comparison"
   ]);
 });
 
+// ------------------------------- a NULL check that leaves clears the taint it follows
+
+/** The shape every case below varies: a nullable source, a check, and a negated read further down. */
+function checked(guard: string[], opts: { head?: string[]; tail?: string[]; label?: string } = {}): string {
+  return [
+    "CREATE PROCEDURE sp_case(IN p_order int, IN p_label varchar(40))",
+    `${opts.label ? `${opts.label}: ` : ""}BEGIN`,
+    "  DECLARE v_customer int;",
+    ...(opts.head ?? []),
+    "  SET v_customer = (SELECT customer_id FROM customers WHERE label = p_label);",
+    ...guard,
+    ...(opts.tail ?? [
+      "  IF p_order > 0 THEN",
+      "    UPDATE orders SET total = 0 WHERE customer_id != v_customer;",
+      "  END IF;",
+    ]),
+    "END;",
+  ].join("\n");
+}
+
+const SIGNAL_GUARD = [
+  "  IF v_customer IS NULL THEN",
+  "    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such customer';",
+  "  END IF;",
+];
+
+test("a NULL check whose arm signals clears the variable for every read below it", () => {
+  assert.deepEqual(run(nullableVariableInPredicate, checked(SIGNAL_GUARD)), []);
+  assert.equal(run(nullableVariableInPredicate, checked([])).length, 1);
+});
+
+test("the check clears a CONCAT read and an arithmetic read too, not only the predicate", () => {
+  const tail = ["  SELECT CONCAT('customer ', v_customer);", "  SELECT v_customer + 1;"];
+  assert.deepEqual(run(nullableVariableInConcat, checked(SIGNAL_GUARD, { tail })), []);
+  assert.deepEqual(run(nullableIntoArithmetic, checked(SIGNAL_GUARD, { tail })), []);
+  assert.equal(run(nullableVariableInConcat, checked([], { tail })).length, 1);
+  assert.equal(run(nullableIntoArithmetic, checked([], { tail })).length, 1);
+});
+
+test("RETURN, and a LEAVE of the outermost block's label, leave just the same", () => {
+  const returns = ["  IF v_customer IS NULL THEN", "    SELECT 1;", "    RETURN;", "  END IF;"];
+  const leaves = ["  IF v_customer IS NULL OR p_order < 0 THEN", "    LEAVE main;", "  END IF;"];
+  assert.deepEqual(run(nullableVariableInPredicate, checked(returns)), []);
+  assert.deepEqual(run(nullableVariableInPredicate, checked(leaves, { label: "main" })), []);
+});
+
+test("an ITERATE, or a LEAVE of an inner loop, only leaves the loop: the variable can still be NULL", () => {
+  const iterate = ["  IF v_customer IS NULL THEN ITERATE main; END IF;"];
+  const inner = [
+    "  inner_loop: LOOP",
+    "    IF v_customer IS NULL THEN LEAVE inner_loop; END IF;",
+    "    LEAVE inner_loop;",
+    "  END LOOP inner_loop;",
+  ];
+  assert.equal(run(nullableVariableInPredicate, checked(iterate, { label: "main" })).length, 1);
+  assert.equal(run(nullableVariableInPredicate, checked(inner, { label: "main" })).length, 1);
+});
+
+test("an arm that does not end in an exit, or a condition that is not true of every NULL, clears nothing", () => {
+  const later = ["  IF v_customer IS NULL THEN", "    SIGNAL SQLSTATE '45000';", "    SELECT 1;", "  END IF;"];
+  const both = ["  IF v_customer IS NULL AND p_order > 0 THEN SIGNAL SQLSTATE '45000'; END IF;"];
+  const negated = ["  IF NOT v_customer IS NULL THEN SIGNAL SQLSTATE '45000'; END IF;"];
+  for (const guard of [later, both, negated]) {
+    assert.equal(run(nullableVariableInPredicate, checked(guard)).length, 1, guard.join(" "));
+  }
+});
+
+test("a CONTINUE handler that catches the SIGNAL means it does not leave", () => {
+  const forAny = ["  DECLARE CONTINUE HANDLER FOR SQLEXCEPTION SET p_order = 0;"];
+  const forState = ["  DECLARE CONTINUE HANDLER FOR SQLSTATE '45000' SET p_order = 0;"];
+  const elsewhere = ["  DECLARE CONTINUE HANDLER FOR SQLSTATE '23000' SET p_order = 0;"];
+  const exits = ["  DECLARE EXIT HANDLER FOR SQLEXCEPTION SET p_order = 0;"];
+  assert.equal(run(nullableVariableInPredicate, checked(SIGNAL_GUARD, { head: forAny })).length, 1);
+  assert.equal(run(nullableVariableInPredicate, checked(SIGNAL_GUARD, { head: forState })).length, 1);
+  assert.deepEqual(run(nullableVariableInPredicate, checked(SIGNAL_GUARD, { head: elsewhere })), []);
+  assert.deepEqual(run(nullableVariableInPredicate, checked(SIGNAL_GUARD, { head: exits })), []);
+});
+
+test("a check placed before the source, or after a read, does not clear it", () => {
+  const before = [...SIGNAL_GUARD, "  SET v_customer = (SELECT customer_id FROM customers WHERE label = p_label);"];
+  const afterRead = [
+    "  UPDATE orders SET total = 1 WHERE customer_id = v_customer;",
+    ...SIGNAL_GUARD,
+  ];
+  const src = (lines: string[]): string =>
+    ["CREATE PROCEDURE sp_case(IN p_order int, IN p_label varchar(40))", "BEGIN", "  DECLARE v_customer int;",
+      ...lines, "  IF p_order > 0 THEN", "    UPDATE orders SET total = 0 WHERE customer_id != v_customer;",
+      "  END IF;", "END;"].join("\n");
+  assert.equal(run(nullableVariableInPredicate, src(before)).length, 1);
+  assert.equal(
+    run(nullableVariableInPredicate, src([
+      "  SET v_customer = (SELECT customer_id FROM customers WHERE label = p_label);",
+      ...afterRead,
+    ])).length,
+    1,
+  );
+});
+
+test("a second source no check follows keeps the variable tainted", () => {
+  const second = [
+    ...SIGNAL_GUARD,
+    "  SELECT MAX(customer_id) INTO v_customer FROM customers WHERE label = p_label;",
+  ];
+  assert.equal(run(nullableVariableInPredicate, checked(second)).length, 1);
+  assert.deepEqual(run(nullableVariableInPredicate, checked([...second, ...SIGNAL_GUARD])), []);
+});
+
+test("a check inside the arm the source sits in clears it, and one in another block does not", () => {
+  const inArm = [
+    "  IF p_order > 0 THEN",
+    "    SET v_customer = (SELECT customer_id FROM customers WHERE label = p_label);",
+    "    IF v_customer IS NULL THEN SIGNAL SQLSTATE '45000'; END IF;",
+    "    UPDATE orders SET total = 0 WHERE customer_id != v_customer;",
+    "  END IF;",
+  ];
+  const elsewhere = [
+    "  SET v_customer = (SELECT customer_id FROM customers WHERE label = p_label);",
+    "  IF p_order > 0 THEN",
+    "    IF v_customer IS NULL THEN SIGNAL SQLSTATE '45000'; END IF;",
+    "  END IF;",
+    "  UPDATE orders SET total = 0 WHERE customer_id != v_customer;",
+  ];
+  const wrap = (lines: string[]): string =>
+    ["CREATE PROCEDURE sp_case(IN p_order int, IN p_label varchar(40))", "BEGIN", "  DECLARE v_customer int;",
+      ...lines, "END;"].join("\n");
+  assert.deepEqual(run(nullableVariableInPredicate, wrap(inArm)), []);
+  assert.equal(run(nullableVariableInPredicate, wrap(elsewhere)).length, 1);
+});
+
 // ------------------------------------------------ nullable through a variable, into a CONCAT
 
 test("one NULL argument takes the whole CONCAT with it", () => {
