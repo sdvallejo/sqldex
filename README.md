@@ -249,7 +249,7 @@ Keys are `snake_case` because this is a file format people write by hand, not th
 
 ## Rules
 
-Sixty-five of them, in six groups that say what a rule is *about* — which is what someone
+Sixty-seven of them, in six groups that say what a rule is *about* — which is what someone
 turning rules off is choosing between:
 
 | Group | Rules |
@@ -348,7 +348,7 @@ and those are two defects with two fixes.
 ## Development
 
 ```
-npm test                        # 1020 tests, hand-written fixtures only
+npm test                        # 1046 tests, hand-written fixtures only
 npm run typecheck
 npm run build                   # emits dist/ for publishing; not needed to develop
 npm run bench <dir>...          # lexer throughput over a directory of SQL
