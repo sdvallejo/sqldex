@@ -688,6 +688,11 @@ test("a bare name no table in the query has is reported", () => {
   ]);
 });
 
+test("inside a routine the same name may be a variable nobody declared, and the message says so", () => {
+  const src = body("  SELECT order_id FROM orders WHERE totl = 1;");
+  assert.deepEqual(run(unqualifiedColumn, src), ["unknown column or variable: totl"]);
+});
+
 test("it stands down entirely when any relation did not resolve", () => {
   // This is the guard that makes the rule usable: with a temporary table in the mix the set of valid
   // columns is unknown, and claiming a name is not among them would be guessing.
@@ -2634,10 +2639,39 @@ test("it displaces names/unqualified-column on the same token", () => {
   );
 });
 
-test("a SET alone, with nothing reading it back, is left alone", () => {
-  // `autocommit` is not a name sqldex is ever going to keep a list of: the guard is that nothing
-  // reads it, not that the rule recognises it.
+test("a SET of a system variable, with nothing reading it back, is left alone: the dialect knows the name", () => {
+  // What keeps `autocommit` quiet is the dialect's list of system variables, not whether anything
+  // reads it back: the same lone SET of a name that is not on the list is the next case.
   assert.deepEqual(run(undeclaredVariable, body("  SET autocommit = 0;")), []);
+  assert.deepEqual(run(undeclaredVariable, body("  SET innodb_lock_wait_timeout = 5;")), []);
+  assert.deepEqual(run(undeclaredVariable, body("  SET FOREIGN_KEY_CHECKS = 0;")), []);
+});
+
+test("a lone SET of a name that is not a system variable is refused by the server, so it is reported unread", () => {
+  assert.deepEqual(run(undeclaredVariable, body("  SET v_typo = 1;")), ["v_typo is not declared"]);
+  // Nor does a subquery with a table in it change what the position is.
+  const sub = body("  SET v_typo = (SELECT label FROM customers WHERE customer_id = p_id);");
+  assert.deepEqual(run(undeclaredVariable, sub), ["v_typo is not declared"]);
+  assert.deepEqual(
+    run(undeclaredVariable, body("  DECLARE v_ok int;", "  SET v_ok = 1;")),
+    [],
+  );
+});
+
+test("a SET target that is also a column name is reported, and its read is not", () => {
+  // A statement-level SET target is never a column, so the schema has no say about it; the read in
+  // the WHERE is the position where it could be one, and stays unreported.
+  const src = body("  SET customer_id = 1;", "  SELECT order_id FROM orders WHERE customer_id = 1;");
+  assert.deepEqual(run(undeclaredVariable, src), ["customer_id is not declared"]);
+});
+
+test("a statement-level SET target is not unqualified-column's: that position is never a column", () => {
+  const src = body("  SET autocommit = (SELECT COUNT(*) FROM orders);");
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+  // The same name in an UPDATE's SET clause is the table's column, and is still checked there.
+  assert.deepEqual(run(unqualifiedColumn, body("  UPDATE orders SET totl = 1;")), [
+    "unknown column or variable: totl",
+  ]);
 });
 
 test("a system variable set once scoped and once bare is not a read of itself", () => {
@@ -2648,13 +2682,6 @@ test("a system variable set once scoped and once bare is not a read of itself", 
 
 test("nor is the second target of a scoped SET, which follows a comma rather than the scope word", () => {
   const src = body("  SET SESSION sort_buffer_size = 1, max_heap_table_size = 2;", "  SET max_heap_table_size = 3;");
-  assert.deepEqual(run(undeclaredVariable, src), []);
-});
-
-test("a name some table has as a column is never reported, however it is used", () => {
-  // The catalog guard: `orders` genuinely has a `status` column, so `status` is ambiguous between
-  // the two and this rule only reports what cannot be a column at all.
-  const src = body("  SET status = 1;", "  SELECT order_id FROM orders WHERE status = 1;");
   assert.deepEqual(run(undeclaredVariable, src), []);
 });
 
@@ -2697,6 +2724,87 @@ test("evidence from one routine's body does not reach a second one in the same f
     "END;",
   ].join("\n");
   assert.deepEqual(run(undeclaredVariable, src), ["v_x is not declared", "v_x is not declared"]);
+});
+
+// A read in a statement with no table in it: a column is impossible, so only a variable is left.
+
+test("an undeclared name passed to CALL, read by IF, RETURN or WHILE, or inside a SET's value, is reported", () => {
+  const cases = [
+    "  CALL sp_known_proc(v_typo);",
+    "  IF v_typo = 1 THEN SELECT 1; END IF;",
+    "  WHILE v_typo < 3 DO SET p_id = p_id + 1; END WHILE;",
+    "  SET p_id = v_typo + 1;",
+    "  SELECT v_typo;",
+  ];
+  for (const line of cases) {
+    assert.deepEqual(run(undeclaredVariable, body(line)), ["v_typo is not declared"], line);
+  }
+  const fn = ["CREATE FUNCTION fn_case(p_id int) RETURNS int", "BEGIN", "  RETURN v_typo;", "END;"].join("\n");
+  assert.deepEqual(run(undeclaredVariable, fn), ["v_typo is not declared"]);
+});
+
+test("the same reads of a parameter or a declared local are quiet", () => {
+  const src = body(
+    "  DECLARE v_n int DEFAULT 0;",
+    "  CALL sp_known_proc(p_id);",
+    "  CALL sp_known_proc(v_n);",
+    "  IF v_n = 1 AND p_id > 0 THEN SELECT 1; END IF;",
+    "  SET v_n = p_id + v_n;",
+    "  WHILE v_n < 3 DO SET v_n = v_n + 1; END WHILE;",
+  );
+  assert.deepEqual(run(undeclaredVariable, src), []);
+});
+
+test("a read in a statement that has a table is unchanged: it may be a column, and that is unqualified-column's", () => {
+  const src = body("  SELECT order_id FROM orders WHERE v_typo = 1;");
+  assert.deepEqual(run(undeclaredVariable, src), []);
+  assert.deepEqual(run(unqualifiedColumn, src), ["unknown column or variable: v_typo"]);
+});
+
+test("words the language owns are not reads: SET operands of a system variable, SET NAMES, a CAST charset, CALL's target", () => {
+  for (const line of [
+    "  SET sql_mode = TRADITIONAL;",
+    "  SET SESSION autocommit = OFF;",
+    "  SET @@session.autocommit = OFF;",
+    "  SET NAMES utf8mb4;",
+    "  SET CHARACTER SET utf8mb4;",
+    "  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;",
+    "  SELECT CAST(p_id AS CHAR CHARACTER SET utf8mb4);",
+    "  CALL sp_known;",
+  ]) {
+    assert.deepEqual(run(undeclaredVariable, body(line)), [], line);
+  }
+});
+
+test("a CASE's THEN inside a SET does not start a new statement", () => {
+  const src = body("  SET p_id = CASE WHEN p_id > 1 THEN v_typo ELSE 0 END;");
+  assert.deepEqual(run(undeclaredVariable, src), ["v_typo is not declared"]);
+});
+
+test("a procedural CASE's THEN does start a statement, so a CREATE inside one is not a read", () => {
+  const src = body(
+    "  CASE WHEN p_id = 1 THEN",
+    "    CREATE TEMPORARY TABLE tmp_rank(rank_id INT, score DEC(5,3)) ENGINE = MEMORY;",
+    "  ELSE",
+    "    CALL sp_known_proc(v_typo);",
+    "  END CASE;",
+  );
+  assert.deepEqual(run(undeclaredVariable, src), ["v_typo is not declared"]);
+});
+
+test("an output alias with no AS, in a SELECT with no FROM, is a name the statement defines", () => {
+  const src = body(
+    "  SELECT 'A' code, 'Active' label",
+    "  UNION SELECT 'I' code, 'Inactive' label",
+    "  ORDER BY label;",
+  );
+  assert.deepEqual(run(undeclaredVariable, src), []);
+  const typo = body("  SELECT 'A' code, v_typo label UNION SELECT 'I' code, 'Inactive' label;");
+  assert.deepEqual(run(undeclaredVariable, typo), ["v_typo is not declared"]);
+});
+
+test("a loose script has no DECLARE section for a name to be missing from, reads included", () => {
+  assert.deepEqual(run(undeclaredVariable, "CALL sp_known_proc(v_typo);"), []);
 });
 
 test("a loose script has no DECLARE section for a name to be missing from", () => {

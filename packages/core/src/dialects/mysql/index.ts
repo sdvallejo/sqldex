@@ -4,6 +4,7 @@ import type { ColumnType } from "../../model/table.ts";
 import type { Dialect } from "../dialect.ts";
 import { builtin, FUNCTIONS } from "./functions.ts";
 import { isKeyword } from "./keywords.ts";
+import { isSystemVariable } from "./system-variables.ts";
 
 export const mysql: Dialect = {
   id: "mysql",
@@ -23,6 +24,8 @@ export const mysql: Dialect = {
 
   isKeyword,
 
+  isSystemVariable,
+
   /**
    * Matched against the type as written rather than against the parsed name: the two differ on
    * shapes like `national char(10)`, where the parsed type token is only `national` and the
@@ -40,3 +43,4 @@ export const mysql: Dialect = {
 export type { BuiltinFunction } from "./functions.ts";
 export { builtin, FUNCTIONS } from "./functions.ts";
 export { isKeyword, KEYWORDS } from "./keywords.ts";
+export { isSystemVariable, SYSTEM_VARIABLES } from "./system-variables.ts";

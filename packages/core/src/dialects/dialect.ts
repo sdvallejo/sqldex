@@ -11,6 +11,7 @@
  *   the shape of change that never gets made.
  * - **Quoting.** Backtick here, double quote elsewhere.
  * - **Keywords.** Telling a name apart from syntax.
+ * - **System variables.** Telling a server setting apart from a local nobody declared.
  * - **Types.** Whether a type carries a collation at all.
  * - **Built-in functions.** `JSON_EXTRACT` and `NOW` are MySQL's; another engine spells and
  *   documents its own.
@@ -40,6 +41,15 @@ export interface Dialect {
 
   /** Is the word engine syntax rather than a name? Case-insensitive. */
   isKeyword(word: string): boolean;
+
+  /**
+   * Is the name one of the engine's system variables? Case-insensitive.
+   *
+   * What tells `SET autocommit = 0` apart from `SET v_typo = 1` in a routine: the server resolves a
+   * name it does not recognise after a bare `SET` as a system variable, and refuses the routine at
+   * `CREATE` when there is no such variable.
+   */
+  isSystemVariable(name: string): boolean;
 
   /**
    * Does this type carry a collation? Only string types do; an `int` has none, and comparing

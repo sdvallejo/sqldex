@@ -60,6 +60,11 @@ export interface SelectListColumns {
   origins: (Span | undefined)[];
 }
 
+/** The words that end a select list at depth zero: the clause that follows it, whichever one it is. */
+const LIST_ENDS: ReadonlySet<string> = new Set([
+  "FROM", "INTO", "WHERE", "GROUP", "HAVING", "WINDOW", "ORDER", "LIMIT", "UNION", "INTERSECT", "EXCEPT",
+]);
+
 /**
  * Column names from a `SELECT` list, used to infer the columns of a temporary table created with
  * `CREATE TEMPORARY TABLE x ... SELECT ...`.
@@ -81,7 +86,9 @@ export function selectListColumns(
   //
   // It also stops at `INTO`, because in a `SELECT a, b INTO pA, pB FROM t` that clause comes
   // **before** the `FROM`: without stopping there, the list's last item merges with the first
-  // destination and the alias captured is the variable rather than the column.
+  // destination and the alias captured is the variable rather than the column. A `SELECT` with no
+  // `FROM` — `SELECT 'A' code, 'Active' label UNION SELECT …`, or one closed by `ORDER BY label` —
+  // ends at whichever clause comes next instead, for the same reason.
   let stop = limit;
   let depth = 0;
   for (let i = selectIdx + 1; i <= limit; i++) {
@@ -99,7 +106,7 @@ export function selectListColumns(
         stop = i - 1;
         break;
       }
-    } else if (depth === 0 && (kw(t, "FROM") || kw(t, "INTO"))) {
+    } else if (depth === 0 && (kwAny(t, LIST_ENDS) !== undefined || (kw(t, "FOR") && kw(tokens[i + 1], "UPDATE")))) {
       stop = i - 1;
       break;
     }

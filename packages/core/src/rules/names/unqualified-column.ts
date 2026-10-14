@@ -1,5 +1,6 @@
 import { bareColumnCandidate, knownBareName, selectOutputAliases } from "../shared/names.ts";
 import { cteNames } from "../../syntax/fast/stmt.ts";
+import { statementSetTargets } from "../shared/writes.ts";
 import type { Rule } from "../rule.ts";
 
 export const unqualifiedColumn: Rule = {
@@ -24,7 +25,16 @@ is the exclusions, and each removes a class rather than a case:
   - **A local, a routine, or a temporary table** from anywhere in the project.
 
 What survives all of that is a name that genuinely is not a column of any table in the query, in a
-query where every table is known — and those, checked by hand, turn out to be real.`,
+query where every table is known — and those, checked by hand, turn out to be real.
+
+**Inside a routine or a trigger the name may be a variable that was never declared**, and the message
+says so — \`unknown column or variable\` — because a misspelled local in a \`WHERE\` reads exactly like
+a misspelled column and the rule cannot tell which was meant. Outside one there is no \`DECLARE\` section
+to have missed the name from, and the message says \`unknown column\`.
+
+**The target of a statement-level \`SET\` is never reported here**, even when the statement has a table
+in it through a subquery: that position is never a column, and \`routine/undeclared-variable\` is the
+rule that says what it is instead.`,
 
   check(ctx) {
     // With anything unresolved the valid set is unknown, and guessing is what this rule must not do.
@@ -32,13 +42,16 @@ query where every table is known — and those, checked by hand, turn out to be 
 
     const ctes = cteNames(ctx.dialect, ctx.tokens, ctx.statement.from, ctx.statement.to);
     const outputAliases = selectOutputAliases(ctx);
+    const setTargets = statementSetTargets(ctx.tokens, ctx.statement.from, ctx.statement.to);
+    const what = ctx.body ? "unknown column or variable" : "unknown column";
 
     for (let i = ctx.statement.from; i <= ctx.statement.to; i++) {
       if (!bareColumnCandidate(ctx.tokens, i)) continue;
+      if (setTargets.has(i)) continue;
       if (knownBareName(ctx, i, outputAliases, ctes)) continue;
 
       const token = ctx.tokens[i]!;
-      ctx.report(token, `unknown column: ${token.v}`);
+      ctx.report(token, `${what}: ${token.v}`);
     }
   },
 };
