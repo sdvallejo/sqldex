@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -100,4 +100,42 @@ test("paths come back relative to the project root, not the repository's", { ski
 test("a base git cannot resolve is an error, not an empty run", { skip: !haveGit() }, () => {
   const root = repoWithABranch();
   assert.throws(() => changedFiles(root, "no-such-ref"), DiffError);
+});
+
+test("an uncommitted edit and a file git does not track yet both count", { skip: !haveGit() }, () => {
+  // The branch is most often linted while it is still being written, so a diff that stopped at the
+  // last commit would say nothing about the very edits the person is looking at.
+  const root = repoWithABranch();
+  appendFileSync(join(root, "schema", "tables", "customers.sql"), "-- edited\n");
+  writeFileSync(join(root, "schema", "tables", "refunds.sql"), "CREATE TABLE refunds (id int);\n");
+  writeFileSync(join(root, "notes.txt"), "not sql\n");
+
+  const changed = changedFiles(root, "main");
+  assert.deepEqual(
+    [...changed].sort(),
+    [
+      join(root, "schema/tables/customers.sql"),
+      join(root, "schema/tables/orders.sql"),
+      join(root, "schema/tables/refunds.sql"),
+      join(root, "top-level.sql"),
+    ],
+  );
+});
+
+test("a base that is HEAD itself, with a clean tree, changes nothing", { skip: !haveGit() }, () => {
+  const root = repoWithABranch();
+  assert.deepEqual(changedFiles(root, "HEAD"), []);
+});
+
+test("a staged new file counts, and a file git ignores does not", { skip: !haveGit() }, () => {
+  const root = repoWithABranch();
+  const git = (...args: string[]): void => {
+    execFileSync("git", args, { cwd: root, stdio: "ignore" });
+  };
+  writeFileSync(join(root, ".gitignore"), "scratch.sql\n");
+  writeFileSync(join(root, "scratch.sql"), "SELECT 2;\n");
+  writeFileSync(join(root, "staged.sql"), "SELECT 3;\n");
+  git("add", "staged.sql");
+
+  assert.deepEqual(changedFiles(root, "HEAD"), [join(root, "staged.sql")]);
 });

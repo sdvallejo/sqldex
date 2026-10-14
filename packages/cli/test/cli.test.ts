@@ -11,6 +11,7 @@
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -159,6 +160,13 @@ test("rules lists every rule, sorted by id", () => {
   assert.ok(out.indexOf("audit/table-out-of-sync") < out.indexOf("names/unknown-table"));
 });
 
+test("rules says severity is configurable, and where", () => {
+  const { out } = cli(["rules"]);
+  assert.match(out, /\.sqldex\.json/);
+  assert.match(out, /"rules"/);
+  assert.match(out, /"groups"/);
+});
+
 test("rules --format json carries the docs", () => {
   const { out } = cli(["rules", "--format", "json"]);
   const parsed: { id: string; group: string; docs: string }[] = JSON.parse(out);
@@ -211,6 +219,37 @@ test("an unknown flag is a usage error", () => {
   const { code, err } = cli(["check", "--fix"]);
   assert.equal(code, 2);
   assert.match(err, /--fix/);
+});
+
+test("the usage says where severity is configured", () => {
+  const { out } = cli(["--help"]);
+  assert.match(out, /\.sqldex\.json \("rules", "groups"\)/);
+});
+
+test("--diff over a tree that has not changed says so on stderr, and still succeeds", () => {
+  const root = mkdtempSync(join(tmpdir(), "sqldex-diff-"));
+  const git = (...args: string[]): void => {
+    execFileSync("git", args, { cwd: root, stdio: "ignore" });
+  };
+  try {
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "test@example.invalid");
+    git("config", "user.name", "test");
+    writeFileSync(join(root, "customers.sql"), "CREATE TABLE customers (id int NOT NULL, PRIMARY KEY (id));\n");
+    git("add", "-A");
+    git("commit", "-qm", "first");
+  } catch {
+    return; // no git here: the notice is the only thing this checks, and it needs a repository
+  }
+
+  const clean = cli(["check", "--diff", "HEAD"], root);
+  assert.equal(clean.code, 0);
+  assert.match(clean.err, /no \.sql file changed since HEAD/);
+
+  // The same run with an edit in the tree has something to say nothing about.
+  writeFileSync(join(root, "customers.sql"), "CREATE TABLE customers (id int NOT NULL, PRIMARY KEY (id));\n-- edit\n");
+  const edited = cli(["check", "--diff", "HEAD"], root);
+  assert.doesNotMatch(edited.err, /no \.sql file changed/);
 });
 
 test("--diff with no base and no CI environment says which variables it looked at", () => {

@@ -34,10 +34,17 @@ export function baseFrom(given: string | undefined, env: Record<string, string |
 }
 
 /**
- * Absolute paths of the `.sql` files that changed since `base`.
+ * Absolute paths of the `.sql` files that changed since `base`, committed or not.
  *
- * Three dots, so the comparison starts at the merge base: two dots would report every file the
- * target branch has moved on by since, which on a long-lived branch is most of the repo.
+ * The comparison starts at the **merge base** of `base` and `HEAD` — two dots against `base` itself
+ * would report every file the target branch has moved on by since, which on a long-lived branch is
+ * most of the repo — and ends at the **working tree**, not at `HEAD`. A branch is linted most often
+ * while it is still being written, and a check that only saw commits would report nothing for exactly
+ * the edits the person is looking at. In CI the tree is clean, so the answer is the same as it was
+ * when this compared commits.
+ *
+ * A new `.sql` file git does not track yet is a change too (`ls-files --others`), minus whatever the
+ * ignore files exclude.
  *
  * Deletions are left out (`--diff-filter=ACMR`). A file that is gone cannot be linted, and it is
  * not an error that it is gone.
@@ -45,26 +52,33 @@ export function baseFrom(given: string | undefined, env: Record<string, string |
  * `--relative` because git reports paths from the **repository** root, and the project root is not
  * always that: a schema living in a subdirectory of a larger repo would otherwise get every path
  * resolved one level too high, and match nothing. It narrows to the subtree as well, which is the
- * same set of files the sweep would have considered anyway.
+ * same set of files the sweep would have considered anyway. `ls-files` already answers relative to
+ * where it is run and inside that subtree.
  */
 export function changedFiles(root: string, base: string): string[] {
-  let out: string;
-  try {
-    out = execFileSync("git", ["diff", "--name-only", "--relative", "--diff-filter=ACMR", `${base}...HEAD`], {
-      cwd: root,
-      encoding: "utf8",
-      maxBuffer: 1 << 26,
-      // Captured rather than inherited, so git's complaint about an unknown ref arrives inside the
-      // error we raise instead of appearing on the terminal ahead of it, out of order.
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (error) {
-    const said = error instanceof Error && "stderr" in error ? String(error.stderr).trim() : "";
-    throw new DiffError(`git could not diff against ${base}${said ? `: ${said.split("\n")[0]}` : ""}`);
-  }
+  const git = (...args: string[]): string => {
+    try {
+      return execFileSync("git", args, {
+        cwd: root,
+        encoding: "utf8",
+        maxBuffer: 1 << 26,
+        // Captured rather than inherited, so git's complaint about an unknown ref arrives inside the
+        // error we raise instead of appearing on the terminal ahead of it, out of order.
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      const said = error instanceof Error && "stderr" in error ? String(error.stderr).trim() : "";
+      throw new DiffError(`git could not diff against ${base}${said ? `: ${said.split("\n")[0]}` : ""}`);
+    }
+  };
 
-  return out
-    .split("\n")
-    .filter((line) => line.endsWith(".sql"))
-    .map((line) => resolve(root, line));
+  const fork = git("merge-base", base, "HEAD").trim();
+  if (fork === "") throw new DiffError(`git could not diff against ${base}: no common ancestor with HEAD`);
+
+  const out = [
+    git("diff", "--name-only", "--relative", "--diff-filter=ACMR", fork),
+    git("ls-files", "--others", "--exclude-standard"),
+  ].join("\n");
+
+  return [...new Set(out.split("\n").filter((line) => line.endsWith(".sql")))].map((line) => resolve(root, line));
 }

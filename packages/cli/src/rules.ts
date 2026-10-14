@@ -51,6 +51,9 @@ export function listRules(registry: Registry, format: "pretty" | "json"): string
   }
   lines.push("");
   lines.push(`${rules.length} rules. \`sqldex explain <id>\` for the reasoning behind one.`);
+  lines.push(
+    'Severity is a default: .sqldex.json can raise, lower or silence a rule ("rules") or a whole group ("groups").',
+  );
   return lines.join("\n");
 }
 

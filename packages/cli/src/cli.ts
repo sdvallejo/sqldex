@@ -61,6 +61,7 @@ Options for check:
   --max-warnings <n>    exit 1 once there are more warnings than n
   --no-color            never colour the output (NO_COLOR does the same)
   --no-syntax-check     skip the real MySQL grammar's parse-error check; the rules above still run
+  severity per rule or group is set in .sqldex.json ("rules", "groups"); see the README
 
 Options for rules:
   --format <name>       pretty (default) or json
@@ -169,6 +170,9 @@ function doCheck(positionals: readonly string[], flags: Flags, streams: Streams)
       // Git has to be asked from the root, and it is found the same way `run` finds it — the two
       // must agree, or the paths git returns are resolved against a directory the sweep never saw.
       only = new Set(changedFiles(rootFor(positionals, streams.cwd), base));
+      // Said on stderr so the json/sarif a pipeline reads stays as it was: an empty run here is
+      // usually a base that is the branch itself, or a tree with nothing changed, not a clean project.
+      if (only.size === 0) streams.err(`no .sql file changed since ${base}`);
     } catch (error) {
       streams.err(error instanceof DiffError ? error.message : String(error));
       return 2;
