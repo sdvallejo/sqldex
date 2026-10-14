@@ -107,6 +107,13 @@ test("a temporary table fed by SELECT * inherits the source's columns, without r
   assert.deepEqual(columnNames(resolveQualifier("SELECT tmp.", "tmp", ctx)), ["user_id", "name"]);
 });
 
+test("a temporary table created LIKE a catalog table has that table's columns", () => {
+  const ctx = contextFor(SCHEMA);
+  const src = "CREATE PROCEDURE p()\nBEGIN\n  CREATE TEMPORARY TABLE tmp LIKE customers;\n  SELECT 1;\nEND;";
+  const scope = collect(mysql, src, tokenize(src).tokens, src.length, parseHeader(src));
+  assert.deepEqual(columnNames(resolveQualifier("SELECT tmp.", "tmp", ctx, scope)), ["user_id", "name"]);
+});
+
 test("a relation resolves the same way a qualifier does", () => {
   const ctx = contextFor(SCHEMA);
   const sql = "SELECT 1 FROM customers c";

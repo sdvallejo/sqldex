@@ -572,8 +572,8 @@ function readDeclare(src: string, tokens: readonly Token[], declareIdx: number, 
 }
 
 /**
- * Reads a `CREATE TEMPORARY TABLE`, with columns from the parenthesised list or inferred from the
- * `SELECT` that fills it.
+ * Reads a `CREATE TEMPORARY TABLE`, with columns from the parenthesised list, inferred from the
+ * `SELECT` that fills it, or copied from the table named by `LIKE`.
  *
  * @param tableIdx Index of the `TABLE` token.
  * @returns Where the walk resumes.
@@ -592,6 +592,26 @@ function readTempTable(
 
   let columns: string[] = [];
   let iAfter = i + 1;
+
+  // `LIKE src` and `(LIKE src)` copy another table's definition, and the statement can carry
+  // nothing else: the columns are `src`'s, which only a catalog can name.
+  const wrapped = punct(tokens[iAfter], "(");
+  const likeIdx = wrapped ? iAfter + 1 : iAfter;
+  if (kw(tokens[likeIdx], "LIKE")) {
+    const source = qualifiedName(tokens, likeIdx + 1);
+    if (source.name !== undefined) {
+      const end = wrapped && punct(tokens[source.nextIdx], ")") ? source.nextIdx + 1 : source.nextIdx;
+      out.push({
+        name: nameToken.v,
+        quoted: nameToken.q === true,
+        kind: "temp_table",
+        columns: [],
+        sources: [source.name],
+        nameSpan: { s: nameToken.s, e: nameToken.e },
+      });
+      return end;
+    }
+  }
 
   if (punct(tokens[iAfter], "(")) {
     const closeIdx = matchingParen(tokens, iAfter);

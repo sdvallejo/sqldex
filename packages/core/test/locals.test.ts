@@ -83,6 +83,26 @@ test("a temporary table's columns come from its SELECT when it declares none", (
   assert.deepEqual(locals.byName.get("tmp")!.columns, ["Id", "name"]);
 });
 
+test("a temporary table created LIKE another takes its columns from that table", () => {
+  const src =
+    "CREATE PROCEDURE p()\nBEGIN\n" +
+    "  CREATE TEMPORARY TABLE tmp_a LIKE customers;\n" +
+    "  CREATE TEMPORARY TABLE IF NOT EXISTS tmp_b (LIKE shop.orders);\n" +
+    "  INSERT INTO tmp_a SELECT * FROM customers;\n" +
+    "  CREATE TEMPORARY TABLE tmp_c (Id int);\n" +
+    "END;";
+  const tokens = tokenize(src).tokens;
+  const locals = collect(mysql, src, tokens, src.length, parseHeader(src));
+
+  // The columns are the source's, which only a catalog can name: here, just where to look.
+  const tmpA = locals.byName.get("tmp_a")!;
+  assert.deepEqual([tmpA.kind, tmpA.columns, tmpA.sources], ["temp_table", [], ["customers"]]);
+  const tmpB = locals.byName.get("tmp_b")!;
+  assert.deepEqual([tmpB.columns, tmpB.sources], [[], ["orders"]]);
+  // Nothing after the `LIKE` is read as the table's own: the next statement's SELECT is not.
+  assert.deepEqual(locals.byName.get("tmp_c")!.columns, ["Id"]);
+});
+
 test("only what is declared above the position is in scope", () => {
   const src = "CREATE PROCEDURE p()\nBEGIN\n  DECLARE vA int;\n  DECLARE vB int;\nEND;";
   const tokens = tokenize(src).tokens;
