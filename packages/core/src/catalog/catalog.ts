@@ -25,10 +25,18 @@ import { parseDDL, type ParsedDDL } from "../syntax/fast/ddl.ts";
 import { tokenize } from "../syntax/fast/lexer.ts";
 import { parseHeader, parseRoutines } from "../syntax/fast/routine.ts";
 import { collect as collectLocals } from "../analysis/locals.ts";
+import { routineBodies, type RoutineScope } from "../analysis/scopes.ts";
 import { sourceFiles, type FileRef } from "./project.ts";
 
 /** How many sources are kept in the cache. Hover and goto bounce around a handful of tables. */
 const SOURCE_CACHE_SIZE = 12;
+
+/**
+ * How many `CALL`s deep a temporary table is looked for. A procedure that stages its work through
+ * a helper that calls another is normal; a longer chain is rare, and a cycle stops at the visit
+ * check long before this.
+ */
+const MAX_CALL_DEPTH = 6;
 
 export interface FileEntry {
   path: string;
@@ -79,6 +87,12 @@ export interface CatalogLookup {
   routine(name: string | undefined): Routine | undefined;
   trigger(name: string | undefined): Trigger | undefined;
   tempTable(name: string | undefined): TempTableEntry | undefined;
+  /**
+   * The temporary table `name` as one of these routines creates it, or one they call in turn —
+   * nearest first. Optional: a catalog assembled by hand knows no routine bodies, and resolution
+   * falls back to `tempTable`.
+   */
+  tempTableFrom?(routines: readonly string[], name: string): TempTableEntry | undefined;
 }
 
 /**
@@ -250,6 +264,14 @@ export class Catalog implements CatalogLookup {
   readonly routines = new Map<string, Routine>();
   readonly triggers = new Map<string, Trigger>();
   readonly tempTables = new Map<string, TempTableEntry>();
+  /**
+   * Every file that creates each temporary table, by folded name. `tempTables` keeps one per name,
+   * which is all a "does it exist anywhere" question needs; scratch names like `tmp_ids` are reused
+   * across half the procedures of a repo, and the right one depends on who is asking.
+   */
+  private readonly tempCreators = new Map<string, TempTableEntry[]>();
+  /** Each file's routine bodies, with their own locals: lexed the first time a `CALL` is followed into one. */
+  private readonly bodiesCache = new Map<string, RoutineScope[]>();
   readonly files = new Map<string, FileEntry>();
   readonly stats: CatalogStats = {
     errors: [],
@@ -314,6 +336,17 @@ export class Catalog implements CatalogLookup {
     for (const name of entry.triggers) {
       if (this.triggers.get(name)?.file === entry.path) this.triggers.delete(name);
     }
+    for (const raw of entry.tempTables) {
+      const name = this.fold(raw);
+      const others = (this.tempCreators.get(name) ?? []).filter((item) => item.file !== entry.path);
+      if (others.length > 0) this.tempCreators.set(name, others);
+      else this.tempCreators.delete(name);
+      if (this.tempTables.get(name)?.file === entry.path) {
+        const fallback = others.at(-1);
+        if (fallback) this.tempTables.set(name, fallback);
+        else this.tempTables.delete(name);
+      }
+    }
   }
 
   /** Parses a file and puts its definitions into the catalog. */
@@ -349,7 +382,11 @@ export class Catalog implements CatalogLookup {
     for (const name of entry.tempTables) {
       // Where it is created is stored, not its columns: getting those means lexing the routine's
       // body, and that is paid for only if somebody asks. See `tempTable`.
-      this.tempTables.set(this.fold(name), { name, file: path });
+      const item = { name, file: path };
+      this.tempTables.set(this.fold(name), item);
+      const creators = this.tempCreators.get(this.fold(name));
+      if (!creators) this.tempCreators.set(this.fold(name), [item]);
+      else if (!creators.some((other) => other.file === path)) creators.push(item);
     }
 
     let parsed;
@@ -418,6 +455,7 @@ export class Catalog implements CatalogLookup {
 
     this.retract(entry);
     this.sourceCache.delete(path);
+    this.bodiesCache.delete(path);
     // The whole-catalog derivations are rebuilt lazily on the next ask. Editing a `CREATE TABLE`
     // is exactly when a foreign key or a column's type changes, so keeping them across a reparse
     // would answer with the schema as it was before the save.
@@ -605,5 +643,65 @@ export class Catalog implements CatalogLookup {
 
     entry.columns ??= [];
     return entry;
+  }
+
+  /** A file's routine bodies, each with the temporary tables it creates and the routines it calls. */
+  private bodies(path: string): RoutineScope[] {
+    const cached = this.bodiesCache.get(path);
+    if (cached) return cached;
+    const src = this.read(path);
+    let found: RoutineScope[] = [];
+    if (src !== undefined) {
+      const lexed = tokenize(src);
+      try {
+        found = routineBodies(this.dialect, src, lexed.tokens, parseRoutines(src, lexed).routines);
+      } catch {
+        // A body the parser chokes on creates nothing anyone can be pointed at.
+      }
+    }
+    this.bodiesCache.set(path, found);
+    return found;
+  }
+
+  /**
+   * The temporary table `name` as these routines leave it behind: created in one of their bodies,
+   * or in a routine they call, nearest first.
+   *
+   * Breadth first, so a table a routine creates itself beats one created two calls further down,
+   * and among the routines called at one level, the order of their `CALL`s decides. What it does
+   * not know is which of two callees ran last at run time; the first one written is the guess.
+   */
+  tempTableFrom(routines: readonly string[], name: string): TempTableEntry | undefined {
+    const key = this.fold(name);
+    // Nothing in the project creates it: no body is worth lexing to find that out.
+    if (!this.tempCreators.has(key)) return undefined;
+
+    const seen = new Set<string>();
+    let level = [...routines];
+    for (let depth = 0; depth < MAX_CALL_DEPTH && level.length > 0; depth++) {
+      const next: string[] = [];
+      for (const callee of level) {
+        const routine = this.routine(callee);
+        const routineKey = this.fold(callee);
+        if (!routine?.file || seen.has(routineKey)) continue;
+        seen.add(routineKey);
+
+        const body = this.bodies(routine.file).find((scope) => scope.routine.nameSpan.s === routine.nameSpan.s);
+        if (!body) continue;
+        const local = body.locals.byName.get(key);
+        if (local?.kind === "temp_table") {
+          return {
+            name: local.name,
+            file: routine.file,
+            columns: local.columns ?? [],
+            sources: local.sources,
+            nameSpan: local.nameSpan,
+          };
+        }
+        next.push(...(body.locals.calls ?? []));
+      }
+      level = next;
+    }
+    return undefined;
   }
 }

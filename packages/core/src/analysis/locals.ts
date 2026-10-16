@@ -685,6 +685,7 @@ export function collect(
   from = 0,
 ): Locals {
   const items: Local[] = [];
+  const calls: string[] = [];
 
   // The routine containing the cursor: the last one whose signature starts before it.
   let routine: Routine | undefined;
@@ -734,6 +735,11 @@ export function collect(
       } else {
         i++;
       }
+    } else if (kw(t, "CALL")) {
+      // `CALL other_schema.p` still calls `p`: the schema is not part of a routine's catalog name.
+      const callee = qualifiedName(tokens, i + 1).name;
+      if (callee !== undefined) calls.push(callee);
+      i++;
     } else {
       i++;
     }
@@ -742,5 +748,5 @@ export function collect(
   const byName = new Map<string, Local>();
   for (const item of items) byName.set(dialect.foldIdentifier(item.name, item.quoted), item);
 
-  return { routine, triggerTable, items, byName };
+  return { routine, triggerTable, items, byName, calls };
 }

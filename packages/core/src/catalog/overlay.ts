@@ -79,6 +79,7 @@ export function withOwnDefinitions(
     routine: (name) => base.routine(name),
     trigger: (name) => base.trigger(name),
     tempTable: (name) => base.tempTable(name),
+    ...(base.tempTableFrom ? { tempTableFrom: (routines, name) => base.tempTableFrom!(routines, name) } : {}),
     // The derivations stay the catalog's. What the buffer redefines is a table the project already
     // has, so a census of every table's columns or of who claims a constraint name is the same
     // answer either way — and recomputing it per keystroke would cost the whole schema.

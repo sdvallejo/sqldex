@@ -29,6 +29,7 @@ export {
   qualifierIn,
   relation,
   tempTable,
+  tempTableEntry,
 } from "./analysis/resolve.ts";
 export type { ColumnValue, ValueAccumulator } from "./analysis/values.ts";
 export { fromComment, isEnumLike } from "./analysis/values.ts";

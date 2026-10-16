@@ -12,7 +12,7 @@
  * places.
  */
 
-import { identifierAt, lineIndex, qualifier, relation, type Table } from "@sqldex/core";
+import { identifierAt, lineIndex, qualifier, relation, tempTableEntry, type Local, type Table } from "@sqldex/core";
 import type { Location } from "vscode-languageserver";
 
 import { rangeOf, uriOf } from "../convert.ts";
@@ -75,30 +75,38 @@ export function definition(at: At): Location | Location[] | undefined {
     return resolved?.table ? columnLocation(workspace, resolved.table, name) : undefined;
   }
 
-  // A local is declared right here, not in the catalog, so it is the buffer that says where.
+  // A local is declared right here, not in the catalog, so it is the buffer that says where. That
+  // includes a temporary table this file creates: the catalog keeps one per name, from whichever
+  // file it met first, and scratch names like `tmp_ids` are reused across half the procedures.
+  const here = (local: Local): Location => ({ uri: at.document.uri, range: rangeOf(lineIndex(at.text), local.nameSpan) });
   const local = scope.byName.get(key);
-  if (local && local.kind !== "temp_table") {
-    return { uri: at.document.uri, range: rangeOf(lineIndex(at.text), local.nameSpan) };
-  }
+  if (local) return here(local);
+
+  /**
+   * A name in `FROM`: the file's own temporary table first, since it shadows a base table of the
+   * same name for the session, then the catalog's table, then a temporary table created in another
+   * procedure — the one this routine `CALL`s, directly or further down, before any other file that
+   * reuses the name. That `CREATE TEMPORARY TABLE` is exactly what you want to see when querying it
+   * after a `CALL`.
+   */
+  const tableNamed = (tableName: string): Location | undefined => {
+    const own = scope.byName.get(fold(tableName));
+    if (own?.kind === "temp_table") return here(own);
+    const table = definitionOf(workspace, catalog.table(tableName));
+    if (table) return table;
+    const temp = tempTableEntry(at.resolve, scope, tableName);
+    return temp?.nameSpan ? locationOf(workspace, temp.file, temp.nameSpan) : undefined;
+  };
 
   // An alias leads to the table it names, not to itself.
   const aliased = analysis.byAlias.get(key);
   if (aliased?.name !== undefined && fold(aliased.name) !== key) {
-    const hit = definitionOf(workspace, catalog.table(aliased.name));
+    const hit = tableNamed(aliased.name);
     if (hit) return hit;
   }
 
-  const table = definitionOf(workspace, catalog.table(name));
+  const table = tableNamed(name);
   if (table) return table;
-
-  // A temporary table created in another procedure: the jump lands on that file's
-  // `CREATE TEMPORARY TABLE`, which is exactly what you want to see when querying it after a
-  // `CALL`.
-  const temp = catalog.tempTable(name);
-  if (temp?.nameSpan) {
-    const hit = locationOf(workspace, temp.file, temp.nameSpan);
-    if (hit) return hit;
-  }
 
   const routine = definitionOf(workspace, catalog.routine(name));
   if (routine) return routine;

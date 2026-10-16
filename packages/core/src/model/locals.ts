@@ -42,6 +42,11 @@ export interface Locals {
   triggerTable?: string;
   /** Everything visible from that position. */
   items: Local[];
+  /**
+   * The routines `CALL`ed before that position, in order. A temporary table one of them creates is
+   * the one a later read of that name finds, ahead of another procedure's table of the same name.
+   */
+  calls?: string[];
   /** By folded name. */
   byName: Map<string, Local>;
 }

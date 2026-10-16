@@ -13,7 +13,7 @@
  * to go searching the project for, even when the far-away one happens to share the spelling.
  */
 
-import { identifierAt, jsonTableColumns, kw, lineIndex, punct, qualifier, relation, tempTable } from "@sqldex/core";
+import { identifierAt, jsonTableColumns, kw, lineIndex, punct, qualifier, relation, tempTable, tempTableEntry } from "@sqldex/core";
 import { basename } from "node:path";
 import type { Hover } from "vscode-languageserver";
 
@@ -52,11 +52,12 @@ export function hover(at: At): Hover | undefined {
   /**
    * The basename of the file a temporary table was created in, when that is not this one. A table
    * this file creates itself is never "created in" another file that happens to create one with the
-   * same name — the catalog keeps one entry per name, and it need not be this file's.
+   * same name, and one created elsewhere is the one this routine's own `CALL`s leave behind before
+   * any other procedure's.
    */
   const createdIn = (tempName: string): string | undefined => {
     if (scope.byName.get(fold(tempName))?.kind === "temp_table") return undefined;
-    const entry = catalog.tempTable(tempName);
+    const entry = tempTableEntry(at.resolve, scope, tempName);
     return entry?.file !== undefined && entry.file !== at.path ? basename(entry.file) : undefined;
   };
 

@@ -111,6 +111,13 @@ test("only what is declared above the position is in scope", () => {
   assert.deepEqual(names, ["vA"]);
 });
 
+test("the routines CALLed above the position are recorded in order, schema dropped", () => {
+  const src = "CREATE PROCEDURE p()\nBEGIN\n  CALL sp_stage();\n  CALL shop.sp_settle(1);\n  CALL sp_later();\nEND;";
+  const tokens = tokenize(src).tokens;
+  const scope = collect(mysql, src, tokens, src.indexOf("CALL sp_later"), parseHeader(src));
+  assert.deepEqual(scope.calls, ["sp_stage", "sp_settle"]);
+});
+
 // ------------------------------------------------------------------ jsonTableColumns
 
 test("jsonTableColumns reads FOR ORDINALITY, a typed PATH column, and a NESTED PATH group", () => {

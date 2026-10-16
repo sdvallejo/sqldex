@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { collect } from "../src/analysis/locals.ts";
-import { columnNames, identifierAt, qualifier, relation, type ResolveContext } from "../src/analysis/resolve.ts";
+import { columnNames, identifierAt, qualifier, relation, tempTable, type ResolveContext } from "../src/analysis/resolve.ts";
 import type { CatalogLookup, TempTableEntry } from "../src/catalog/catalog.ts";
 import { mysql } from "../src/dialects/mysql/index.ts";
 import type { Locals } from "../src/model/locals.ts";
@@ -190,4 +190,22 @@ test("identifierAt separates the qualifier from the name, and stops at the token
   assert.equal(identifierAt(lexed, at + 5)?.token.v, "status");
   // One past it, no longer: unlike the completion cursor, this asks what you are *on*.
   assert.equal(identifierAt(lexed, at + 6)?.token.v, undefined);
+});
+
+// ------------------------------------------------------------------ temporary tables by caller
+
+test("a temporary table a called routine creates beats another file's of the same name", () => {
+  const anywhere: TempTableEntry = { name: "tmp_ids", file: "sp_other.sql", columns: ["other_id"] };
+  const called: TempTableEntry = { name: "tmp_ids", file: "sp_stage.sql", columns: ["order_id"] };
+  const base = catalogOf(SCHEMA, [anywhere]);
+  const ctx: ResolveContext = {
+    dialect: mysql,
+    catalog: { ...base, tempTableFrom: (routines, name) => (routines.includes("sp_stage") && name === "tmp_ids" ? called : undefined) },
+    schemas: new Set(),
+  };
+
+  const calling: Locals = { items: [], byName: new Map(), calls: ["sp_stage"] };
+  assert.deepEqual(columnNames(tempTable(ctx, calling, "tmp_ids")), ["order_id"]);
+  // With no `CALL` to choose by, the catalog's own pick stands.
+  assert.deepEqual(columnNames(tempTable(ctx, EMPTY_SCOPE, "tmp_ids")), ["other_id"]);
 });

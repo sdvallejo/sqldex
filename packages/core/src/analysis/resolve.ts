@@ -95,8 +95,21 @@ function expandTempColumns(ctx: ResolveContext, item: TempColumns, depth = 0): s
 }
 
 /**
- * Resolves a temporary table wherever it lives: the file being looked at first, and failing that,
- * the project file that creates it.
+ * The project file's temporary table a name means here, when this file does not create it: the one
+ * a routine called above leaves behind — or one that routine calls in turn — and only failing that,
+ * whichever file of the project creates a table of that name.
+ *
+ * The order matters because scratch names are reused: half the procedures of a repo can create
+ * their own `tmp_ids`, and the one this routine reads is the one its own `CALL`s made.
+ */
+export function tempTableEntry(ctx: ResolveContext, scope: Locals, name: string): TempTableEntry | undefined {
+  const called = scope.calls?.length ? ctx.catalog.tempTableFrom?.(scope.calls, name) : undefined;
+  return called ?? ctx.catalog.tempTable(name);
+}
+
+/**
+ * Resolves a temporary table wherever it lives: the file being looked at first, then a routine it
+ * calls, and failing that, any project file that creates it.
  */
 export function tempTable(ctx: ResolveContext, scope: Locals, name: string): Resolved | undefined {
   const item: Local | undefined = scope.byName.get(ctx.dialect.foldIdentifier(name, false));
@@ -104,7 +117,7 @@ export function tempTable(ctx: ResolveContext, scope: Locals, name: string): Res
     return { kind: "temp_table", columns: expandTempColumns(ctx, item), name: item.name };
   }
 
-  const entry = ctx.catalog.tempTable(name);
+  const entry = tempTableEntry(ctx, scope, name);
   if (entry) return { kind: "temp_table", columns: expandTempColumns(ctx, entry), name: entry.name };
   return undefined;
 }

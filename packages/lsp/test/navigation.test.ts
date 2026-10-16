@@ -141,9 +141,57 @@ test("a routine leads to the file that defines it", () => {
 
 test("a temporary table leads to the procedure that creates it", () => {
   // The thing you cannot find by searching: the name is written in every file that touches it and
-  // created in exactly one.
+  // created in exactly one. `sp_archive_stage` creates one too, but with no `CALL` to choose by,
+  // the catalog's own pick stands: the last file indexed, in sorted order.
   const here = inChain("SELECT * FROM tmp_j|obs;");
   assert.deepEqual(landings(definition(here), here), ["sp_stage.sql:2 tmp_jobs"]);
+});
+
+test("a temporary table this file creates leads to its own CREATE, not another file's of the same name", () => {
+  // Scratch names like `tmp_jobs` are reused across procedures; the one being read is the one this
+  // routine created a few lines up.
+  const here = inChain(
+    `CREATE PROCEDURE sp_scratch()
+BEGIN
+  CREATE TEMPORARY TABLE tmp_jobs (job_id int);
+  SELECT * FROM jobs j JOIN tmp_j|obs t USING (job_id);
+END;`,
+  );
+  assert.deepEqual(landings(definition(here), here), ["sp_scratch.sql:2 tmp_jobs"]);
+});
+
+test("a temporary table leads to the procedure this routine calls that creates it, not another of the same name", () => {
+  // Two procedures create a `tmp_jobs`; the one that exists here is the one the `CALL` made.
+  const here = inChain(
+    `CREATE PROCEDURE sp_scratch()
+BEGIN
+  CALL sp_archive_stage();
+  SELECT * FROM tmp_j|obs;
+END;`,
+  );
+  assert.deepEqual(landings(definition(here), here), ["sp_archive_stage.sql:2 tmp_jobs"]);
+});
+
+test("a temporary table created two calls down is still the one that call chain leaves behind", () => {
+  const here = inChain(
+    `CREATE PROCEDURE sp_scratch()
+BEGIN
+  CALL sp_archive_all();
+  SELECT * FROM tmp_j|obs;
+END;`,
+  );
+  assert.deepEqual(landings(definition(here), here), ["sp_archive_stage.sql:2 tmp_jobs"]);
+});
+
+test("an alias of a temporary table this file creates leads to that CREATE", () => {
+  const here = inChain(
+    `CREATE PROCEDURE sp_scratch()
+BEGIN
+  CREATE TEMPORARY TABLE tmp_jobs (job_id int);
+  SELECT * FROM jobs j JOIN tmp_jobs t USING (job_id) WHERE |t.job_id > 0;
+END;`,
+  );
+  assert.deepEqual(landings(definition(here), here), ["sp_scratch.sql:2 tmp_jobs"]);
 });
 
 test("a bare column in a join leads to every table that has one, and the editor picks", () => {
