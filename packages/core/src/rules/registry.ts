@@ -41,7 +41,7 @@ import { parseDDL } from "../syntax/fast/ddl.ts";
 import { lineCol, lineIndex, tokenize } from "../syntax/fast/lexer.ts";
 import { parseRoutines } from "../syntax/fast/routine.ts";
 import { relations as statementRelations, statements } from "../syntax/fast/stmt.ts";
-import { kw, kwAny } from "../syntax/fast/tok.ts";
+import { kw, kwAny, matchingParen, punct, qualifiedName } from "../syntax/fast/tok.ts";
 import type { Span, Token, TokenRange } from "../syntax/types.ts";
 import type {
   DocumentContext,
@@ -82,6 +82,52 @@ const IGNORE_FILE_MARKER = "sqldex:ignore-file";
  * optimisation: it is the difference between the query rules being usable and being noise.
  */
 const DDL_STARTERS = new Set(["CREATE", "ALTER", "DROP", "RENAME", "TRUNCATE", "GRANT", "REVOKE"]);
+
+/**
+ * Where the query of a `CREATE [TEMPORARY] TABLE name … SELECT …` starts, or `undefined` when the
+ * statement is not one.
+ *
+ * `DDL_STARTERS` keeps a `CREATE TABLE` from being read as a query, and rightly, but it also hides
+ * the one real query a `CREATE` can carry: the `SELECT` that fills the table. The rules have to be
+ * handed that query alone — the table's own name and its column list read as a query invent
+ * relations — so this finds where it begins and the caller narrows the statement to there.
+ *
+ * It walks only depth zero, because the definition list is parenthesised and may hold anything
+ * (`DEFAULT (…)`, `CHECK (…)`): after the name, a group whose first word is not `SELECT`/`WITH` is
+ * that list and is skipped whole. What is left before the query is table options, `IGNORE` or
+ * `REPLACE`, and `AS`, none of which is a query, so the first depth-zero `SELECT`/`WITH` ends the
+ * search, as does a `(` opening a parenthesised query. `LIKE` and a definition list with nothing
+ * after it have no query, so nothing is found and the statement stays skipped.
+ */
+function createTableQuery(tokens: readonly Token[], statement: TokenRange): number | undefined {
+  let i = statement.from + 1;
+  if (kw(tokens[i], "TEMPORARY")) i++;
+  if (!kw(tokens[i], "TABLE")) return undefined;
+  i++;
+  if (kw(tokens[i], "IF") && kw(tokens[i + 1], "NOT") && kw(tokens[i + 2], "EXISTS")) i += 3;
+  const name = qualifiedName(tokens, i);
+  if (name.name === undefined) return undefined;
+
+  // A `WITH` opens a query only as a CTE — `RECURSIVE`, or a name followed by `AS` or its column
+  // list. MariaDB's `WITH SYSTEM VERSIONING` is a table option.
+  const startsQuery = (at: number): boolean =>
+    kw(tokens[at], "SELECT") ||
+    (kw(tokens[at], "WITH") &&
+      (kw(tokens[at + 1], "RECURSIVE") || kw(tokens[at + 2], "AS") || punct(tokens[at + 2], "(")));
+  for (i = name.nextIdx; i <= statement.to; i++) {
+    if (punct(tokens[i], "(")) {
+      if (startsQuery(i + 1)) return i;
+      const close = matchingParen(tokens, i);
+      if (close === -1) return undefined;
+      i = close;
+    } else if (kw(tokens[i], "LIKE")) {
+      return undefined;
+    } else if (startsQuery(i)) {
+      return i;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Does the file build SQL as a string?
@@ -419,8 +465,14 @@ export function check(registry: Registry, options: CheckOptions, src: string): D
     // Both lists are in source order and the bodies do not overlap, so one pointer walks them
     // together instead of searching the bodies again for every statement.
     let atBody = 0;
-    for (const statement of statements(tokens)) {
-      if (kwAny(tokens[statement.from], DDL_STARTERS)) continue;
+    for (const whole of statements(tokens)) {
+      let statement = whole;
+      if (kwAny(tokens[whole.from], DDL_STARTERS)) {
+        // Only the query of a `CREATE TABLE … SELECT` is let through, and only from where it starts.
+        const query = kw(tokens[whole.from], "CREATE") ? createTableQuery(tokens, whole) : undefined;
+        if (query === undefined) continue;
+        statement = { from: query, to: whole.to };
+      }
 
       while (atBody < bodyScopes.length && bodyScopes[atBody]!.body.to < statement.from) atBody++;
       const enclosing = bodyScopes[atBody];

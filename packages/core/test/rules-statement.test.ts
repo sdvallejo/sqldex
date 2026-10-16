@@ -2990,3 +2990,54 @@ test("the two LIMIT rules are never both about one LIMIT", () => {
     assert.equal(warn + hint, limit === "LIMIT 0" ? 0 : 1, limit);
   }
 });
+
+// ------------------------------------------------------- CREATE TABLE … SELECT
+
+const CTAS = (query: string) =>
+  body(
+    "  CREATE TEMPORARY TABLE tmp_batch (INDEX ix_customer(customer_id)) ENGINE = MEMORY",
+    `    ${query}`,
+  );
+
+test("the query of a CREATE TABLE … SELECT is read by the statement rules", () => {
+  const sounds = CTAS("SELECT o.customer_id, o.total FROM orders o WHERE o.status = 'A' LIMIT 50;");
+  const quiet = CTAS(
+    "SELECT o.customer_id, o.total FROM orders o WHERE o.status = 'A' ORDER BY o.customer_id LIMIT 50;",
+  );
+  assert.equal(run(limitWithoutOrderBy, sounds).length, 1);
+  assert.deepEqual(run(limitWithoutOrderBy, quiet), []);
+});
+
+test("a CREATE TABLE with no query is still not read as one", () => {
+  const src =
+    "CREATE TABLE child (id INT, parent INT, FOREIGN KEY (parent) REFERENCES orders(order_id) ON UPDATE RESTRICT);";
+  assert.deepEqual(run(unknownTable, src), []);
+  assert.deepEqual(run(limitWithoutOrderBy, src), []);
+  assert.deepEqual(run(unknownTable, "CREATE TEMPORARY TABLE tmp_copy LIKE orders;"), []);
+});
+
+test("a parenthesised query, and IGNORE before the query, both reach the rules", () => {
+  const limit = "SELECT order_id FROM orders LIMIT 5";
+  for (const src of [
+    `CREATE TEMPORARY TABLE tmp_a AS (${limit});`,
+    `CREATE TABLE tmp_b IGNORE ${limit};`,
+    `CREATE TABLE IF NOT EXISTS tmp_c (order_id int) REPLACE AS ${limit};`,
+  ]) {
+    assert.equal(run(limitWithoutOrderBy, src).length, 1, src);
+  }
+});
+
+test("names are checked inside a CREATE TABLE … SELECT, and the created table is not one of them", () => {
+  const typo = CTAS("SELECT o.custmer_id FROM orders o;");
+  const clean = CTAS("SELECT o.customer_id FROM orders o;");
+  assert.equal(run(unknownColumn, typo).length, 1);
+  assert.deepEqual(run(unknownColumn, clean), []);
+  assert.deepEqual(run(unknownTable, clean), []);
+  assert.deepEqual(run(unknownTable, CTAS("SELECT * FROM ordrs;")), ["unknown table: ordrs"]);
+});
+
+test("a CTE starts the query of a CREATE TABLE, MariaDB's WITH SYSTEM VERSIONING does not", () => {
+  const cte = "CREATE TABLE tmp_d WITH recent AS (SELECT order_id FROM orders) SELECT order_id FROM recent LIMIT 5;";
+  assert.equal(run(limitWithoutOrderBy, cte).length, 1);
+  assert.deepEqual(run(unknownTable, "CREATE TABLE history (id INT) WITH SYSTEM VERSIONING;"), []);
+});
