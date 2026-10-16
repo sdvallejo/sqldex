@@ -55,13 +55,13 @@ interface Scope {
 }
 
 /** The words that open a block closed by an `END`. */
-const OPENERS: ReadonlySet<string> = new Set(["BEGIN", "CASE", "WHILE", "LOOP", "REPEAT"]);
+export const OPENERS: ReadonlySet<string> = new Set(["BEGIN", "CASE", "WHILE", "LOOP", "REPEAT"]);
 
 /** The words that may follow `END` to name what it closes. */
-const CLOSERS: ReadonlySet<string> = new Set(["IF", "CASE", "WHILE", "LOOP", "REPEAT"]);
+export const CLOSERS: ReadonlySet<string> = new Set(["IF", "CASE", "WHILE", "LOOP", "REPEAT"]);
 
 /** The object words an `IF [NOT] EXISTS` clause follows in DDL, which opens nothing. */
-const DDL_OBJECTS: ReadonlySet<string> = new Set([
+export const DDL_OBJECTS: ReadonlySet<string> = new Set([
   "TABLE", "VIEW", "INDEX", "PROCEDURE", "FUNCTION", "TRIGGER", "EVENT", "DATABASE", "SCHEMA", "COLUMN", "KEY",
   "USER", "ROLE", "SERVER", "SEQUENCE", "TABLESPACE", "RESOURCE", "SAVEPOINT",
 ]);

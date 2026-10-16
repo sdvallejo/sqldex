@@ -33,6 +33,7 @@ import {
   nullableVariableInConcat,
   nullableVariableInPredicate,
   outParamNeverAssigned,
+  selectIntoStaleInLoop,
   shadowedParameter,
   unknownLabel,
   unusedVariable,
@@ -1660,4 +1661,252 @@ test("a CALL the catalog cannot resolve may be the one filling it, so nothing is
   // to tell a filled parameter from an unfilled one, and guessing would accuse the caller.
   const src = withHeader("CREATE PROCEDURE sp_case(IN p_order int, OUT p_result int)", "  CALL sp_elsewhere(p_order, p_result);");
   assert.deepEqual(run(outParamNeverAssigned, src), []);
+});
+
+// ------------------------------------------------------ stale SELECT … INTO in a loop
+
+const STALE = (target = "v_refund"): string =>
+  `if this SELECT finds no row, \`${target}\` keeps the value it had on the previous pass of the loop, ` +
+  "so the NULL test after it cannot tell: the server leaves the variable unchanged and raises only a warning";
+
+/** A WHILE loop around `inner`, with `v_refund` and a counter declared. */
+function whileLoop(inner: string[], decls: string[] = []): string {
+  return body(
+    "  DECLARE v_refund decimal(10,2);",
+    "  DECLARE i int DEFAULT 0;",
+    ...decls,
+    "  WHILE i < 3 DO",
+    ...inner,
+    "    SET i = i + 1;",
+    "  END WHILE;",
+  );
+}
+
+const FIND = "    SELECT total INTO v_refund FROM orders WHERE order_id = i;";
+const USE = "    UPDATE orders SET discount = COALESCE(v_refund, 0) WHERE order_id = i;";
+
+test("a SELECT INTO in a WHILE whose target is tested for NULL afterwards is reported on the variable", () => {
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([FIND, USE])), [STALE()]);
+});
+
+test("REPEAT and LOOP forms are loops too", () => {
+  const repeat = body(
+    "  DECLARE v_refund decimal(10,2);",
+    "  DECLARE i int DEFAULT 0;",
+    "  REPEAT",
+    FIND,
+    USE,
+    "    SET i = i + 1;",
+    "  UNTIL i >= 3 END REPEAT;",
+  );
+  assert.deepEqual(run(selectIntoStaleInLoop, repeat), [STALE()]);
+
+  const plain = body(
+    "  DECLARE v_refund decimal(10,2);",
+    "  DECLARE i int DEFAULT 0;",
+    "  wheel: LOOP",
+    FIND,
+    USE,
+    "    SET i = i + 1;",
+    "    IF i >= 3 THEN LEAVE wheel; END IF;",
+    "  END LOOP wheel;",
+  );
+  assert.deepEqual(run(selectIntoStaleInLoop, plain), [STALE()]);
+});
+
+test("the same SELECT outside any loop is quiet", () => {
+  const src = body("  DECLARE v_refund decimal(10,2);", FIND, USE);
+  assert.deepEqual(run(selectIntoStaleInLoop, src), []);
+});
+
+test("a read only in the loop condition counts as a read", () => {
+  const src = body(
+    "  DECLARE v_refund decimal(10,2) DEFAULT 1;",
+    "  WHILE v_refund IS NOT NULL DO",
+    FIND,
+    "  END WHILE;",
+  );
+  assert.deepEqual(run(selectIntoStaleInLoop, src), [STALE()]);
+});
+
+test("a variable nothing tests for NULL afterwards is quiet", () => {
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([FIND])), []);
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([USE, FIND])), [], "a test above is not after");
+  const plain = "    UPDATE orders SET discount = v_refund WHERE order_id = i;";
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([FIND, plain])), [], "a plain read asks nothing");
+  const inside = "    UPDATE orders SET discount = COALESCE(v_refund + 1, 0) WHERE order_id = i;";
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([FIND, inside])), [], "the sum is what is tested");
+});
+
+test("IS NULL, IS NOT NULL, <=> NULL, IFNULL and ISNULL are NULL tests too", () => {
+  for (const test of [
+    "    IF v_refund IS NULL THEN LEAVE l; END IF;",
+    "    IF v_refund IS NOT NULL THEN SET i = i + 1; END IF;",
+    "    IF v_refund <=> NULL THEN SET i = i + 1; END IF;",
+    "    SET i = i + IFNULL(v_refund, 0);",
+    "    SET i = i + ISNULL(v_refund);",
+  ]) {
+    assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([FIND, test])), [STALE()], test);
+  }
+});
+
+test("an aggregate without GROUP BY always yields a row, and a GROUP BY does not", () => {
+  const sum = "    SELECT SUM(total) INTO v_refund FROM orders WHERE order_id = i;";
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([sum, USE])), []);
+  const grouped = "    SELECT SUM(total) INTO v_refund FROM orders WHERE order_id = i GROUP BY customer_id;";
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([grouped, USE])), [STALE()]);
+});
+
+test("a SELECT with no FROM is quiet", () => {
+  const src = whileLoop(["    SELECT i * 2 INTO v_refund;", USE]);
+  assert.deepEqual(run(selectIntoStaleInLoop, src), []);
+});
+
+test("INTO OUTFILE is quiet", () => {
+  const src = whileLoop(["    SELECT total FROM orders INTO OUTFILE '/tmp/out.txt';", USE]);
+  assert.deepEqual(run(selectIntoStaleInLoop, src), []);
+});
+
+test("a user variable is out of scope", () => {
+  const src = whileLoop(["    SELECT total INTO @carried FROM orders WHERE order_id = i;", "    SELECT @carried;"]);
+  assert.deepEqual(run(selectIntoStaleInLoop, src), []);
+});
+
+test("a parameter is a target like any local", () => {
+  const src = [
+    "CREATE PROCEDURE sp_case(INOUT p_total decimal(10,2))",
+    "BEGIN",
+    "  DECLARE i int DEFAULT 0;",
+    "  WHILE i < 3 DO",
+    "    SELECT total INTO p_total FROM orders WHERE order_id = i;",
+    "    UPDATE orders SET discount = IFNULL(p_total, 0) WHERE order_id = i;",
+    "    SET i = i + 1;",
+    "  END WHILE;",
+    "END;",
+  ].join("\n");
+  assert.deepEqual(run(selectIntoStaleInLoop, src), [STALE("p_total")]);
+});
+
+test("an assignment earlier in the loop body clears it, in any of its forms", () => {
+  const cleared = (line: string): string[] => run(selectIntoStaleInLoop, whileLoop([line, FIND, USE]));
+  assert.deepEqual(cleared("    SET v_refund = NULL;"), []);
+  assert.deepEqual(cleared("    SET i = i, v_refund = 0;"), []);
+  assert.deepEqual(cleared("    SELECT 0 INTO v_refund;"), []);
+  assert.deepEqual(cleared("    IF i > 1 THEN SET v_refund = 0; END IF;"), [], "even in a branch");
+  assert.deepEqual(cleared("    CALL sp_returns(i, v_refund);"), [], "an argument of a CALL may be OUT");
+  assert.deepEqual(
+    run(
+      selectIntoStaleInLoop,
+      body(
+        "  DECLARE v_refund decimal(10,2);",
+        "  DECLARE i int DEFAULT 0;",
+        "  DECLARE c_rows CURSOR FOR SELECT total FROM orders;",
+        "  WHILE i < 3 DO",
+        "    FETCH c_rows INTO v_refund;",
+        FIND,
+        USE,
+        "    SET i = i + 1;",
+        "  END WHILE;",
+      ),
+    ),
+    [],
+  );
+});
+
+test("a reset at the bottom of the loop body clears it for the next pass", () => {
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([FIND, USE, "    SET v_refund = NULL;"])), []);
+});
+
+test("a walk by position stands down, a LIMIT with no offset does not", () => {
+  const walk = (limit: string): string =>
+    whileLoop([`    SELECT total INTO v_refund FROM orders ${limit};`, USE]);
+  assert.deepEqual(run(selectIntoStaleInLoop, walk("LIMIT i, 1")), []);
+  assert.deepEqual(run(selectIntoStaleInLoop, walk("LIMIT 1 OFFSET i")), []);
+  assert.deepEqual(run(selectIntoStaleInLoop, walk("WHERE order_id = i LIMIT 1")), [STALE()]);
+});
+
+test("an assignment before the loop does not clear it", () => {
+  const before = body(
+    "  DECLARE v_refund decimal(10,2);",
+    "  DECLARE i int DEFAULT 0;",
+    "  SET v_refund = 0;",
+    "  WHILE i < 3 DO",
+    FIND,
+    USE,
+    "    SET i = i + 1;",
+    "  END WHILE;",
+  );
+  assert.deepEqual(run(selectIntoStaleInLoop, before), [STALE()]);
+});
+
+test("a variable declared inside the loop body is fresh every pass", () => {
+  const src = body(
+    "  DECLARE i int DEFAULT 0;",
+    "  WHILE i < 3 DO",
+    "    BEGIN",
+    "      DECLARE v_refund decimal(10,2);",
+    FIND,
+    USE,
+    "    END;",
+    "    SET i = i + 1;",
+    "  END WHILE;",
+  );
+  assert.deepEqual(run(selectIntoStaleInLoop, src), []);
+});
+
+test("a NOT FOUND, SQLSTATE 02000 or SQLWARNING handler anywhere stands the rule down", () => {
+  for (const handler of [
+    "  DECLARE CONTINUE HANDLER FOR NOT FOUND SET i = i;",
+    "  DECLARE EXIT HANDLER FOR SQLSTATE '02000' SET i = i;",
+    "  DECLARE CONTINUE HANDLER FOR SQLWARNING SET i = i;",
+  ]) {
+    assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([FIND, USE], [handler])), [], handler);
+  }
+  const other = "  DECLARE EXIT HANDLER FOR SQLEXCEPTION SET i = i;";
+  assert.deepEqual(run(selectIntoStaleInLoop, whileLoop([FIND, USE], [other])), [STALE()]);
+});
+
+test("in nested loops the innermost one decides", () => {
+  const nested = (reset: string[], inner: string[]): string =>
+    body(
+      "  DECLARE v_refund decimal(10,2);",
+      "  DECLARE i int DEFAULT 0;",
+      "  DECLARE j int DEFAULT 0;",
+      "  SET v_refund = NULL;",
+      "  WHILE i < 3 DO",
+      ...reset,
+      "    SET j = 0;",
+      "    WHILE j < 3 DO",
+      ...inner,
+      "      SET j = j + 1;",
+      "    END WHILE;",
+      "    SET i = i + 1;",
+      "  END WHILE;",
+    );
+  const find = "      SELECT total INTO v_refund FROM orders WHERE order_id = j;";
+  const use = "      UPDATE orders SET discount = COALESCE(v_refund, 0) WHERE order_id = j;";
+  assert.deepEqual(
+    run(selectIntoStaleInLoop, nested(["    SET v_refund = NULL;"], [find, use])),
+    [STALE()],
+    "reset in the outer loop only",
+  );
+  assert.deepEqual(
+    run(selectIntoStaleInLoop, nested([], ["      SET v_refund = NULL;", find, use])),
+    [],
+    "reset inside the inner loop",
+  );
+});
+
+test("one finding per stale target", () => {
+  const src = body(
+    "  DECLARE v_total decimal(10,2);",
+    "  DECLARE v_discount decimal(10,2);",
+    "  DECLARE i int DEFAULT 0;",
+    "  WHILE i < 3 DO",
+    "    SELECT total, discount INTO v_total, v_discount FROM orders WHERE order_id = i;",
+    "    SELECT COALESCE(v_total, 0), COALESCE(v_discount, 0);",
+    "    SET i = i + 1;",
+    "  END WHILE;",
+  );
+  assert.deepEqual(run(selectIntoStaleInLoop, src), [STALE("v_total"), STALE("v_discount")]);
 });

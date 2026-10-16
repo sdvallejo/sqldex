@@ -156,7 +156,7 @@ test("syntax_check.enabled: false in .sqldex.json does the same, without a flag"
 test("rules lists every rule, sorted by id", () => {
   const { code, out } = cli(["rules"]);
   assert.equal(code, 0);
-  assert.match(out, /67 rules\./);
+  assert.match(out, /68 rules\./);
   assert.ok(out.indexOf("audit/table-out-of-sync") < out.indexOf("names/unknown-table"));
 });
 
@@ -170,7 +170,7 @@ test("rules says severity is configurable, and where", () => {
 test("rules --format json carries the docs", () => {
   const { out } = cli(["rules", "--format", "json"]);
   const parsed: { id: string; group: string; docs: string }[] = JSON.parse(out);
-  assert.equal(parsed.length, 67);
+  assert.equal(parsed.length, 68);
   assert.ok(parsed.every((rule) => rule.docs.length > 0));
   assert.ok(parsed.every((rule) => rule.id.startsWith(`${rule.group}/`)));
 });

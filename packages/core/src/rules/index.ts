@@ -64,6 +64,7 @@ import { outArgumentNotVariable } from "./routine/out-argument-not-variable.ts";
 import { selectIntoArity } from "./routine/select-into-arity.ts";
 import { selectIntoManyRows } from "./routine/select-into-many-rows.ts";
 import { selectIntoSelf } from "./routine/select-into-self.ts";
+import { selectIntoStaleInLoop } from "./routine/select-into-stale-in-loop.ts";
 import { Registry } from "./registry.ts";
 import { cursorNeverOpened } from "./routine/cursor-never-opened.ts";
 import { deadCoalesceDefault } from "./routine/dead-coalesce-default.ts";
@@ -126,6 +127,7 @@ export const routineRules = [
   cursorNeverOpened,
   outParamNeverAssigned,
   unknownLabel,
+  selectIntoStaleInLoop,
 ] as const;
 
 /**
@@ -249,6 +251,7 @@ export {
   selectIntoArity,
   selectIntoManyRows,
   selectIntoSelf,
+  selectIntoStaleInLoop,
   shadowedParameter,
   undeclaredVariable,
   unfilteredWrite,
