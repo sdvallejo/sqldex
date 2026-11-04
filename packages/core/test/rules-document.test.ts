@@ -1328,6 +1328,99 @@ test("a second source no check follows keeps the variable tainted", () => {
   assert.deepEqual(run(nullableVariableInPredicate, checked([...second, ...SIGNAL_GUARD])), []);
 });
 
+/** A `SELECT … INTO` with several slots, a guard on `v_list`, and a CONCAT read of `v_total` below it. */
+function siblings(select: string, guard: string[], read = "  SELECT CONCAT('total ', v_total);"): string {
+  return [
+    "CREATE PROCEDURE sp_case(IN p_customer int)",
+    "main: BEGIN",
+    "  DECLARE v_total decimal(10,2);",
+    "  DECLARE v_list json;",
+    "  DECLARE v_other int;",
+    `  ${select}`,
+    ...guard,
+    read,
+    "END;",
+  ].join("\n");
+}
+
+const SUM_AND_LIST =
+  "SELECT SUM(o.total), JSON_ARRAYAGG(o.order_id) INTO v_total, v_list FROM orders o WHERE o.customer_id = p_customer;";
+const LIST_GUARD = ["  IF v_list IS NULL THEN LEAVE main; END IF;"];
+
+test("a leaving check on a sibling aggregate of the same SELECT ... INTO clears the no-rows taint", () => {
+  assert.deepEqual(run(nullableVariableInConcat, siblings(SUM_AND_LIST, LIST_GUARD)), []);
+  assert.equal(run(nullableVariableInConcat, siblings(SUM_AND_LIST, [])).length, 1);
+});
+
+test("the sibling check clears the arithmetic and predicate reads too", () => {
+  const arithmetic = siblings(SUM_AND_LIST, LIST_GUARD, "  SELECT v_total + 1;");
+  const predicate = siblings(SUM_AND_LIST, LIST_GUARD, "  UPDATE orders SET total = 0 WHERE total != v_total;");
+  assert.deepEqual(run(nullableIntoArithmetic, arithmetic), []);
+  assert.deepEqual(run(nullableVariableInPredicate, predicate), []);
+  assert.equal(run(nullableIntoArithmetic, siblings(SUM_AND_LIST, [], "  SELECT v_total + 1;")).length, 1);
+  assert.equal(
+    run(nullableVariableInPredicate, siblings(SUM_AND_LIST, [], "  UPDATE orders SET total = 0 WHERE total != v_total;"))
+      .length,
+    1,
+  );
+});
+
+test("a SIGNAL after a check on a sibling MAX clears the taint as well", () => {
+  const select = "SELECT SUM(o.total), MAX(o.order_id) INTO v_total, v_other FROM orders o WHERE o.customer_id = p_customer;";
+  const guard = ["  IF v_other IS NULL THEN SIGNAL SQLSTATE '45000'; END IF;"];
+  assert.deepEqual(run(nullableVariableInConcat, siblings(select, guard)), []);
+});
+
+test("a sibling check that does not leave clears nothing", () => {
+  const iterate = ["  IF v_list IS NULL THEN ITERATE main; END IF;"];
+  const inner = [
+    "  inner_loop: LOOP",
+    "    IF v_list IS NULL THEN LEAVE inner_loop; END IF;",
+    "    LEAVE inner_loop;",
+    "  END LOOP inner_loop;",
+  ];
+  assert.equal(run(nullableVariableInConcat, siblings(SUM_AND_LIST, iterate)).length, 1);
+  assert.equal(run(nullableVariableInConcat, siblings(SUM_AND_LIST, inner)).length, 1);
+});
+
+test("a sibling reassigned between the SELECT and the check no longer proves a row was found", () => {
+  const reassigned = ["  SET v_list = JSON_ARRAY();", ...LIST_GUARD];
+  assert.equal(run(nullableVariableInConcat, siblings(SUM_AND_LIST, reassigned)).length, 1);
+});
+
+test("a protected or COUNT sibling proves nothing", () => {
+  const protectedSibling =
+    "SELECT SUM(o.total), COALESCE(MAX(o.order_id), 0) INTO v_total, v_other FROM orders o WHERE o.customer_id = p_customer;";
+  const counted =
+    "SELECT SUM(o.total), COUNT(*) INTO v_total, v_other FROM orders o WHERE o.customer_id = p_customer;";
+  const guard = ["  IF v_other IS NULL THEN LEAVE main; END IF;"];
+  assert.equal(run(nullableVariableInConcat, siblings(protectedSibling, guard)).length, 1);
+  assert.equal(run(nullableVariableInConcat, siblings(counted, guard)).length, 1);
+});
+
+test("a check on a variable from a different SELECT ... INTO is not a sibling", () => {
+  const src = [
+    "CREATE PROCEDURE sp_case(IN p_customer int)",
+    "main: BEGIN",
+    "  DECLARE v_total decimal(10,2);",
+    "  DECLARE v_list json;",
+    "  SELECT SUM(o.total) INTO v_total FROM orders o WHERE o.customer_id = p_customer;",
+    "  SELECT JSON_ARRAYAGG(o.order_id) INTO v_list FROM orders o WHERE o.customer_id = p_customer;",
+    ...LIST_GUARD,
+    "  SELECT CONCAT('total ', v_total);",
+    "END;",
+  ].join("\n");
+  assert.equal(run(nullableVariableInConcat, src).length, 1);
+});
+
+test("a sibling check never clears a nullable column from the same SELECT ... INTO", () => {
+  const select =
+    "SELECT o.discount, JSON_ARRAYAGG(o.order_id) INTO v_total, v_list FROM orders o WHERE o.customer_id = p_customer;";
+  const messages = run(nullableVariableInConcat, siblings(select, LIST_GUARD));
+  assert.equal(messages.length, 1);
+  assert.match(messages[0]!, /orders\.discount/);
+});
+
 test("a check inside the arm the source sits in clears it, and one in another block does not", () => {
   const inArm = [
     "  IF p_order > 0 THEN",

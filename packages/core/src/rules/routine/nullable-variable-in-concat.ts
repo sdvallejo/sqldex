@@ -45,6 +45,9 @@ What it deliberately leaves alone:
     \`CONTINUE\` handler that catches the \`SIGNAL\` (for \`SQLEXCEPTION\`, or for the same
     \`SQLSTATE\`), execution resumes right after it, so that \`SIGNAL\` leaves nothing and the check
     does not count. A second source of \`v\` that no such check follows keeps it tainted.
+    In a \`SELECT … INTO\` with no \`GROUP BY\`, a leaving check on *another* aggregate of the same
+    statement — \`JSON_ARRAYAGG\` included — proves a row was found, which clears the no-rows taint of
+    every aggregate in it; it never clears a nullable column, which no row count rules out.
 
 **What it does not model**, and this it shares with the arithmetic rule: a later assignment from a
 source that cannot be NULL does not clear the taint. That needs flow analysis this backend does not

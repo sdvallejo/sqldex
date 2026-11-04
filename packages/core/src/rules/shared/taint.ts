@@ -13,9 +13,9 @@
  *     shape reaches arithmetic directly, left instead in a variable for these rules to follow.
  */
 
-import { clearedByExit } from "./exits.ts";
+import { clearedByExit, type Site } from "./exits.ts";
 import { isKeyLookup } from "./keys.ts";
-import { aggregatesIn, readSubquery } from "./subqueries.ts";
+import { aggregatesIn, readSubquery, rowWitness } from "./subqueries.ts";
 import { statementSetTargets } from "./writes.ts";
 import type { Table } from "../../model/table.ts";
 import { relations } from "../../syntax/fast/stmt.ts";
@@ -108,11 +108,12 @@ export function nullableSources(ctx: WithStatements): Map<string, Origin> {
   const tainted = new Map<string, Origin>();
   // Every place a tainted variable is filled from a source of NULL, by token index of the target,
   // kept beside the map so a NULL check that leaves can be matched to the source it follows.
-  const sites = new Map<string, number[]>();
-  const site = (name: string, at: number): void => {
+  const sites = new Map<string, Site[]>();
+  const site = (name: string, at: number, siblings?: readonly string[], end?: number): void => {
+    const entry: Site = siblings && siblings.length > 0 ? { at, siblings, end } : { at };
     const list = sites.get(name);
-    if (list) list.push(at);
-    else sites.set(name, [at]);
+    if (list) list.push(entry);
+    else sites.set(name, [entry]);
   };
   const { tokens, dialect } = ctx;
 
@@ -176,7 +177,13 @@ export function nullableSources(ctx: WithStatements): Map<string, Origin> {
     // stands down on one.
     const grouped = hasGroupBy(tokens, statement.from, statement.to);
 
-    splitCommas(tokens, statement.from + 1, into - 1).forEach((span, slot) => {
+    const spans = splitCommas(tokens, statement.from + 1, into - 1);
+    const witnessSlots = new Set<number>();
+    spans.forEach((span, slot) => {
+      if (rowWitness(tokens, span)) witnessSlots.add(slot);
+    });
+
+    spans.forEach((span, slot) => {
       const target = targets[slot];
       if (!target || !ctx.locals.byName.has(target)) return;
 
@@ -210,7 +217,15 @@ export function nullableSources(ctx: WithStatements): Map<string, Origin> {
       const aggregate = aggregatesIn(tokens, span);
       if (aggregate.any && !grouped) {
         const at = aggregate.unprotected[0];
-        if (at !== undefined) site(target, targetAt[slot]!);
+        if (at !== undefined) {
+          // The other aggregate slots that are NULL over no rows: one of them found non-NULL means
+          // a row was read, which is the reason this slot would have been NULL gone too.
+          const siblings = targets.filter(
+            (other, k) =>
+              k !== slot && other !== target && ctx.locals.byName.has(other) && witnessSlots.has(k),
+          );
+          site(target, targetAt[slot]!, siblings, statement.to);
+        }
         if (at !== undefined && tainted.get(target)?.kind !== "column") {
           tainted.set(target, { kind: "empty", what: tokens[at]!.v.toUpperCase() });
         }

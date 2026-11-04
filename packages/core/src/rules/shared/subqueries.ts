@@ -47,6 +47,14 @@ const AGGREGATES: ReadonlySet<string> = new Set([
   "VAR_SAMP",
 ]);
 
+/**
+ * Aggregates whose being non-NULL proves a row was read: the NULL-over-no-rows ones, and the two JSON
+ * ones. The JSON ones are not in `AGGREGATES` on purpose — whether they taint a variable is not
+ * settled here — but over no rows they answer NULL as well, so a variable they fill that is not NULL
+ * says the same thing a `MAX` that is not NULL does.
+ */
+const WITNESSES: ReadonlySet<string> = new Set([...AGGREGATES, "JSON_ARRAYAGG", "JSON_OBJECTAGG"]);
+
 /** What turns the NULL back into a value — inside the subquery, where it can still help. */
 const ABSORBING: ReadonlySet<string> = new Set(["COALESCE", "IFNULL"]);
 
@@ -110,6 +118,24 @@ export function aggregatesIn(tokens: readonly Token[], range: Range): { any: boo
     }
   }
   return { any, unprotected };
+}
+
+/**
+ * Does this select item hold an unprotected aggregate that is NULL over no rows — a `WITNESSES` call
+ * outside any `COALESCE`/`IFNULL` of the item, a nested subquery skipped whole? `COUNT` never is.
+ */
+export function rowWitness(tokens: readonly Token[], range: Range): boolean {
+  for (let i = range.from; i <= range.to; i++) {
+    const t = tokens[i]!;
+    if (punct(t, "(") && kw(tokens[i + 1], "SELECT")) {
+      const close = matchingParen(tokens, i);
+      i = close === -1 ? range.to : close;
+      continue;
+    }
+    if (t.t !== "id" || t.q || !punct(tokens[i + 1], "(")) continue;
+    if (WITNESSES.has(t.v.toUpperCase()) && !absorbedWithin(tokens, i, range.from)) return true;
+  }
+  return false;
 }
 
 export interface Subquery {

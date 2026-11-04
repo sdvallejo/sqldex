@@ -78,6 +78,9 @@ What it deliberately leaves alone:
     \`CONTINUE\` handler that catches the \`SIGNAL\` (for \`SQLEXCEPTION\`, or for the same
     \`SQLSTATE\`), execution resumes right after it, so that \`SIGNAL\` leaves nothing and the check
     does not count. A second source of \`v\` that no such check follows keeps it tainted.
+    In a \`SELECT … INTO\` with no \`GROUP BY\`, a leaving check on *another* aggregate of the same
+    statement — \`JSON_ARRAYAGG\` included — proves a row was found, which clears the no-rows taint of
+    every aggregate in it; it never clears a nullable column, which no row count rules out.
   - **\`<=>\`**, the NULL-safe equality, which is the operator that exists for exactly this.
   - **A read already wrapped** in \`COALESCE\` or \`IFNULL\`.
   - **\`=\`, \`<\`, \`>\` and the rest**, where unknown-reads-as-false is the same answer the person

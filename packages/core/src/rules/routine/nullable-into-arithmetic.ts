@@ -34,6 +34,9 @@ in \`SIGNAL\`, \`RESIGNAL\`, \`RETURN\` or a \`LEAVE\` of the outermost block's 
 it can see a NULL in \`v\`, however far away or however deep it is read. \`ITERATE\` and a \`LEAVE\` of
 an inner loop do not count, nor does a \`SIGNAL\` that a \`CONTINUE\` handler for \`SQLEXCEPTION\` or
 the same \`SQLSTATE\` catches: execution resumes right after it.
+In a \`SELECT … INTO\` with no \`GROUP BY\`, a leaving check on *another* aggregate of the same
+statement — \`JSON_ARRAYAGG\` included — proves a row was found, which clears the no-rows taint of
+every aggregate in it; it never clears a nullable column, which no row count rules out.
 
 **What it does not model:** a later assignment from a source that cannot be NULL does not clear the
 taint, because that needs the flow analysis \`routine/variable-never-assigned\` deliberately stops

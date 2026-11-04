@@ -22,6 +22,14 @@
  * first arm always leaves. A variable is untainted only when **every** source of it is cleared: a
  * second, unchecked `SELECT … INTO v` reopens the question.
  *
+ * A `SELECT … INTO` with no `GROUP BY` can also be cleared by a check on **another** aggregate of the
+ * same statement. `SELECT SUM(x), JSON_ARRAYAGG(y) INTO v_sum, v_list …` followed by
+ * `IF v_list IS NULL THEN LEAVE …` proves a row was found, which is the whole reason `v_sum` would
+ * have been NULL. Such a source carries its `siblings` (the other targets filled from an unprotected
+ * aggregate) and the token where its statement `end`s; from there on, a sibling's check counts like
+ * the variable's own, until the sibling is mentioned by anything else, which only drops that sibling.
+ * A source filled from a nullable column carries none: no row count rules its NULL out.
+ *
  * ## What leaves
  *
  * The arm's **last** top-level statement being a `SIGNAL`, a `RESIGNAL`, a `RETURN`, or a `LEAVE` of
@@ -247,12 +255,22 @@ function asksNull(ctx: Scope, cond: TokenRange, name: string): boolean {
   return asked;
 }
 
+/** One place a variable is filled from a source of NULL. */
+export interface Site {
+  /** The token index of the target. */
+  readonly at: number;
+  /** Folded names of other targets of the same statement whose NULL-check proves a row was found. */
+  readonly siblings?: readonly string[];
+  /** The last token of the statement the siblings are filled in; they are only tracked after it. */
+  readonly end?: number;
+}
+
 /**
  * The folded names whose every source in `sites` is followed by a NULL check that leaves.
  *
- * `sites` maps a name to the token index of each place it is filled from a source of NULL.
+ * `sites` maps a name to each place it is filled from a source of NULL.
  */
-export function clearedByExit(ctx: Scope, sites: ReadonlyMap<string, readonly number[]>): Set<string> {
+export function clearedByExit(ctx: Scope, sites: ReadonlyMap<string, readonly Site[]>): Set<string> {
   const cleared = new Set<string>();
   if (sites.size === 0) return cleared;
 
@@ -263,9 +281,10 @@ export function clearedByExit(ctx: Scope, sites: ReadonlyMap<string, readonly nu
   const handlers = continueHandlers(ctx);
 
   for (const [name, at] of sites) {
-    const every = at.every((site) => {
+    const every = at.every(({ at: site, siblings, end }) => {
       const level = before[site - body.from];
       if (level === undefined) return false;
+      const live = new Set(siblings ?? []);
       for (let i = site + 1; i <= body.to; i++) {
         const k = i - body.from;
         // Out of the source's own block: the end of its arm, or the end of the block itself.
@@ -277,12 +296,21 @@ export function clearedByExit(ctx: Scope, sites: ReadonlyMap<string, readonly nu
         if (frame && before[k] === level) {
           const cond = frame.conditions[0];
           const arm = frame.branches[0];
-          if (cond && arm && asksNull(ctx, cond, name) && armLeaves(ctx, arm, level + 1, before, label, handlers)) {
+          const asks =
+            cond !== undefined &&
+            end !== undefined &&
+            i > end &&
+            [...live].some((sibling) => asksNull(ctx, cond, sibling));
+          if (cond && arm && (asksNull(ctx, cond, name) || asks) && armLeaves(ctx, arm, level + 1, before, label, handlers)) {
             return true;
           }
         }
         // Any other mention of the variable is a read (or a rewrite) the check did not precede.
-        if (t.t === "id" && !t.q && dialect.foldIdentifier(t.v, false) === name) return false;
+        if (t.t === "id" && !t.q) {
+          const folded = dialect.foldIdentifier(t.v, false);
+          if (folded === name) return false;
+          if (end !== undefined && i > end) live.delete(folded);
+        }
       }
       return false;
     });
