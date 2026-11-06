@@ -2,6 +2,7 @@
 
 import { selectListColumns } from "../../analysis/locals.ts";
 import { kw } from "../../syntax/fast/tok.ts";
+import type { Table } from "../../model/table.ts";
 import type { StatementContext } from "../rule.ts";
 
 /**
@@ -58,7 +59,8 @@ export function selectOutputAliases(ctx: StatementContext): Set<string> {
 /**
  * Is this bare name one the statement, the routine or the catalog already accounts for — an alias,
  * an output name, a `WITH` name, a local, a routine, a table, or a column of one of the statement's
- * own (fully resolved) relations?
+ * own (fully resolved) relations? `tables` narrows that last part to the ones a name can actually
+ * reach — its query and the queries enclosing it — when the caller knows them.
  *
  * Extracted from `names/unqualified-column`, which needed exactly this question first: a bare name
  * that fails every one of these is not a column of anything in scope, and that rule and
@@ -71,6 +73,7 @@ export function knownBareName(
   i: number,
   outputAliases: ReadonlySet<string>,
   ctes: ReadonlySet<string>,
+  tables: readonly Table[] = ctx.resolved,
 ): boolean {
   const token = ctx.tokens[i]!;
   const key = ctx.dialect.foldIdentifier(token.v, false);
@@ -82,6 +85,6 @@ export function knownBareName(
     ctx.catalog.table(token.v) !== undefined ||
     ctx.catalog.routine(token.v) !== undefined ||
     ctx.catalog.tempTable(token.v) !== undefined ||
-    ctx.resolved.some((table) => table.byName.has(key))
+    tables.some((table) => table.byName.has(key))
   );
 }

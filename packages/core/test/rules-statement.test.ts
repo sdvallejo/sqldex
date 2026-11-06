@@ -700,6 +700,72 @@ test("it stands down entirely when any relation did not resolve", () => {
   assert.deepEqual(run(unqualifiedColumn, src), []);
 });
 
+test("an unknown table after an IF's THEN does not silence the EXISTS of its condition", () => {
+  // The `;` bound runs from the condition to the end of the first statement of the THEN, so the
+  // two queries share a statement — but the subquery's own tables are all known.
+  const src = body(
+    "  IF EXISTS(SELECT 1 FROM order_lines WHERE line_no = batch_id) THEN",
+    "    INSERT INTO nowhere SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(unqualifiedColumn, src), ["unknown column or variable: batch_id"]);
+});
+
+test("the same EXISTS is quiet when its table does have the column", () => {
+  const src = body(
+    "  IF EXISTS(SELECT 1 FROM order_lines WHERE line_no = product_id) THEN",
+    "    INSERT INTO nowhere SELECT 1;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
+test("a column of another query in the same statement does not account for the name", () => {
+  // `customer_id` is a column of `orders`, which the THEN's query reads — but the EXISTS cannot
+  // see that query, so in the EXISTS the name is still nobody's.
+  const src = body(
+    "  IF EXISTS(SELECT 1 FROM order_lines WHERE line_no = customer_id) THEN",
+    "    INSERT INTO nowhere SELECT customer_id FROM orders;",
+    "  END IF;",
+  );
+  assert.deepEqual(run(unqualifiedColumn, src), ["unknown column or variable: customer_id"]);
+});
+
+test("a subquery stands down when a query enclosing it has a relation that did not resolve", () => {
+  // A bare name in a correlated subquery may be a column of the outer query's unknown table.
+  const src = "SELECT t.a FROM tmp_from_other_sp t WHERE EXISTS(SELECT 1 FROM orders WHERE totl = t.a);";
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
+test("a subquery whose enclosing queries all resolved is checked against them", () => {
+  const src =
+    "SELECT o.order_id FROM orders o WHERE EXISTS(SELECT 1 FROM refunds r WHERE r.order_id = o.order_id AND totl = 1);";
+  assert.deepEqual(run(unqualifiedColumn, src), ["unknown column: totl"]);
+});
+
+test("an INSERT … SELECT's ON DUPLICATE KEY UPDATE assigns the target's columns", () => {
+  const src =
+    "INSERT INTO orders (order_id, total) SELECT order_id, amount FROM refunds ON DUPLICATE KEY UPDATE total = VALUES(total);";
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
+test("a name the target does not have either is still reported after ON DUPLICATE KEY UPDATE", () => {
+  const src =
+    "INSERT INTO orders (order_id, total) SELECT order_id, amount FROM refunds ON DUPLICATE KEY UPDATE totl = VALUES(totl);";
+  assert.deepEqual(run(unqualifiedColumn, src), ["unknown column: totl", "unknown column: totl"]);
+});
+
+test("a query with a JSON_TABLE stands down: its columns are the table function's", () => {
+  const src =
+    "SELECT jt.x FROM orders o, JSON_TABLE(o.status, '$[*]' COLUMNS(x int PATH '$.x')) AS jt WHERE x > 0;";
+  assert.deepEqual(run(unqualifiedColumn, src), []);
+});
+
+test("a SELECT with no FROM under an INSERT still reports a name nothing declares", () => {
+  const src = body("  INSERT INTO orders SELECT 0, p_nowhere, 'A', 1;");
+  assert.deepEqual(run(unqualifiedColumn, src), ["unknown column or variable: p_nowhere"]);
+});
+
 test("an alias of the statement is not a column", () => {
   assert.deepEqual(run(unqualifiedColumn, "SELECT o.total FROM orders o;"), []);
 });
